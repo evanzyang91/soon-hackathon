@@ -178,7 +178,7 @@ export interface LaptopState {
   pip: { visible: boolean; label: string; frames: number };
   mainFrames: number;
   lastStillAt: number;
-  actors: string[];
+  actors: { id: string; kind: string; position: number[]; placementCorrected: boolean }[];
   dynamics: { id: string; position: number[]; phase: string }[];
   voice: { context: string; playing: string[]; level: number; heard: string[]; peak: number };
 }

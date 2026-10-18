@@ -25,7 +25,15 @@ export interface PrevizDebugState {
   recording: boolean;
   /** performance.now() of the last still (phone shutter / Still button), 0 = none yet. */
   lastStillAt: number;
-  actors: string[];
+  /** Placed actors; `placementCorrected` = moved out of collider geometry (viewer/placement.ts). */
+  actors: {
+    id: string;
+    kind: string;
+    position: number[];
+    yaw: number;
+    placementCorrected: boolean;
+    placement: { status: string; from: number[]; to: number[] } | null;
+  }[];
   dynamics: { id: string; position: number[]; phase: string }[];
   /**
    * Dialogue audio: WebAudio context state, actors whose voice is playing, loudest level now
@@ -97,7 +105,21 @@ export function installDebugHook(director: Director) {
       viewFromPhone: director.viewFromPhone,
       recording: director.recorder.recording,
       lastStillAt: director.lastStillAt,
-      actors: rt ? [...rt.actors.keys()] : [],
+      actors: [...(rt?.actors.values() ?? [])].map((a) => {
+        const placement = (a.object.userData.placement ?? null) as {
+          status: string;
+          from: number[];
+          to: number[];
+        } | null;
+        return {
+          id: a.characterId,
+          kind: String(a.object.userData.actorKind ?? ''),
+          position: a.object.position.toArray(),
+          yaw: a.object.rotation.y,
+          placementCorrected: placement?.status === 'moved',
+          placement,
+        };
+      }),
       dynamics: rt?.dynamics.positions() ?? [],
       voice: voice(),
     };

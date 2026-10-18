@@ -152,6 +152,8 @@ export class Director {
       rt.scene.add(this.markers.group, this.phoneGizmo.object);
       this.view.setScene(rt.scene);
       prev?.dispose();
+      // the collider arrives after the scene opens: refresh the HUD (Collider button) then
+      void rt.colliderReady.then((c) => c && this.runtime === rt && this.emit('scene'));
       const sc = rt.manifest.startCamera;
       this.controls.flyTo(v3(sc.position), q4(sc.quaternion), sc.fovDeg, 0);
       const saved = storageGet<{ cameras: DropCamera[]; activeCameraId: string | null }>(
