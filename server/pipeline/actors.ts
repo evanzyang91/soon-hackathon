@@ -13,6 +13,8 @@
 // An existing valid actors/<id>/sequence is reused without any network call.
 // MOCK, missing keys, or ANY failure -> the free offline fallback
 //   { kind: 'glb-humanoid', glb: 'procedural:mannequin', clips, tint }
+// Outside MOCK the fallback is marked `fallback: true`, so project.ts rebuilds it (once keys and
+// Modal billing allow) instead of caching the mannequin as the final actor.
 // which the browser builds procedurally (web/src/viewer/actors/mannequin.ts). The `procedural:`
 // scheme is deliberate: an empty string would be rewritten into a directory path by
 // project.ts `toProjectUrl`, a URL scheme is passed through untouched.
@@ -269,9 +271,10 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
   const sequenceDir = join(actorDir, 'sequence');
   const referencePath = join(actorDir, 'reference.png');
   const receiptPath = join(actorDir, 'recovery-receipt.json');
-  const fallback = (reason: string) => {
+  const fallback = (reason: string): ActorAsset => {
     log(`fallback mannequin (${reason})`);
-    return fallbackActor(character);
+    const asset = fallbackActor(character);
+    return opts.mock ? asset : { ...asset, fallback: true };
   };
   try {
     const cached = opts.mock ? null : await sequenceAsset(character, projectDir, sequenceDir);

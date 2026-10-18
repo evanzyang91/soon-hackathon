@@ -116,3 +116,21 @@ describe('synthesizeLine (MOCK)', () => {
     expect((await readdir(dir)).sort()).toEqual(['s1-l1.json', 's1-l1.wav']);
   });
 });
+
+describe('synthesizeLine fallback flag', () => {
+  let dir = '';
+  afterEach(() => rm(dir, { recursive: true, force: true }));
+  const noKeys = { marble: '', anthropic: '', openai: '', elevenlabs: '', modalTokenId: '', modalTokenSecret: '' };
+
+  it('marks beeps produced outside MOCK as fallback (also on a cache hit), never under MOCK', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tts-'));
+    const log = () => {};
+    const text = 'Somebody is on the stairs.';
+    const live = await synthesizeLine({ line: line(text), character: maya, outDir: dir, mock: false, keys: noKeys, log });
+    expect(live).toMatchObject({ lineId: 's1-l1', url: 's1-l1.wav', fallback: true });
+    const again = await synthesizeLine({ line: line(text), character: maya, outDir: dir, mock: false, keys: noKeys, log });
+    expect(again.fallback).toBe(true);
+    const mocked = await synthesizeLine({ line: line(text), character: maya, outDir: dir, mock: true, log });
+    expect(mocked.fallback).toBeUndefined();
+  });
+});
