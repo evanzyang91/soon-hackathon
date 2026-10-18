@@ -152,28 +152,45 @@ Fields added for Previz Stage:
 | `loops` | `{idle:{start:0,count:N}, talk:{start:N,count:M}}` (talk is absent when `--talk-frames 0`) |
 | `motionSource`, `rootPose`, `lowerBodyProvenance` | provenance text |
 
-Size at the defaults (48 + 24 frames, ~40 k splats): ~2.7 MB per PLY (~195 MB on disk). The
-browser fetches only `frame_000.ply` + `motion.u16` (~40 MB) and decodes one frame at a time into
-a single SplatMesh.
+Size at the defaults (48 + 24 frames, 40,000 splats, measured): 2.72 MB per PLY, 226 MB for
+`sequence/` in the Volume. By default `run_actor` downloads only `sequence.json`,
+`frame_000.ply` and `motion.u16` (40.3 MB), about 49 MB per actor with the metadata images;
+`--all-frames` fetches every PLY. The browser uses the same three files and decodes one frame at a
+time into a single SplatMesh.
 
-## Cost / time (estimates, not measured on GPU)
+## Cost / time (measured 2026-10-24, real reference `fixtures/real-samples/reference.png`)
 
-Receipts compute `seconds × (L4 $0.000222 + 4 CPU × $0.0000131 + 64 GiB × $0.00000222)` ≈
-$0.00042/s, the same list prices Orbis uses. Orbis's single-frame LHM-500M runs on an L4 take a
-few minutes including model load. 72 extra `animation_infer_gs` calls + PLY writes add roughly a
-minute. The first call also pulls the ~15 GB image. Expect about 5–10 min and $0.15–0.25 per
-actor. One-time staging is CPU-only. Measured: priors 2,127 s (~$0.075), model + aux 108 s (~$0.004).
+| Run | Frames | Worker s | Wall s | Billed (Modal dashboard) |
+| --- | --- | --- | --- | --- |
+| debug, cold image pull | 12 + 6 | 166 | 290 (all files downloaded) | $0.074 |
+| full | 48 + 24 | 162 | 480 (all 233 MB downloaded at ~0.7 MB/s) | $0.075 |
+| + keyframe-only download | 12 + 6 | 139 | 182 | $0.063 |
+| + portable numba cache | 12 + 6 | 96 | ~100 + recover | $0.048 |
+
+On an L4 with LHM-500M: peak VRAM 11.9 GB. The mask step took 66 s, of which ~50 s was rembg's
+pymatting numba compile on import; it is now cached in the Volume (`NUMBA_CACHE_DIR`,
+`NUMBA_CPU_NAME=generic`) and takes 18 s. Multi-HMR pose ~20 s, LHM load + canonical inference
+~50 s. All 72 `animation_infer_gs` frames + PLY writes take ~12 s (18 frames: 3 s), so frame
+count barely moves the cost. Expect about $0.05–0.06 and 2–4 min wall per actor (the download
+dominates on a slow link). Receipts estimate `seconds × (L4 $0.000222 + 4 CPU × $0.0000131 +
+64 GiB × $0.00000222)` ≈ $0.00042/s, which runs ~10% under the bill because container start
+isn't timed. One-time staging is CPU-only: priors 2,127 s (~$0.075), model + aux 108 s
+(~$0.004).
 
 ## Verification status
 
-- Verified: Modal auth; the CUDA image builds on Modal (pytorch3d, diff-gaussian-rasterization
-  and simple-knn compile; `import torch, pytorch3d, diff_gaussian_rasterization, gsplat, rembg;
-  from LHM.models import model_dict` passes); every weight is staged in Volume
-  `previz-stage-lhm-cache` (`--check` reports `ready: true`); the full local
-  path up to Modal's GPU refusal; packaging, motion and recovery under pytest; the browser
-  playing a packaged synthetic sequence (`npx tsx scripts/actor-browser-check.ts`).
-- **Not verified:** any L4 inference (`lhm_actor.py` end to end). It needs a payment method on
-  the Modal workspace. The code follows Orbis's validated `lhm_person.py` call sequence line for
-  line where it overlaps. New code paths that have never run on a GPU: the rembg mask, the
-  upright-root swap, the per-frame `animation_infer_gs` loop with modified `body_pose` /
-  `jaw_pose`, and in-worker packaging.
+- **Verified on a real L4** (4 runs, 2026-10-24): rembg mask (portrait box, 25% area); Multi-HMR
+  root 1.9° from upright, so the upright root was used; LHM canonical inference; per-frame
+  `animation_infer_gs` idle/talk loop; in-worker packaging (feet at 0, 40,000 splats,
+  `nativeHeight` 1.81 native units); checkpoint manifest `complete`; verified download. A local DNS
+  failure during one wait was recovered with `--recover` (the detached call finished remotely,
+  with no re-inference).
+- **Verified in the browser:** the real 72-frame avatar renders upright, facing -Z, scaled to
+  1.7 m, at ~60 fps next to a mannequin (Chrome with Metal); the idle loop plays frames 0–47, the
+  talk loop frames 48–71 while speaking, and it returns to idle after `speak()` (3.36 s line →
+  3.36 s).
+- Also verified: Modal auth and the CUDA image build; `--check`; weight staging; packaging,
+  motion and recovery under pytest; the synthetic-sequence browser check
+  (`npx tsx scripts/actor-browser-check.ts`).
+- Not verified: phone (iOS Safari) frame rate with 40,000-splat actors; the sitting/walking poses
+  for splat actors (they use the standing idle loop).
