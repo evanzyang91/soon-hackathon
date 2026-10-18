@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildMannequin } from './mannequin';
 import { wantsGlbFile, PROCEDURAL_GLB } from './index';
 import { tintFor } from '@shared/tint';
-import { projectCandidates } from './common';
+import { projectCandidates, wrapText } from './common';
 
 const box = (o: THREE.Object3D) => {
   o.updateMatrixWorld(true);
@@ -92,5 +92,19 @@ describe('fallback selection helpers', () => {
     expect(tintFor('maya')).toBe(tintFor('maya'));
     expect(tintFor('maya')).not.toBe(tintFor('raj'));
     expect(tintFor('maya')).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+describe('speaking caption', () => {
+  it('word-wraps the caption line and ellipsizes past the line cap', () => {
+    expect(wrapText('MAYA: I let it go.', 34)).toEqual(['MAYA: I let it go.']);
+    expect(wrapText("THEO: That's the saddest thing I've heard all week.", 34)).toEqual([
+      "THEO: That's the saddest thing",
+      "I've heard all week.",
+    ]);
+    const long = wrapText('word '.repeat(60), 10, 3);
+    expect(long).toHaveLength(3);
+    expect(long[2]!.endsWith('…')).toBe(true);
+    expect(wrapText('   ', 10)).toEqual(['']);
   });
 });

@@ -5,6 +5,7 @@
 //                     for the mannequin directly (what server/pipeline/actors.ts writes).
 // `object` stands with its feet at local y = 0 and faces -Z; the caller sets position and
 // rotation.y = yaw. A splat actor that fails to load degrades to the mannequin.
+// While speaking, a caption above the head shows the line (`speak(..., text)`), word-wrapped.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
@@ -16,7 +17,8 @@ import { tintFor } from '@shared/tint';
 export interface ActorHandle {
   object: THREE.Object3D;
   characterId: string;
-  speak(lineId: string, audioUrl: string, durationSeconds: number): Promise<void>;
+  /** Plays the line's audio at the actor's head; `text` (the line) is shown in the caption. */
+  speak(lineId: string, audioUrl: string, durationSeconds: number, text?: string): Promise<void>;
   stopSpeaking(): void;
   setPose(pose: 'standing' | 'sitting' | 'walking'): void;
   update(dt: number, sceneTime: number): void;
@@ -159,21 +161,35 @@ export async function createActor(
   object.add(body.root);
 
   const label = textSprite(character.name, { h: 0.11, bg: 'rgba(15,18,24,0.72)', fg: '#ffffff' });
-  label.sprite.position.y = body.headY + 0.3;
   object.add(label.sprite);
-  const caption = textSprite(`${character.name} ▸`, { h: 0.15, bg: 'rgba(255,255,255,0.92)', fg: '#111111' });
-  caption.sprite.position.y = body.headY + 0.42;
+  const caption = textSprite(`${character.name} ▸`, {
+    h: 0.1,
+    bg: 'rgba(255,255,255,0.92)',
+    fg: '#111111',
+    wrap: 34,
+    anchorBottom: true,
+  });
   caption.sprite.visible = false;
   object.add(caption.sprite);
   const speech: Speech = createSpeech(listener, object, body.headY);
+  /** Head height for the current pose (sitting lowers it). */
+  let headY = body.headY;
+  const place = () => {
+    label.sprite.position.y = headY + 0.3;
+    caption.sprite.position.y = headY + 0.3;
+    speech.audio.position.y = headY;
+  };
+  place();
 
   let t = 0;
   let speakingLine: string | null = null;
   const handle: ActorHandle = {
     object,
     characterId: character.id,
-    async speak(lineId, audioUrl, durationSeconds) {
+    async speak(lineId, audioUrl, durationSeconds, text) {
       speakingLine = lineId;
+      const line = text?.trim();
+      caption.setText(line ? `${character.name}: ${line}` : `${character.name} ▸`);
       caption.sprite.visible = true;
       label.sprite.visible = false;
       object.userData.speakingLine = lineId;
@@ -200,7 +216,7 @@ export async function createActor(
       const level = speech.level();
       body.animate(dt, t, speaking, level);
       if (body.debug) object.userData.debug = { ...body.debug(), level, speaking: speaking ? 1 : 0 };
-      if (caption.sprite.visible) caption.sprite.position.y = body.headY + 0.42 + 0.015 * Math.sin(t * 5);
+      if (caption.sprite.visible) caption.sprite.position.y = headY + 0.3 + 0.015 * Math.sin(t * 5);
     },
     dispose() {
       speech.dispose();

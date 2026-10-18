@@ -243,7 +243,7 @@ class LoadedScene implements SceneRuntime {
       if (actor && audio) {
         // never let a stuck actor stall the dialogue playlist
         await Promise.race([
-          actor.speak(lineId, this.resolve(audio.url), seconds),
+          actor.speak(lineId, this.resolve(audio.url), seconds, line.text),
           this.wait(seconds + 3),
         ]);
       } else {

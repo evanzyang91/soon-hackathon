@@ -9,8 +9,37 @@ export interface TextSprite {
   dispose(): void;
 }
 
-/** Billboard text, sized in metres (height `h`), drawn on a canvas texture. */
-export function textSprite(text: string, opts: { h: number; bg: string; fg: string }): TextSprite {
+/** Greedy word wrap to lines of at most `maxChars` (a longer single word gets its own line). */
+export function wrapText(text: string, maxChars: number, maxLines = 4): string[] {
+  const lines: string[] = [];
+  let cur = '';
+  for (const word of text.trim().split(/\s+/).filter(Boolean)) {
+    if (cur && cur.length + 1 + word.length > maxChars) {
+      lines.push(cur);
+      cur = word;
+    } else cur = cur ? `${cur} ${word}` : word;
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    lines[maxLines - 1] = `${lines[maxLines - 1]!.replace(/[\s.,;:!?]+$/, '')}…`;
+  }
+  return lines.length ? lines : [''];
+}
+
+export interface TextSpriteOptions {
+  /** Height of one line of text, in metres. */
+  h: number;
+  bg: string;
+  fg: string;
+  /** Word-wrap at this many characters per line (default: one line). */
+  wrap?: number;
+  /** Anchor at the bottom edge so extra lines grow upwards (default: centred). */
+  anchorBottom?: boolean;
+}
+
+/** Billboard text, sized in metres (line height `h`), drawn on a canvas texture. */
+export function textSprite(text: string, opts: TextSpriteOptions): TextSprite {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const texture = new THREE.CanvasTexture(canvas);
@@ -18,16 +47,19 @@ export function textSprite(text: string, opts: { h: number; bg: string; fg: stri
   const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
   const sprite = new THREE.Sprite(material);
   sprite.renderOrder = 10;
+  if (opts.anchorBottom) sprite.center.set(0.5, 0);
   const draw = (t: string) => {
     if (!ctx) return;
     const px = 48;
+    const lineH = px * 1.6;
+    const lines = opts.wrap ? wrapText(t, opts.wrap) : [t];
     ctx.font = `600 ${px}px system-ui, sans-serif`;
-    const w = Math.ceil(ctx.measureText(t).width) + px;
+    const w = Math.ceil(Math.max(...lines.map((l) => ctx.measureText(l).width))) + px;
     canvas.width = w;
-    canvas.height = px * 1.6;
+    canvas.height = Math.round(lineH * lines.length);
     ctx.font = `600 ${px}px system-ui, sans-serif`;
     ctx.fillStyle = opts.bg;
-    const r = canvas.height / 2;
+    const r = lineH / 2;
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(0, 0, w, canvas.height, r);
     else ctx.rect(0, 0, w, canvas.height);
@@ -35,9 +67,9 @@ export function textSprite(text: string, opts: { h: number; bg: string; fg: stri
     ctx.fillStyle = opts.fg;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillText(t, w / 2, canvas.height / 2 + 2);
+    lines.forEach((l, i) => ctx.fillText(l, w / 2, lineH * (i + 0.5) + 2));
     texture.needsUpdate = true;
-    sprite.scale.set((opts.h * w) / canvas.height, opts.h, 1);
+    sprite.scale.set((opts.h * w) / lineH, opts.h * lines.length, 1);
   };
   draw(text);
   return {
