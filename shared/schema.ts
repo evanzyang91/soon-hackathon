@@ -101,6 +101,10 @@ export type ScreenplayPlan = z.infer<typeof ScreenplayPlan>;
 
 // ---------------------------------------------------------------------------
 // Built assets → SceneManifest (what the browsers load)
+//
+// Every asset path below (spz, glb, sequenceDir, audio url) is relative to the PROJECT root,
+// i.e. resolved against `/projects/<projectId>/`, never against the scene folder. Absolute
+// `/…` paths are passed through unchanged.
 // ---------------------------------------------------------------------------
 
 export const WorldAsset = z.object({
