@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WorldAsset } from '../../shared/schema.ts';
-import { generateWorld, RECEIPT_FILE, type MarbleReceipt } from './marble.ts';
+import { DRY_RUN_FILE, generateWorld, RECEIPT_FILE, type MarbleReceipt } from './marble.ts';
 import { encodeSpz } from './spz.ts';
 
 const KEY = 'wlt-test-key-123';
@@ -251,6 +251,33 @@ describe('marble client', () => {
       status: 'failed',
       operation_id: 'op-1',
     });
+  });
+
+  it('dry run logs the exact generate body, never calls Marble, and hands back the mock world', async () => {
+    const m = fakeMarble();
+    const asset = await run(m.fetch, { dryRun: true, model: 'marble-1.0-draft' });
+    expect(m.calls).toHaveLength(0);
+    expect(asset).toMatchObject({ provider: 'mock', spz: { k500: 'world.spz' } });
+    expect(existsSync(join(outDir, RECEIPT_FILE))).toBe(false); // nothing was submitted
+    const dry = JSON.parse(await readFile(join(outDir, DRY_RUN_FILE), 'utf8'));
+    expect(dry).toEqual({
+      method: 'POST',
+      url: 'https://api.worldlabs.ai/marble/v1/worlds:generate',
+      body: {
+        display_name: 'test world',
+        model: 'marble-1.0-draft',
+        world_prompt: {
+          type: 'text',
+          text_prompt: 'A rain-slick city street at night. No people.',
+          disable_recaption: true,
+        },
+        permission: { public: false },
+      },
+    });
+    expect(logs.some((l) => l.includes('DRY RUN') && l.includes(JSON.stringify(dry.body)))).toBe(
+      true,
+    );
+    expect(logs.join('\n')).not.toContain(KEY);
   });
 
   it('mock mode copies the fixture world without any network', async () => {

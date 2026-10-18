@@ -8,6 +8,9 @@
 //   'failed'                  → provider reported an error; resubmitted only with retryFailed
 //   'generated'  (world id)   → GET the world and download its assets (no generation)
 //   'complete'                → assets on disk, verified by size + sha256: no network at all
+// MARBLE_DRY_RUN=1 (or opts.dryRun) stops before the POST: it logs the exact request body, writes
+// it to <outDir>/marble-dry-run.json, and returns the mock world (provider 'mock') so the rest of
+// a live pipeline continues without spending credits.
 // Downloads are atomic (tmp + rename), SPZs must be gzip with an NGSP header, and URLs in the
 // returned WorldAsset are filenames relative to outDir.
 import { createHash } from 'node:crypto';
@@ -25,6 +28,7 @@ import { readSpzHeader } from './spz.ts';
 export const MARBLE_MODELS = ['marble-1.1', 'marble-1.0-draft', 'marble-1.1-plus'] as const;
 export type MarbleModel = (typeof MARBLE_MODELS)[number];
 export const RECEIPT_FILE = 'marble-receipt.json';
+export const DRY_RUN_FILE = 'marble-dry-run.json';
 export const ASSET_FILE = 'world-asset.json';
 const WORLD_FILE = 'marble-world.json';
 const BASE_URL = 'https://api.worldlabs.ai';
@@ -50,6 +54,8 @@ export interface GenerateWorldOptions {
   log: (m: string) => void;
   /** Explicit user retry: resubmit if the provider reported the previous generation as failed. */
   retryFailed?: boolean;
+  /** Log the generate request instead of sending it and return the mock world. Default: env. */
+  dryRun?: boolean;
   deps?: MarbleDeps;
 }
 
@@ -97,9 +103,26 @@ export function marbleModel(m: string | undefined): MarbleModel {
   return (MARBLE_MODELS as readonly string[]).includes(m ?? '') ? (m as MarbleModel) : 'marble-1.1';
 }
 
+/** The exact `POST /marble/v1/worlds:generate` body for a text prompt. */
+export function generateRequestBody(o: { name: string; prompt: string; model?: string }) {
+  return {
+    display_name: o.name.slice(0, 100),
+    model: marbleModel(o.model),
+    world_prompt: { type: 'text', text_prompt: o.prompt, disable_recaption: true },
+    permission: { public: false },
+  };
+}
+
 export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAsset> {
   await mkdir(opts.outDir, { recursive: true });
   if (opts.mock) return mockWorld(opts.outDir, opts.log);
+  if (opts.dryRun ?? env.marbleDryRun) {
+    const body = generateRequestBody(opts);
+    const url = `${opts.deps?.baseUrl ?? BASE_URL}/marble/v1/worlds:generate`;
+    await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), { method: 'POST', url, body });
+    opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
+    return mockWorld(opts.outDir, opts.log);
+  }
   return new MarbleRun(opts).run();
 }
 
@@ -244,12 +267,7 @@ class MarbleRun {
   }
 
   private async submit(prev: MarbleReceipt | undefined): Promise<MarbleReceipt> {
-    const body = {
-      display_name: this.o.name.slice(0, 100),
-      model: this.model,
-      world_prompt: { type: 'text', text_prompt: this.o.prompt, disable_recaption: true },
-      permission: { public: false },
-    };
+    const body = generateRequestBody({ ...this.o, model: this.model });
     const t = nowIso();
     let r: MarbleReceipt = {
       schema: 'previz.marble-receipt/1',

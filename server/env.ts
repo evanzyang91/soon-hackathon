@@ -10,6 +10,8 @@ export const env = {
   port: Number(process.env.PORT ?? 5173),
   mock: flag(process.env.MOCK),
   marbleModel: process.env.MARBLE_MODEL ?? 'marble-1.1',
+  /** Log the Marble generate request instead of sending it; the pipeline gets the mock world. */
+  marbleDryRun: flag(process.env.MARBLE_DRY_RUN),
   keys: {
     marble: process.env.WLT_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',

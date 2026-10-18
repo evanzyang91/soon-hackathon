@@ -560,9 +560,11 @@ export class ProjectStore {
       const note =
         asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
-          : offline && !st.mock
-            ? 'mock world (WLT_API_KEY not set)'
-            : 'mock world';
+          : st.mock
+            ? 'mock world'
+            : offline
+              ? 'mock world (WLT_API_KEY not set)'
+              : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)';
       await this.setStage(id, idx, 'world', { status: 'done', note });
       sceneLog(`done — ${note}`);
     } catch (e) {
