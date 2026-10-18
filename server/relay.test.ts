@@ -96,7 +96,8 @@ describe('relay over real sockets', () => {
     expect(await phone.next('scene')).toEqual(scene); // cached scene for the late joiner
 
     phone.send(pose(1));
-    expect(await laptop.next('pose')).toEqual(pose(1));
+    const got = await laptop.next('pose');
+    expect(got).toEqual({ ...pose(1), phoneId: expect.stringMatching(/^p\d+@/) });
 
     // Garbage does not kill the connection.
     phone.send('not json');

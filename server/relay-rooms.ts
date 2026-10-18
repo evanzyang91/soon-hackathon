@@ -5,7 +5,8 @@
 // - Every inbound message is validated with ClientMessage; invalid ones are dropped (warned).
 // - `hello` registers the peer's role + room (creating the room if needed, so clients recover
 //   after a server restart). Everyone in the room gets `peers` on every join/leave.
-// - `pose` (phone → laptops) is throttled per phone: the first pose in a window is forwarded at
+// - `pose` (phone → laptops) is stamped with the sender's peer id as `phoneId` (a client-supplied
+//   value is overwritten) and throttled per phone: the first pose in a window is forwarded at
 //   once, later ones in the same `poseIntervalMs` window only keep the latest, flushed by tick().
 // - `scene` (laptop → phones) is cached per room so a late-joining phone gets it immediately.
 // - `cmd` goes laptop → phones and phone → laptops.
@@ -149,12 +150,13 @@ export class RoomHub {
     switch (msg.type) {
       case 'pose': {
         if (peer.role !== 'phone') return this.reject(peer, 'pose from a laptop');
+        const stamped: PhonePose = { ...msg, phoneId: peer.id }; // never trust the client's id
         if (now - peer.lastPoseSentAt >= this.poseIntervalMs) {
           peer.lastPoseSentAt = now;
           peer.pendingPose = null;
-          return fanOut(room.laptops, msg);
+          return fanOut(room.laptops, stamped);
         }
-        peer.pendingPose = msg; // coalesce: only the latest survives until the next tick
+        peer.pendingPose = stamped; // coalesce: only the latest survives until the next tick
         return [];
       }
       case 'scene': {
