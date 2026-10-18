@@ -16,6 +16,8 @@ export type DropCamera = z.infer<typeof DropCamera>;
 /** Phone → relay → laptop, ≤30 Hz. */
 export const PhonePose = z.object({
   type: z.literal('pose'),
+  /** Stamped by the relay (never trusted from the client) so a laptop can tell phones apart. */
+  phoneId: z.string().optional(),
   /** performance.now()-style monotonic ms on the phone. */
   t: z.number(),
   /** Orientation of the phone camera in the world frame (after re-center). */
