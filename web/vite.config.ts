@@ -18,5 +18,11 @@ export default defineConfig({
     },
   },
   server: { middlewareMode: true },
-  optimizeDeps: { include: ['three', '@sparkjsdev/spark'] },
+  // e2e runs its own server next to a developer's `pnpm dev`; separate pre-bundle caches keep
+  // one from invalidating the other's (which full-reloads open pages mid-test)
+  cacheDir: process.env.VITE_CACHE_DIR || undefined,
+  // Every browser dependency, so a cold start never discovers one late and full-reloads the page.
+  optimizeDeps: {
+    include: ['three', 'three/addons/loaders/GLTFLoader.js', '@sparkjsdev/spark', 'qrcode', 'zod'],
+  },
 });
