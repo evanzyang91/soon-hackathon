@@ -6,7 +6,8 @@
 //   screenplay.fountain     the submitted text
 //   plan.json               ScreenplayPlan (parse stage, once per project)
 //   log.txt                 human-readable pipeline log
-//   actors/<characterId>/   one actor per character, shared by every scene (actor.json caches it)
+//   actors/<characterId>/   one actor per character, shared by every scene (actor.json caches it;
+//                           live projects copy a matching actors-library avatar instead of Modal)
 //   scene-<n>/world/        Marble outputs + marble-receipt.json + world-asset.json (or a copy of
 //                           a matching world-library world: live projects only, no credits)
 //   scene-<n>/audio/        one file per dialogue line; scene-<n>/audio.json caches LineAudio[]
@@ -32,6 +33,7 @@ import {
   type ScenePlan,
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
+import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
 import { buildActor } from './actors.ts';
 import { parseFountain } from './fountain.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
@@ -91,6 +93,11 @@ export interface StoreOptions {
    * Default: env WORLD_LIBRARY_DIR or data/marble.
    */
   worldLibraryDir?: string | null;
+  /**
+   * Pre-built avatars (<dir>/<characterId>/sequence/) reused by live projects before Modal; null
+   * disables. Default: env ACTORS_LIBRARY_DIR or data/actors-library.
+   */
+  actorsLibraryDir?: string | null;
   maxWorldJobs?: number;
   maxActorJobs?: number;
   maxTtsJobs?: number;
@@ -165,6 +172,8 @@ export class ProjectStore {
   private readonly model: string;
   private readonly keys: StoreKeys;
   private readonly libraryDir: string | null;
+  private readonly actorsLibraryDir: string | null;
+  private readonly libraryActors = new Set<string>();
   private readonly deps: PipelineDeps;
   private readonly echo: boolean;
   private readonly worldSem: Semaphore;
@@ -188,6 +197,8 @@ export class ProjectStore {
     this.model = o.marbleModel ?? env.marbleModel;
     this.keys = o.keys ?? keyPresence();
     this.libraryDir = o.worldLibraryDir === undefined ? env.worldLibraryDir : o.worldLibraryDir;
+    this.actorsLibraryDir =
+      o.actorsLibraryDir === undefined ? env.actorsLibraryDir : o.actorsLibraryDir;
     this.deps = {
       parseScreenplay: o.deps?.parseScreenplay ?? parseScreenplay,
       generateWorld: o.deps?.generateWorld ?? generateWorld,
@@ -643,9 +654,14 @@ export class ProjectStore {
     } else {
       const kinds = [...new Set(built.map((a) => a!.kind))].join(', ');
       const fallbacks = built.filter((a) => a!.fallback).length;
+      const reused = cast.filter((c) => this.libraryActors.has(`${id}:${c.id}`)).map((c) => c.id);
       await this.setStage(id, idx, 'actors', {
         status: 'done',
-        note: `${cast.length} actor(s): ${kinds}${fallbacks ? ` — ${fallbacks} fallback (retry to upgrade)` : ''}`,
+        note: [
+          `${cast.length} actor(s): ${kinds}`,
+          reused.length ? ` — reused library actor: ${reused.join(', ')}` : '',
+          fallbacks ? ` — ${fallbacks} fallback (retry to upgrade)` : '',
+        ].join(''),
       });
     }
   }
@@ -665,6 +681,18 @@ export class ProjectStore {
       if (cached.success) log('cached actor is a fallback and Modal keys are set; rebuilding');
       await mkdir(actorDir, { recursive: true });
       try {
+        const found =
+          !st.mock && this.actorsLibraryDir
+            ? await findLibraryActor(this.actorsLibraryDir, character.id, log)
+            : null;
+        if (found) {
+          const asset = await copyLibraryActor(found, projectDir);
+          await writeJsonAtomic(cachePath, asset);
+          this.actorErrors.delete(key);
+          this.libraryActors.add(key);
+          log(`reused library actor ${found.sequenceDir} (no Modal call)`);
+          return asset;
+        }
         const raw = await this.actorSem.use(() =>
           this.deps.buildActor({ character, projectDir, sceneDir: actorDir, mock: st.mock, log }),
         );

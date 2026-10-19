@@ -55,6 +55,9 @@ const store = (o: Partial<StoreOptions> = {}) =>
     mock: true,
     keys: { anthropic: false, marble: false },
     echo: false,
+    // never the developer's real data/marble or data/actors-library
+    worldLibraryDir: null,
+    actorsLibraryDir: null,
     ...o,
   });
 
@@ -368,6 +371,43 @@ describe('project pipeline (mock)', () => {
     const mock = await run(true);
     expect(mock.worldCalls).toBe(3);
     expect((await readManifest(mock.id, 0)).world.provider).toBe('mock');
+  });
+
+  it('live: a matching actors-library avatar is reused instead of building one; MOCK ignores it', async () => {
+    const library = join(dataDir, '..', `${dataDir.split('/').pop()}-actors`);
+    const seqDir = join(library, 'maya', 'sequence');
+    await mkdir(seqDir, { recursive: true });
+    const frames = ['frame_000.ply', 'frame_001.ply'];
+    await writeFile(
+      join(seqDir, 'sequence.json'),
+      JSON.stringify({ frames, count: 2, fps: 12, nativeHeight: 1.812259935736556 }),
+    );
+    for (const f of frames) await writeFile(join(seqDir, f), 'ply');
+    const run = async (mock: boolean) => {
+      const f = fakeActors();
+      const s = store({ mock, actorsLibraryDir: library, deps: f.deps });
+      const { id } = await s.createProject({ screenplay: FIXTURE });
+      await s.idle();
+      return { id, st: (await s.getProject(id))!, built: f.actorCalls };
+    };
+    const live = await run(false);
+    expect(live.built).toEqual(['theo']); // maya came from the library
+    expect(live.st.scenes[0]!.stages.actors.note).toContain('reused library actor: maya');
+    const m = await readManifest(live.id, 0);
+    const maya = m.actors.find((a) => a.characterId === 'maya')!;
+    expect(maya).toEqual({
+      kind: 'splat-sequence',
+      characterId: 'maya',
+      sequenceDir: 'actors/maya/sequence',
+      fps: 12,
+      nativeHeight: 1.8123,
+      heightMeters: 1.7,
+    });
+    expect(existsSync(join(dataDir, live.id, 'actors/maya/sequence/frame_001.ply'))).toBe(true);
+    expect(m.actors.find((a) => a.characterId === 'theo')!.kind).toBe('glb-humanoid');
+
+    const mock = await run(true);
+    expect(mock.built.sort()).toEqual(['maya', 'theo']);
   });
 
   it('end to end with the real (mock-mode) WP D modules and Marble mock', async () => {
