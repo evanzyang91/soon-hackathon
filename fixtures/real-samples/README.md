@@ -10,6 +10,9 @@ show what the real providers return.
 | `reference.png` | Actor reference for MAYA ("early thirties, short dark curly hair, mustard-yellow raincoat over a grey hoodie, dark jeans, white canvas sneakers"), 1024x1536, prompt = `referencePrompt()` in actors.ts. The account rejects `gpt-image-1` ("does not exist"), so the fallback chain produced it with `gpt-image-1.5` (quality `medium`, 13.8 s). | no (2.1 MB, see `.gitignore`) |
 | `reference-512.jpg` | 512 px JPEG preview of `reference.png`. | yes |
 
-The LHM stage was then invoked with this reference. Modal accepted the credentials and built the
-CUDA image, but refused the L4 function with "Please add a payment method to use L4 GPU
-functions", so `buildActor` returned the procedural mannequin fallback. See worker/README.md.
+The LHM stage was then run on this reference on a real Modal L4 (after billing was enabled):
+480 s wall clock including the download, of which 162 s in the L4 worker, about $0.075 of GPU.
+It produced 72 frames at 12 fps (48 idle + 24 talk, 40,000 splats each): 226 MB as full PLYs,
+49 MB slim (`frame_000.ply` + the `motion.u16` track + metadata). The slim avatar is kept in the
+actors library (`data/actors-library/maya/`, gitignored) so later live projects reuse it instead
+of paying again. See worker/README.md for the stage-by-stage timings.
