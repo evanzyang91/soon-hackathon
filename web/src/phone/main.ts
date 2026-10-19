@@ -21,6 +21,7 @@ import {
 import { OrientationTracker, screenAngle, toQuat } from './sensors.ts';
 import { LEVELS, RenderGovernor } from './render-governor.ts';
 import { PoseThrottle, poseKey } from './throttle.ts';
+import { unlockAudio } from './audio.ts';
 import { bindUi } from './ui.ts';
 import { attitudeOf } from './viewfinder.ts';
 import { enterFullscreenLandscape, keepScreenOn, requestSensorPermission } from './platform.ts';
@@ -33,6 +34,8 @@ const ANGLE_OVERRIDE = params.has('angle') ? Number(params.get('angle')) : null;
 const AUTO_RECENTER = params.get('recenter') !== '0';
 const NO_3D = params.get('3d') === '0';
 const SWAY_GAIN = Number(params.get('sway') ?? 1) || 1;
+/** ?voice=0 mutes the actors on the phone (e.g. when the laptop's speakers are in the room). */
+const VOICE = params.get('voice') !== '0';
 const QUALITY =
   (['k100', 'k500', 'full'] as const).find((q) => q === params.get('quality')) ?? 'k500';
 /** The joystick never takes the camera closer than this to the floor (y = 0). */
@@ -93,6 +96,16 @@ const debug = {
   anchor,
   /** The laptop is running the scene (clock + dialogue): the ACTION button shows CUT. */
   sceneRunning: false,
+  /** AudioContext state: 'none' until the start tap creates it, then suspended / running / … */
+  audio: 'none' as AudioContextState | 'none' | 'interrupted',
+  /** An actor's voice is playing on the phone right now. */
+  audioPlaying: false,
+  /** Last line whose voice actually played on the phone (null = none yet). */
+  lastLinePlayed: null as string | null,
+  /** Loudest voice level heard during the last line, 0..1 (> 0 only when sound really flows). */
+  audioPeak: 0,
+  /** ?voice=0 mutes the phone's actors. */
+  voice: VOICE,
   /** Joystick walk offset from the anchor (m, world frame) — also in every PhonePose. */
   offset: [0, 0, 0] as Vec3,
   /** Walking heading (rad, 0 = −Z), from the camera's view direction. */
@@ -141,6 +154,8 @@ function start(): void {
   started = true;
   debug.started = true;
   debug.room = room;
+  // first, synchronously inside the tap: iOS only starts audio from a gesture (see audio.ts)
+  unlockAudio((s) => (debug.audio = s));
 
   // Sim mode never asks: synthetic events need no permission, and newer Chromium answers
   // 'denied' headless (Playwright: grant 'accelerometer'/'gyroscope' to test the real path).
@@ -255,7 +270,7 @@ async function initView() {
   }
   try {
     const { PhoneView } = await import('./view.ts');
-    view = new PhoneView(ui.glCanvas, ui.vfCanvas, QUALITY);
+    view = new PhoneView(ui.glCanvas, ui.vfCanvas, QUALITY, { voice: VOICE });
     governor.onChange = (level, reason) => {
       debug.renderLevel = level;
       const lvl = LEVELS[level]!;
@@ -467,6 +482,7 @@ function pump(now: number) {
 }
 
 let lastFrameAt = performance.now();
+let lastVoiceCheck = 0;
 function frame(now: number) {
   requestAnimationFrame(frame);
   pump(now);
@@ -513,6 +529,16 @@ function frame(now: number) {
   if (recording) ui.setRecordTime((now - recordStartedAt) / 1000);
   debug.sceneRunning = dialogue.running(scene, now);
   ui.setAction(debug.sceneRunning);
+  if (view && now - lastVoiceCheck > 100) {
+    lastVoiceCheck = now;
+    const v = view.voiceState();
+    debug.audioPlaying = v.playing.length > 0;
+    if (v.lineId && v.lineId !== debug.lastLinePlayed) {
+      debug.lastLinePlayed = v.lineId;
+      debug.audioPeak = 0;
+    }
+    if (debug.audioPlaying) debug.audioPeak = Math.max(debug.audioPeak, v.level);
+  }
   ui.setWalkReadout(walkReadout(walker.offset));
 }
 

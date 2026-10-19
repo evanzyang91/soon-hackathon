@@ -94,6 +94,24 @@ export interface Speech {
 
 const bufferCache = new Map<string, Promise<AudioBuffer>>();
 
+function loadBuffer(url: string): Promise<AudioBuffer> {
+  let p = bufferCache.get(url);
+  if (!p) {
+    p = new THREE.AudioLoader().loadAsync(url);
+    bufferCache.set(url, p);
+    p.catch(() => bufferCache.delete(url));
+  }
+  return p;
+}
+
+/**
+ * Fetches and decodes a voice clip ahead of time (the cache `play` reads), so a line starts the
+ * moment it is triggered: no network round trip between the laptop's cue and the phone's voice.
+ */
+export function preloadAudio(url: string): Promise<AudioBuffer | null> {
+  return loadBuffer(url).catch(() => null);
+}
+
 /** Positional voice at `headY` metres inside `parent`. */
 export function createSpeech(listener: THREE.AudioListener, parent: THREE.Object3D, headY: number): Speech {
   const audio = new THREE.PositionalAudio(listener);
@@ -133,15 +151,10 @@ export function createSpeech(listener: THREE.AudioListener, parent: THREE.Object
       const mine = ++token;
       const done = new Promise<void>((resolve) => (finish = resolve));
       try {
-        // browsers start the context only after a gesture; WP A's director resumes it on click
+        // browsers start the context only after a gesture: the director resumes it on any click
+        // or key, the phone unlocks it in its "Tap to start" handler (phone/audio.ts)
         if (listener.context.state === 'suspended') void listener.context.resume().catch(() => {});
-        let p = bufferCache.get(url);
-        if (!p) {
-          p = new THREE.AudioLoader().loadAsync(url);
-          bufferCache.set(url, p);
-          p.catch(() => bufferCache.delete(url));
-        }
-        const buffer = await p;
+        const buffer = await loadBuffer(url);
         if (mine !== token) return done;
         audio.setBuffer(buffer);
         audio.play();

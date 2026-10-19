@@ -6,6 +6,7 @@ import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
 import { SceneManifest, type Character, type DialogueLine } from '@shared/schema';
 import { createActor, type ActorHandle } from './actors';
+import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
 import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
@@ -421,6 +422,12 @@ export async function loadScene(
       }
     }),
   );
+
+  // decode every voice clip in the background so the first cue does not wait on the network
+  const speaker = new Map(manifest.plan.dialogue.map((l) => [l.id, l.characterId]));
+  for (const a of manifest.audio) {
+    if (rt.actors.has(speaker.get(a.lineId) ?? '')) void preloadAudio(rt.resolve(a.url));
+  }
 
   rt.dynamics = createDynamics(manifest.plan.dynamics);
   rt.scene.add(rt.dynamics.group);
