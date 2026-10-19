@@ -410,6 +410,80 @@ describe('project pipeline (mock)', () => {
     expect(mock.built.sort()).toEqual(['maya', 'theo']);
   });
 
+  it('live: a new Marble world is scale-calibrated after download, written into its asset and manifest', async () => {
+    const run = async (calibrate: boolean) => {
+      const calls: { dir: string; interior?: boolean; vision?: boolean }[] = [];
+      const s = store({
+        mock: false,
+        calibrate,
+        keys: { anthropic: true, marble: true, tts: true },
+        deps: {
+          ...fakeActors().deps,
+          parseScreenplay: async (text, o) => {
+            const { parseScreenplay } = await import('./screenplay.ts');
+            return parseScreenplay(text, { ...o, mock: true });
+          },
+          synthesizeLine: async ({ line, outDir }) => {
+            await writeFile(join(outDir, `${line.id}.mp3`), 'mp3');
+            return { lineId: line.id, url: `${line.id}.mp3`, durationSeconds: 1 };
+          },
+          generateWorld: async ({ outDir }) => {
+            await mkdir(outDir, { recursive: true });
+            await writeFile(join(outDir, 'world_500k.spz'), 'spz');
+            const asset = {
+              provider: 'marble' as const,
+              worldId: `w-${outDir.split('/').at(-2)}`,
+              spz: { k500: 'world_500k.spz' },
+              metricScaleFactor: 2,
+              groundPlaneOffset: 1.5,
+              opencvFrame: true,
+            };
+            await writeFile(join(outDir, 'world-asset.json'), JSON.stringify(asset));
+            return asset;
+          },
+          calibrateWorld: async (dir, o) => {
+            calls.push({ dir, interior: o.interior, vision: o.vision });
+            const { readWorldAsset } = await import('./calibrate.ts');
+            const a = await readWorldAsset(dir);
+            return {
+              schema: 'previz.scale-calibration/1',
+              worldId: a.worldId,
+              createdAt: new Date().toISOString(),
+              metricScaleFactor: 2,
+              groundPlaneOffset: 1.5,
+              interior: !!o.interior,
+              geometry: null,
+              vision: null,
+              decision: { factor: 0.87, candidate: 0.87, applied: true, confidence: 'medium', method: 'vision', reason: 'test' },
+              calibration: { factor: 0.87, method: 'vision', confidence: 'medium', evidence: 'door 2.04 m · test' },
+              costUsd: 0.1,
+            };
+          },
+        },
+      });
+      const { id } = await s.createProject({ screenplay: FIXTURE });
+      await s.idle();
+      return { id, calls, st: (await s.getProject(id))! };
+    };
+
+    const on = await run(true);
+    expect(on.calls).toHaveLength(3);
+    expect(on.calls.every((c) => c.vision === true)).toBe(true);
+    expect(on.st.scenes[0]!.stages.world.note).toMatch(/scale ×0\.87 \(medium\)$/);
+    const m = await readManifest(on.id, 0);
+    expect(m.world.scaleCalibration).toEqual({
+      factor: 0.87,
+      method: 'vision',
+      confidence: 'medium',
+      evidence: 'door 2.04 m · test',
+    });
+    expect(existsSync(join(dataDir, on.id, 'scene-0/world/scale-calibration.json'))).toBe(true);
+
+    const off = await run(false);
+    expect(off.calls).toHaveLength(0);
+    expect((await readManifest(off.id, 0)).world.scaleCalibration).toBeUndefined();
+  });
+
   it('end to end with the real (mock-mode) WP D modules and Marble mock', async () => {
     const s = store();
     const { id } = await s.createProject({ screenplay: FIXTURE });

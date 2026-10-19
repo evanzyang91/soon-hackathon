@@ -67,7 +67,8 @@ export async function findLibraryWorld(
  */
 export async function copyLibraryWorld(world: LibraryWorld, outDir: string): Promise<WorldAsset> {
   await mkdir(outDir, { recursive: true });
-  const extras = [RECEIPT_FILE, 'marble-world.json'];
+  // scale-calibration.json: the measurements behind asset.scaleCalibration (calibrate.ts)
+  const extras = [RECEIPT_FILE, 'marble-world.json', 'scale-calibration.json'];
   for (const f of [...assetFiles(world.asset), ...extras]) {
     const src = join(world.dir, f);
     if (!(await exists(src))) continue; // only the extras are optional (checked in find)
