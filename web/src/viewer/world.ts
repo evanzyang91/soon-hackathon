@@ -8,7 +8,7 @@ import { SceneManifest, type Character, type DialogueLine } from '@shared/schema
 import { createActor, type ActorHandle } from './actors';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
-import { colliderTriangles, correctPlacement, yawToward, type V2 } from './placement';
+import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
 import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
 
@@ -307,13 +307,14 @@ class LoadedScene implements SceneRuntime {
 }
 
 /**
- * Moves actors whose blocking puts them inside collider geometry to the nearest free floor
+ * Moves actors whose blocking puts them inside collider geometry (or off its floor) to free floor
  * (toward the start camera, ≥ 0.5 m from the others), turning a moved actor to face its nearest
  * partner. Every actor gets `userData.placement = { status, from, to }`.
  */
 function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
   const tris = colliderTriangles(collider);
   if (!tris.length) return;
+  const grid = new TriGrid(tris);
   const poses = new Map(rt.manifest.plan.blocking.map((b) => [b.characterId, b.pose]));
   const start = rt.manifest.startCamera.position;
   const actors = [...rt.actors.values()];
@@ -321,14 +322,14 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
   for (const actor of actors) {
     const from = xz(actor.object);
     const others = actors.filter((a) => a !== actor).map((a) => xz(a.object));
-    const r = correctPlacement(tris, from[0], from[1], {
+    const r = correctPlacement(grid, from[0], from[1], {
       pose: poses.get(actor.characterId) ?? 'standing',
       toward: [start[0], start[2]],
       avoid: others,
     });
     actor.object.userData.placement = { status: r.status, from, to: [r.x, r.z] };
     if (r.status === 'stuck')
-      console.warn(`[placement] ${actor.characterId}: inside geometry, no free spot within 1.5 m`);
+      console.warn(`[placement] ${actor.characterId}: misplaced, but no free floor within 3 m`);
     if (r.status !== 'moved') continue;
     actor.object.position.x = r.x;
     actor.object.position.z = r.z;
@@ -337,7 +338,7 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
     )[0];
     if (partner) actor.object.rotation.y = yawToward([r.x, r.z], partner);
     console.info(
-      `[placement] ${actor.characterId}: moved out of geometry (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
+      `[placement] ${actor.characterId}: moved to free floor (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
     );
   }
 }

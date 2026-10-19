@@ -7,6 +7,7 @@ import {
   hasFloor,
   rayHit,
   spotBlocked,
+  TriGrid,
   trianglesNear,
   yawToward,
 } from './placement';
@@ -73,6 +74,19 @@ describe('spot probes', () => {
   });
 });
 
+describe('TriGrid', () => {
+  it('returns the triangles near a probe (each once) plus the huge ones', () => {
+    const scene = soup(floor(50), box(COUNTER), box([10, 0, 10, 11, 1, 11]));
+    const grid = new TriGrid(scene);
+    const near = grid.around(0.7, -2.4);
+    // the two 100 m floor triangles (always) + the counter's front, back, top and bottom (its
+    // end caps at x = -1.5 and x = 2 are in other cells); nothing of the far box
+    expect(near.length / 9).toBe(2 + 8);
+    expect(rayHit(near, [0.7, 0.5, -2.4], [0, 0, 1], 1)).toBeCloseTo(0.3, 5);
+    expect(grid.around(30, 30).length / 9).toBe(2);
+  });
+});
+
 describe('candidateSpots', () => {
   it('rings outward in 0.25 m steps up to 1.5 m, toward the camera first among equals', () => {
     const c = candidateSpots(0, -2, [0, 0]);
@@ -102,16 +116,33 @@ describe('correctPlacement', () => {
     expect(Math.hypot(r.x - 0.7, r.z + 2.4)).toBeLessThanOrEqual(1.5);
   });
 
+  it('brings an actor standing outside the captured room (no floor, behind a wall) back in', () => {
+    // a room whose back wall is at z = -2.6; blocking put the actor at z = -3.2, beyond it
+    const room = soup(floor(2.6), box([-2.6, 0, -2.7, 2.6, 2.5, -2.6]));
+    expect(spotBlocked(room, 0.8, -3.2)).toBe(false); // nothing within reach out there...
+    expect(hasFloor(room, 0.8, -3.2)).toBe(false); // ...but nothing to stand on either
+    const r = correctPlacement(room, 0.8, -3.2, { toward: [0, 0] });
+    expect(r.status).toBe('moved');
+    expect(r.z).toBeGreaterThan(-2.6 + 0.35 - 1e-6); // inside, clear of the wall
+    expect(hasFloor(room, r.x, r.z)).toBe(true);
+  });
+
   it('keeps its distance from other actors and reports when nothing is free', () => {
     const free = correctPlacement(kitchen, 0.7, -2.4, { toward: [0, 0] });
     const r = correctPlacement(kitchen, 0.7, -2.4, { toward: [0, 0], avoid: [[free.x, free.z]] });
     expect(r.status).toBe('moved');
     expect(Math.hypot(r.x - free.x, r.z - free.z)).toBeGreaterThanOrEqual(0.5);
-    // standing inside a closed room is fine; inside a 5 m wide solid platform nothing is free
+    // standing inside a closed room is fine; on a 9 m wide solid platform nothing within 3 m is
+    // free (the 1.5 m search, then the 3 m fallback)
     const room = soup(box([-3, 0, -5, 3, 2.6, 1]));
     expect(correctPlacement(room, 0, -2).status).toBe('clear');
-    const platform = soup(floor(), box([-2.5, 0, -4.5, 2.5, 1, 0.5]));
+    const platform = soup(floor(), box([-4.5, 0, -6.5, 4.5, 1, 2.5]));
     expect(correctPlacement(platform, 0, -2)).toEqual({ status: 'stuck', x: 0, z: -2 });
+    // a 5 m platform: the 3 m fallback finds the floor past its edge
+    const small = soup(floor(), box([-2.5, 0, -4.5, 2.5, 1, 0.5]));
+    const r2 = correctPlacement(small, 0, -2, { toward: [0, 0] });
+    expect(r2.status).toBe('moved');
+    expect(Math.hypot(r2.x, r2.z + 2)).toBeGreaterThan(1.5);
   });
 });
 

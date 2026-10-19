@@ -1,7 +1,8 @@
 // Actor placement correction against the world's collider mesh. LLM blocking is written blind, so
-// in a tight interior an actor can land inside a counter or a wall. Once the collider is loaded
-// (same frame as the splats), each actor's spot is probed with short rays; a blocked actor moves
-// to the nearest free spot that has a floor under it, preferring spots toward the source camera.
+// in a tight interior an actor can land inside a counter, or behind a wall where the captured
+// world has no floor. Once the collider is loaded (same frame as the splats), each actor's spot is
+// probed with short rays; a blocked or floorless actor moves to the nearest free spot that has a
+// floor under it, preferring spots toward the source camera.
 //
 // The ray math works on a flat world-space triangle soup (9 floats per triangle) and is pure:
 // no scene graph, deterministic, unit tested. `colliderTriangles` is the only three.js glue.
@@ -114,9 +115,74 @@ export function spotBlocked(tris: Float32Array, x: number, z: number, pose: Pose
   return down !== null;
 }
 
-/** Floor support: a downward ray from 1.2 m hits something within 1.4 m (down to y = -0.2). */
+/**
+ * Floor support: a downward ray from 1.2 m hits something within 1.8 m (down to y = -0.6; Marble
+ * colliders are coarse and can sit a few decimetres below the splat floor, e.g. on a rooftop).
+ */
 export function hasFloor(tris: Float32Array, x: number, z: number): boolean {
-  return rayHit(tris, [x, 1.2, z], [0, -1, 0], 1.4) !== null;
+  return rayHit(tris, [x, 1.2, z], [0, -1, 0], 1.8) !== null;
+}
+
+/**
+ * Uniform xz grid over a triangle soup, so each probe only ray-tests the few triangles around it
+ * (a real collider has ~100k–300k). Triangles wider than `maxCells` cells (ground planes, sky
+ * shells) go to a short list that every query includes.
+ */
+export class TriGrid {
+  private readonly cells = new Map<number, number[]>();
+  private readonly big: number[] = [];
+
+  constructor(
+    readonly tris: Float32Array,
+    readonly cell = 0.5,
+    maxCells = 64,
+  ) {
+    for (let t = 0; t < tris.length; t += 9) {
+      const [i0, i1, k0, k1] = this.span(
+        Math.min(tris[t]!, tris[t + 3]!, tris[t + 6]!),
+        Math.min(tris[t + 2]!, tris[t + 5]!, tris[t + 8]!),
+        Math.max(tris[t]!, tris[t + 3]!, tris[t + 6]!),
+        Math.max(tris[t + 2]!, tris[t + 5]!, tris[t + 8]!),
+      );
+      if ((i1 - i0 + 1) * (k1 - k0 + 1) > maxCells) {
+        this.big.push(t);
+        continue;
+      }
+      for (let i = i0; i <= i1; i++)
+        for (let k = k0; k <= k1; k++) {
+          const key = TriGrid.key(i, k);
+          const list = this.cells.get(key);
+          if (list) list.push(t);
+          else this.cells.set(key, [t]);
+        }
+    }
+  }
+
+  private static key(i: number, k: number) {
+    return (i + 32768) * 65536 + (k + 32768);
+  }
+
+  private span(x0: number, z0: number, x1: number, z1: number): [number, number, number, number] {
+    const c = (v: number) => Math.max(-32767, Math.min(32767, Math.floor(v / this.cell)));
+    return [c(x0), c(x1), c(z0), c(z1)];
+  }
+
+  /** Triangles that may touch the xz box (each once). */
+  query(x0: number, z0: number, x1: number, z1: number): Float32Array {
+    const [i0, i1, k0, k1] = this.span(x0, z0, x1, z1);
+    const seen = new Set<number>(this.big);
+    for (let i = i0; i <= i1; i++)
+      for (let k = k0; k <= k1; k++) for (const t of this.cells.get(TriGrid.key(i, k)) ?? []) seen.add(t);
+    const out = new Float32Array(seen.size * 9);
+    let n = 0;
+    for (const t of seen) out.set(this.tris.subarray(t, t + 9), 9 * n++);
+    return out;
+  }
+
+  /** Everything a body probe at (x, z) can reach. */
+  around(x: number, z: number, r = 0.45): Float32Array {
+    return this.query(x - r, z - r, x + r, z + r);
+  }
 }
 
 /**
@@ -146,25 +212,49 @@ export interface PlacementResult {
   z: number;
 }
 
+export interface PlacementOptions {
+  pose?: Pose;
+  /** Preferred direction of travel: the source camera (xz). */
+  toward?: V2;
+  /** Other actors: a new spot keeps `minGap` (0.5 m) from them. */
+  avoid?: V2[];
+  step?: number;
+  /** Search radius (1.5 m), then `fallbackR` (3 m) if nothing is free that close. */
+  maxR?: number;
+  fallbackR?: number;
+  minGap?: number;
+}
+
 /**
- * Leaves a clear actor where it is; moves a blocked one to the first free candidate spot with a
- * floor under it that keeps `minGap` from `avoid` (the other actors); 'stuck' when none exists.
+ * Leaves a clear actor where it is; moves a blocked one, or one with no floor under it (blocking
+ * that lands behind a wall, outside the captured room), to the first free candidate spot with a
+ * floor that keeps `minGap` from `avoid`. The search covers `maxR`, then `fallbackR`; 'stuck'
+ * when nothing within reach is free.
  */
 export function correctPlacement(
-  tris: Float32Array,
+  collider: Float32Array | TriGrid,
   x: number,
   z: number,
-  opts: { pose?: Pose; toward?: V2; avoid?: V2[]; step?: number; maxR?: number; minGap?: number } = {},
+  opts: PlacementOptions = {},
 ): PlacementResult {
+  const grid = collider instanceof TriGrid ? collider : new TriGrid(collider);
   const pose = opts.pose ?? 'standing';
-  const maxR = opts.maxR ?? 1.5;
-  const near = trianglesNear(tris, x, z, maxR + 0.5);
-  if (!spotBlocked(near, x, z, pose)) return { status: 'clear', x, z };
+  const ok = (px: number, pz: number) => {
+    const local = grid.around(px, pz);
+    return hasFloor(local, px, pz) && !spotBlocked(local, px, pz, pose);
+  };
+  if (ok(x, z)) return { status: 'clear', x, z };
   const gap = opts.minGap ?? 0.5;
-  for (const [cx, cz] of candidateSpots(x, z, opts.toward ?? [0, 0], opts.step ?? 0.25, maxR)) {
-    if ((opts.avoid ?? []).some(([ax, az]) => Math.hypot(ax - cx, az - cz) < gap)) continue;
-    if (!hasFloor(near, cx, cz) || spotBlocked(near, cx, cz, pose)) continue;
-    return { status: 'moved', x: cx, z: cz };
+  const step = opts.step ?? 0.25;
+  const tried = new Set<string>();
+  for (const r of [opts.maxR ?? 1.5, opts.fallbackR ?? 3]) {
+    for (const [cx, cz] of candidateSpots(x, z, opts.toward ?? [0, 0], step, r)) {
+      const key = `${cx.toFixed(3)},${cz.toFixed(3)}`;
+      if (tried.has(key)) continue;
+      tried.add(key);
+      if ((opts.avoid ?? []).some(([ax, az]) => Math.hypot(ax - cx, az - cz) < gap)) continue;
+      if (ok(cx, cz)) return { status: 'moved', x: cx, z: cz };
+    }
   }
   return { status: 'stuck', x, z };
 }
