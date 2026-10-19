@@ -113,9 +113,26 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
 | click a dialogue line / **Play scene** | speak one line / the whole scene in order (caption + positional audio) |
 | **Re-center phone**, **Still**, **New room** | phone heading reset, PNG from the phone camera, new pairing code |
 
-**Phone**: move the phone to frame the shot, pinch (or wheel in `?sim=1`) to change the lens,
-**Recenter**, **Shutter** (the laptop saves a still), **Record** (starts a take on the laptop),
-**Cam ›** (switch to the next dropped camera). The caption shows the line being spoken.
+**Phone**
+
+| Input | Action |
+| --- | --- |
+| move / turn the phone | frame the shot: pan, tilt, roll, plus handheld sway |
+| joystick (bottom left, left thumb) | walk forward / back / sideways along the camera's heading, up to 1.5 m/s |
+| double-tap the joystick | back to the attached camera |
+| height slider (right) | raise / lower the camera (±2 m) |
+| pinch (wheel in `?sim=1`) | lens |
+| **ACTION** / **CUT** | start the scene on the laptop (dialogue in order + clock) / stop it |
+| **Line ›** | the laptop plays the next dialogue line |
+| **Recenter** | the phone's heading → the attached camera's heading (keeps where you walked) |
+| **Shutter**, **Record**, **Cam ›** | laptop still, laptop take, next dropped camera |
+| `?sim=1`: drag, W A S D / arrows, Q / E | look, walk, height |
+
+The phone shows the camera name, lens and scene clock (▶ / ⏸), the line being spoken, how far
+you have walked, and its render rate (`48 fps · full`, `3D paused`). The actors speak on the
+phone as well (positional, from the phone camera); "Tap to start" unlocks audio on iOS, and
+`?voice=0` mutes the phone if the laptop's speakers are in the room. Details and debug hooks:
+`web/src/phone/README.md`.
 
 ## Real Marble generation
 
@@ -188,9 +205,9 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
 ## Known limitations
 
 - **No 6DoF tracking.** A browser exposes orientation and acceleration, not position: the phone
-  rotates freely around the camera it is attached to and adds a damped ±0.3 m handheld sway, but
-  walking with the phone does not move the camera. True 6DoF would need a native ARKit/ARCore
-  companion speaking the same protocol.
+  rotates freely around the camera it is attached to and adds a damped ±0.3 m handheld sway;
+  moving through the scene is done with the on-screen joystick, not by walking with the phone.
+  True 6DoF would need a native ARKit/ARCore companion speaking the same protocol.
 - **No lip-sync on splat avatars.** The LHM avatar switches to a talk loop while it speaks; only
   the mannequin moves its jaw with the audio. Seated blocking lowers a splat avatar by 0.45 m
   (there is no sitting motion), and walking blocking does not walk.

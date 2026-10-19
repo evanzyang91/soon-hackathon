@@ -4,16 +4,51 @@ The phone is the handheld camera. It joins a relay room, streams `PhonePose` (�
 laptop, and renders the scene from its own pose (WP A's `viewer/world.ts` + `viewer/render.ts`),
 or a 2D viewfinder when 3D is unavailable. Pose streaming never depends on the 3D view.
 
+## Controls
+
+| Input | Action |
+| --- | --- |
+| move / turn the phone | pan, tilt, roll (orientation sensors) + handheld sway (accelerometer) |
+| **joystick** (bottom left, drag with the left thumb) | walk: up = forward, sideways = strafe, along the camera's heading (level, whatever the tilt); dead zone, eases up to 1.5 m/s |
+| double-tap the joystick | back to the attached camera (walk offset → 0) |
+| **height slider** (right, next to the shutter) | drag up / down: raise / lower the camera, up to 0.5 m/s, ±2 m (never below 0.15 m) |
+| pinch | lens (24–90° vertical fov, "35mm" labels) |
+| **ACTION** / **CUT** (top right) | laptop "Play scene" (dialogue in order + scene clock) / stop it; shows CUT while the laptop runs the scene |
+| **Line ›** | laptop plays the line after the last one played (wraps to the first) |
+| **Recenter** | current heading → the attached camera's heading (keeps the walk offset) |
+| **Shutter**, **Record**, **Cam ›** | laptop still, laptop take, next dropped camera (resets the walk offset) |
+| `?sim=1`: drag, wheel, W A S D / arrows, Q / E (or Page Down / Up) | look, lens, walk, height |
+
+The walk offset (metres, world frame) goes out in every pose as `PhonePose.offset`; phone camera
+= attached camera + offset + nudge, on the phone and on the laptop (gizmo, PiP, View from phone,
+stills). It resets to zero whenever the anchor camera changes (Cam ›, the laptop switching the
+active camera, another scene), and survives Recenter.
+
+HUD: room + link (top left); camera name, lens and scene clock (`▶ 0:04` / `⏸ 0:04`, top
+centre); ACTION + Line › (top right); the line being spoken (bottom centre); how far the
+joystick has walked (`↔ 2.3 m · ↑ 0.5 m from Cam 1`, above the joystick); render rate + governor
+level (`48 fps · full`, `3D paused`, `loading 3D…`, `2D viewfinder`, bottom right). A scene that
+finishes loading while paused shows "Laptop: press Play or tap ACTION to start the scene" for 2 s.
+
+**Sound.** The actors speak on the phone too (positional, heard from the phone camera), in sync
+with the laptop's `speakingLineId`. iOS only starts audio inside a user gesture, so "Tap to start"
+creates the AudioContext, resumes it, plays one silent sample and hands it to three.js
+(`THREE.AudioContext.setContext`) before anything else (`audio.ts`); any later tap resumes it
+again (after `?autostart=1`, or iOS "interrupted"). On iOS 16.4+ it plays through the silent
+switch (`navigator.audioSession.type = 'playback'`). `?voice=0` mutes the phone when the laptop's
+speakers are in the same room.
+
 ```
 ?room=ABCD        pre-fill the room code (the laptop's QR links here)
-?sim=1            desktop simulator: drag-to-look + wheel zoom, no fullscreen / permission
-?autostart=1      skip the "Tap to start" click (needs ?room=; fine in sim, no gesture needed)
+?sim=1            desktop simulator: drag-to-look + wheel zoom + WASD / QE walk, no fullscreen / permission
+?autostart=1      skip the "Tap to start" click (needs ?room=; audio then waits for the first tap)
 ?angle=90         override screen.orientation.angle (deg) for the orientation math
 ?recenter=0       disable auto-recenter (pose q = raw sensor math, handy for exact asserts)
 ?3d=0             never create WebGL; 2D viewfinder only
 ?quality=k100     splat LOD (default k500)
 ?governor=0       always render every frame (disable the render governor, see below)
 ?sway=2           exaggerate the handheld nudge
+?voice=0          mute the actors on the phone (the laptop still plays them)
 ?ws=wss://…/ws    override the relay URL
 ```
 
@@ -21,13 +56,15 @@ or a 2D viewfinder when 3D is unavailable. Pose streaming never depends on the 3
 
 | file                                  | what                                                                          |
 | ------------------------------------- | ----------------------------------------------------------------------------- |
-| `main.ts`                             | boot + wiring: start gesture, relay, sensors, pose pump, scene state          |
+| `main.ts`                             | boot + wiring: start gesture, relay, sensors, pose pump, scene state, HUD     |
 | `sensors.ts`                          | `deviceorientation` → camera quaternion, yaw recenter (`OrientationTracker`)  |
 | `nudge.ts`                            | `devicemotion` → damped, high-passed, clamped (±0.3 m) handheld sway          |
+| `walk.ts` / `joystick.ts`             | joystick walk math (heading, dead zone, ramp, height clamp) / its DOM + keys  |
+| `audio.ts`                            | AudioContext unlock inside the start tap, shared with three.js                |
 | `fov.ts` / `throttle.ts`              | pinch zoom (24–90°, "35mm" labels) / ≤ 30 Hz + 4 Hz keepalive                 |
-| `scene-sync.ts`                       | `SceneState` → anchor camera, caption, extrapolated scene clock               |
+| `scene-sync.ts`                       | `SceneState` → anchor, caption, scene clock, ACTION / CUT (`DialogueActivity`)|
 | `relay-client.ts`                     | reconnecting WebSocket client (role-agnostic; the laptop can reuse it)        |
-| `render-governor.ts`                  | steps 3D quality down (down to paused) when rendering starves the pose stream |
+| `render-governor.ts`                  | steps 3D quality down (down to paused) when rendering starves the pose stream; perf label |
 | `view.ts` / `viewfinder.ts`           | 3D render via `loadScene` / 2D fallback                                       |
 | `gestures.ts`, `platform.ts`, `ui.ts` | input, iOS permission + fullscreen + wake lock, DOM                           |
 
@@ -70,9 +107,12 @@ await phone.evaluate(() =>
 | `orientationEvents`, `motionEvents`                              | sensor events applied                                                     |
 | `scene`, `anchor`                                                | last `SceneState`; current anchor `{ position, yaw, fovDeg, name, key }`  |
 | `viewMode`, `viewStatus`                                         | `'webgl' \| 'viewfinder'`, plus a human-readable status                   |
-| `renderLevel`, `renderMs`, `framesRendered`                      | governor level (0 full … 4 paused), JS cost per 3D frame, 3D frames drawn |
+| `renderLevel`, `renderMs`, `framesRendered`, `fps`               | governor level (0 full … 4 paused), JS cost per 3D frame, 3D frames drawn, 3D frames / s |
+| `offset`, `heading`, `walk`, `cameraPosition`                    | walk offset (m), walking heading (rad), stick input `{ x, y, rise }`, anchor + offset + nudge |
+| `sceneRunning`                                                   | the laptop runs the scene (ACTION shows CUT)                              |
+| `audio`, `audioPlaying`, `lastLinePlayed`, `audioPeak`, `voice`  | AudioContext state (`'none'` before the tap), a voice playing now, last line voiced, loudest level of it (0..1, > 0 only when sound really flows), `?voice` |
 | `yawOffset`, `recording`, `permission`, `started`, `room`, `sim` | self-explanatory                                                          |
-| `start()`, `recenter()`, `setFov(deg)`                           | actions                                                                   |
+| `start()`, `recenter()`, `setFov(deg)`, `resetWalk()`            | actions                                                                   |
 
 Mobile emulation note: with `isMobile: true` and a landscape viewport, Chromium reports
 `screen.orientation.angle = 90`. So feed landscape samples (`alpha, 0, -90` = upright, top edge
@@ -82,8 +122,22 @@ test the non-sim permission path, call `context.grantPermissions(['accelerometer
 answers `denied` otherwise. Sim mode never asks.
 
 Without `autostart`, click `#start-button`. Other selectors: `#room-input`, `#recenter`,
-`#shutter`, `#record` (`aria-pressed`), `#next-cam`, `#caption`, `#lens`, `#cam-name`, and the
-`#gl` / `#vf` canvases (`body[data-view]` says which one is showing).
+`#shutter`, `#record` (`aria-pressed`), `#next-cam`, `#action` (`aria-pressed` = CUT),
+`#next-line`, `#caption`, `#lens`, `#cam-name`, `#clock` (`data-playing`), `#perf`,
+`#walk-readout`, the joystick `#joystick` (zone; `data-active` while dragged) with `#joy-base` /
+`#joy-knob`, the height slider `#height` / `#height-knob`, and the `#gl` / `#vf` canvases
+(`body[data-view]` says which one is showing).
+
+Driving the walk controls: pointer events, so `page.mouse` works. Press in the middle of
+`#joystick` and move up by ≥ 48 px for full forward (≥ 56 px on `#height` for full rise); two
+clicks within 380 ms on `#joystick` reset. In `?sim=1`, `page.keyboard.down('KeyW')` walks too.
+
+Testing audio: `page.evaluate()` runs with a user gesture (CDP `userGesture: true`), which by
+itself lets an AudioContext start, and Chromium's `--autoplay-policy=user-gesture-required` does
+not suspend Web Audio at all. Use `--autoplay-policy=document-user-activation-required` (desktop
+Chrome's default) and read state from pages under test without `evaluate` (e.g. an init script
+that logs `window.__phone` to the console), so only real `page.mouse` / `page.keyboard` input
+counts as a gesture.
 
 The laptop side gets poses from the relay as ordinary `pose` messages. The relay coalesces each
 phone to the latest pose per 33 ms. A still phone still sends a keepalive pose every 250 ms.
