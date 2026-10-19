@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildMannequin } from './mannequin';
+import { buildMannequin, LOOK_LIMIT } from './mannequin';
 import { poseDrop, wantsGlbFile, PROCEDURAL_GLB, SIT_DROP_M } from './index';
 import { tintFor } from '@shared/tint';
 import { projectCandidates, wrapText } from './common';
@@ -68,6 +68,89 @@ describe('procedural mannequin', () => {
     expect(b.min.z).toBeLessThan(-0.4); // knees out in front (-Z)
     expect(b.min.y).toBeGreaterThan(-0.05);
     m.dispose();
+  });
+});
+
+describe('mannequin idle life', () => {
+  const shoes = (o: THREE.Object3D) =>
+    meshes(o).filter((x) => x.geometry instanceof THREE.BoxGeometry && x.geometry.parameters.depth > 0.2);
+  const world = (m: THREE.Mesh) => m.getWorldPosition(new THREE.Vector3());
+
+  it('shifts its weight every 6–10 s, eased (no jumps), with the feet planted', () => {
+    const m = buildMannequin('#3366cc');
+    const dt = 1 / 30;
+    m.animate(dt, 0, false, 0);
+    m.root.updateMatrixWorld(true);
+    const feet0 = shoes(m.root).map(world);
+    expect(feet0).toHaveLength(2);
+    const shifts: number[] = [];
+    let maxStep = 0;
+    let worstSlide = 0;
+    let lowest = Infinity;
+    for (let i = 1; i <= 30 * 40; i++) {
+      const prev = m.weightShift();
+      m.animate(dt, i * dt, false, 0);
+      const s = m.weightShift();
+      shifts.push(s);
+      maxStep = Math.max(maxStep, Math.abs(s - prev));
+      m.root.updateMatrixWorld(true);
+      shoes(m.root).forEach((f, k) => {
+        const p = world(f);
+        worstSlide = Math.max(worstSlide, Math.abs(p.x - feet0[k]!.x));
+        lowest = Math.min(lowest, p.y);
+      });
+    }
+    // it does shift, both ways, and settles between shifts
+    expect(Math.max(...shifts)).toBeGreaterThan(0.5);
+    expect(Math.min(...shifts)).toBeLessThan(-0.5);
+    // eased over ~1.4 s: even a left-to-right shift (travel 2) moves < 0.08 per 1/30 s frame
+    expect(maxStep).toBeLessThan(0.08);
+    // ...and only now and then: in 40 s it changes on at most ~7 occasions (every 6–10 s)
+    let moves = 0;
+    for (let i = 1; i < shifts.length; i++) {
+      const moving = Math.abs(shifts[i]! - shifts[i - 1]!) > 1e-5;
+      const was = i > 1 && Math.abs(shifts[i - 1]! - shifts[i - 2]!) > 1e-5;
+      if (moving && !was) moves++;
+    }
+    expect(moves).toBeGreaterThanOrEqual(3);
+    expect(moves).toBeLessThanOrEqual(7);
+    // feet stay put (< 1.5 cm sideways) and never sink into the floor
+    expect(worstSlide).toBeLessThan(0.015);
+    expect(lowest).toBeGreaterThan(-0.03);
+  });
+
+  it('turns its head toward the look target, eased and clamped, and back when it is gone', () => {
+    const m = buildMannequin('#cc6633');
+    const dt = 1 / 60;
+    let t = 0;
+    const run = (seconds: number) => {
+      let maxStep = 0;
+      for (let i = 0; i < seconds / dt; i++) {
+        const before = m.lookYaw();
+        m.animate(dt, (t += dt), false, 0);
+        maxStep = Math.max(maxStep, Math.abs(m.lookYaw() - before));
+      }
+      return maxStep;
+    };
+    run(0.5);
+    expect(m.lookYaw()).toBeCloseTo(0, 6);
+    m.setLook(0.8); // partner on the left
+    m.animate(dt, (t += dt), false, 0);
+    expect(m.lookYaw()).toBeLessThan(0.1); // no snap
+    const step = run(2);
+    expect(m.lookYaw()).toBeCloseTo(0.8, 2);
+    expect(step).toBeLessThan(0.06);
+    // the face (eyes, on −Z of the head) really points left (−X) now
+    m.root.updateMatrixWorld(true);
+    const eyes = meshes(m.root).filter((x) => x.geometry instanceof THREE.SphereGeometry && x.geometry.parameters.radius < 0.02);
+    const mid = world(eyes[0]!).add(world(eyes[1]!)).multiplyScalar(0.5);
+    expect(mid.x).toBeLessThan(-0.05);
+    m.setLook(-3); // behind on the right: turns as far as a neck can
+    run(3);
+    expect(m.lookYaw()).toBeCloseTo(-LOOK_LIMIT, 2);
+    m.setLook(null);
+    run(3);
+    expect(Math.abs(m.lookYaw())).toBeLessThan(0.01);
   });
 });
 
