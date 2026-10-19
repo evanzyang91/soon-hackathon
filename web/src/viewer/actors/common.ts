@@ -55,8 +55,14 @@ export function textSprite(text: string, opts: TextSpriteOptions): TextSprite {
     const lines = opts.wrap ? wrapText(t, opts.wrap) : [t];
     ctx.font = `600 ${px}px system-ui, sans-serif`;
     const w = Math.ceil(Math.max(...lines.map((l) => ctx.measureText(l).width))) + px;
+    const hPx = Math.round(lineH * lines.length);
+    // three.js allocates the GL texture once and then only updates it in place, so a canvas of a
+    // new size never reaches the GPU (the sprite kept stretching the first line it ever showed).
+    // Disposing makes the next render allocate a fresh texture at the new size.
+    const resized = canvas.width !== w || canvas.height !== hPx;
     canvas.width = w;
-    canvas.height = Math.round(lineH * lines.length);
+    canvas.height = hPx;
+    if (resized) texture.dispose();
     ctx.font = `600 ${px}px system-ui, sans-serif`;
     ctx.fillStyle = opts.bg;
     const r = lineH / 2;
