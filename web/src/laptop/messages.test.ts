@@ -114,6 +114,18 @@ describe('phone pose handling', () => {
     expect(Math.hypot(...p.quaternion)).toBeCloseTo(1, 6);
   });
 
+  it('adds the phone joystick walk offset on top of the anchor and the nudge', () => {
+    const p = phoneCameraPose(pose({ offset: [1.5, 0.25, -3] }), [2, 1.6, 2]);
+    expect(p.position[0]).toBeCloseTo(3.6);
+    expect(p.position[1]).toBeCloseTo(1.8);
+    expect(p.position[2]).toBeCloseTo(-0.98);
+    // poses from phones without a joystick (no `offset`) still parse and sit on the anchor
+    const legacy = parseServerMessage(JSON.stringify(pose()));
+    expect(legacy?.type === 'pose' && legacy.offset).toBeUndefined();
+    const offset = parseServerMessage(JSON.stringify(pose({ offset: [0, 0, -1] })));
+    expect(offset?.type === 'pose' && offset.offset).toEqual([0, 0, -1]);
+  });
+
   it('falls back to the start camera when nothing is active', () => {
     expect(phoneAnchor([cam('a')], null, [0, 1.5, 0])).toEqual([0, 1.5, 0]);
   });

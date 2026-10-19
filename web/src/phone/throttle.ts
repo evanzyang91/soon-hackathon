@@ -28,8 +28,11 @@ export class PoseThrottle {
 }
 
 /** Compact change-detection key: ~0.001 rad / 1 mm / 0.1° / 0.01 aspect resolution. */
-export function poseKey(p: Pick<PhonePose, 'q' | 'nudge' | 'fovDeg' | 'recording' | 'aspect'>) {
+export function poseKey(
+  p: Pick<PhonePose, 'q' | 'nudge' | 'offset' | 'fovDeg' | 'recording' | 'aspect'>,
+) {
   const q = p.q.map((v) => Math.round(v * 2000)).join(',');
   const n = p.nudge.map((v) => Math.round(v * 1000)).join(',');
-  return `${q}|${n}|${Math.round(p.fovDeg * 10)}|${Math.round((p.aspect ?? 0) * 100)}|${p.recording ? 1 : 0}`;
+  const o = (p.offset ?? [0, 0, 0]).map((v) => Math.round(v * 1000)).join(',');
+  return `${q}|${n}|${o}|${Math.round(p.fovDeg * 10)}|${Math.round((p.aspect ?? 0) * 100)}|${p.recording ? 1 : 0}`;
 }
