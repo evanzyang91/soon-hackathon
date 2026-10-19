@@ -61,6 +61,10 @@ screenplay.txt/.fountain
   and translate so the floor sits at y = 0.
 - Actors are placed with feet on y = 0; blocking positions are meters in the world frame, origin at
   Marble's source camera.
+- `WorldAsset.scaleCalibration.factor` (server/pipeline/calibrate.ts) multiplies Marble's scale
+  (S = factor × msf, ty = factor × gpo, floor still at y = 0). It is measured after download from
+  collider references and Claude vision with 1.70 m mannequins; absent or 1 means Marble's scale
+  was kept.
 
 ### Phone pose model (browser PWA)
 

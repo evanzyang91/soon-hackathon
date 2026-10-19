@@ -167,6 +167,65 @@ A match is copied (APFS clone) into the project, so projects stay self-contained
 libraries filled, `MOCK=0` on `fixtures/screenplay.fountain` spends only the Claude plan and TTS
 (cents for ~12 lines).
 
+### Scale calibration: is the world really metric?
+
+Marble returns a `metric_scale_factor`, and Orbis found it can be off by up to 2×. After every
+Marble download (and from the CLI) the pipeline measures the real scale and stores it as
+`WorldAsset.scaleCalibration`. The viewer multiplies Marble's scale by `factor`, keeping the floor at
+y = 0, and the laptop HUD shows `scale ×0.87 (door 2.04 m)` next to the scene title, with the full
+evidence in its tooltip.
+
+```sh
+pnpm tsx server/pipeline/cli.ts calibrate data/marble/kitchen-morning            # print the report
+pnpm tsx server/pipeline/cli.ts calibrate <worldDir> --write --before-after out.png
+#   --no-vision   collider only (free)    --reuse   re-decide the last report, no Claude call
+#   CALIBRATE=0 / --no-calibrate skips the pipeline step; CALIBRATE_VISION=0 skips the Claude half
+```
+
+The calibration uses two independent sources (`server/pipeline/calibrate*.ts`):
+
+- **Collider geometry.** The collider GLB is flattened with the viewer's own transform. Heights are
+  measured from the *local* floor, never y = 0: floor to ceiling over open floor, doorways (a
+  horizontal-ray sweep for an opening that reaches the floor under a lintel), and flat tops
+  classified by shape, never by height (a counter is long and backed by a wall, a table is compact
+  with room around it, plus seats and benches). Each one implies `typical / measured`.
+- **Claude vision (`claude-opus-5-5`).** Four views from the source camera (0°, ±60°, then behind),
+  rendered offscreen in GPU Chromium with 1.70 m mannequins on free, visible floor. Claude names
+  standard objects, compares each with the mannequin at the same depth, and marks its floor-contact
+  and top pixels. Those pixels are cast into the world (base onto the floor, top onto the vertical
+  above it), so heights are perspective-correct. There are two requests on different views, plus a
+  close-up request with the mannequin standing beside the best objects found. At least two of the
+  three must agree within 15%, with enough evidence: total weight ≥ 0.8 and one clean standard
+  reference.
+
+| Collider vs vision | Result |
+| --- | --- |
+| agree within 10% | apply the collider median, confidence `high` |
+| 10–25% apart | apply the collider median (`medium`) only with ≥ 3 consistent collider references |
+| more than 25% apart | nothing applied: factor 1, `low`, and the evidence says why |
+| only one source | collider `high` (≥ 3 consistent) or `medium`; vision `medium` |
+
+A correction under 5% is recorded but not applied, and nothing outside [0.5, 2] is ever applied.
+Library copies carry the calibration, so a reused world is not measured again. Cost: 2–3 requests,
+each about 5k input tokens (two 1280×720 JPEGs) and 1–4k output tokens, so $0.14–0.25 per world.
+The collider half runs in about 1 s.
+
+Results on the four real worlds (heights at Marble's scale; `typ` is the real-world size):
+
+| World | Collider | Vision (pixel-measured) | Result |
+| --- | --- | --- | --- |
+| kitchen-morning | ceiling 2.68 m (typ 2.60), doorway 2.09 (2.04), counter 0.95 (0.91), table 0.75 (0.75) → ×0.969, 4/4 consistent | doors 1.88–2.12 m, counters 0.81–0.93 m, sill 0.85 m; three runs ×1.04 / ×1.06 / ×0.97 | **Marble right**: sources agree within 6%, correction 3% < 5%, ×1 kept (`high`) |
+| city-street-night | awning 3.44 m only (weak) | bench seat 0.46–0.51 m (typ 0.45) → ×0.89; shopfronts 27 m away → ×1.14–1.25 | ×1 kept (`low`): only one clean reference (the bench) |
+| rooftop-dusk | nothing usable | parapet tops 1.24–1.46 m (typ 1.05–1.10) → ×0.85 | ×1 kept (`low`): parapet heights are not standard; with the 2.17 m camera height this hints the roof may be ~15% large (unverified) |
+| city-bus-stop-night (live project) | shelter roof 2.73 m (typ 2.6, weak) | shelter frame / ad panels → ×1.16–1.22 | ×1 kept (`low`): no standard object near the camera |
+
+![kitchen before/after](docs/images/scale-kitchen-morning-before-after.png)
+
+Before/after pictures for the other three: [city street](docs/images/scale-city-street-night-before-after.png),
+[rooftop](docs/images/scale-rooftop-dusk-before-after.png),
+[bus stop](docs/images/scale-city-bus-stop-night-before-after.png). In each, the right panel shows
+the not-applied candidate, labelled as such.
+
 ### Real avatars need Modal billing
 
 The LHM stage runs on a Modal L4 GPU. Modal refuses L4 functions until the workspace has a payment
@@ -216,6 +275,12 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
 - Blocking is written by an LLM without seeing the world. When a collider is available, actors
   standing inside geometry or off the floor are moved to the nearest free floor (within 3 m),
   which is approximate in very tight interiors.
+- Scale is verified only where the world has standard objects near the camera. Interiors
+  (counters, doors, ceilings) measure well. The three outdoor worlds have coarse colliders and few
+  doors or benches in reach, so they stay at Marble's scale marked `low` / unverified. Outdoors
+  Marble's ground plane also sits 0.09–0.14 m above the measured floor near the camera (rooftop
+  splats: ~0.2 m), so actors at y = 0 can float slightly there. The schema has no floor-offset
+  field yet.
 - Moving props are simple procedural shapes on straight looped paths, composited over the splats.
 - Takes record the laptop canvas (WebM), not the phone's own render.
 
