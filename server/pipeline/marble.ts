@@ -561,6 +561,18 @@ class MarbleRun {
     for (const [file, known] of Object.entries(r.files ?? {})) {
       if (!(await fileMatches(join(this.o.outDir, file), known))) return undefined;
     }
+    // An optional tier the world offers but we never got (a download cut off by a restart) is
+    // worth a free re-fetch: the downloaded files are kept, only the missing ones are pulled.
+    const world = await readJson<MarbleWorld>(join(this.o.outDir, WORLD_FILE));
+    const urls = world?.assets?.splats?.spz_urls;
+    const missing =
+      (urls?.full_res && urls['500k'] && !asset.data.spz.full) ||
+      (urls?.['100k'] && !asset.data.spz.k100) ||
+      (world?.assets?.mesh?.collider_mesh_url && !asset.data.colliderGlb);
+    if (missing) {
+      this.log('an optional asset was skipped earlier; fetching the missing files (no generation)');
+      return undefined;
+    }
     return (await exists(join(this.o.outDir, asset.data.spz.k500))) ? asset.data : undefined;
   }
 }
