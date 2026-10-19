@@ -10,6 +10,7 @@ import {
   formatReport,
   geometricEstimate,
   previousCalibration,
+  redecide,
   shortName,
   writeCalibration,
   type CalibrationReport,
@@ -82,9 +83,12 @@ describe('decision rules', () => {
 
   it('no source: Marble kept with low confidence', () => {
     expect(decide(null, null)).toMatchObject({ applied: false, factor: 1, confidence: 'low', method: 'none' });
-    expect(decide({ available: false, factor: NaN, consistent: 0 }, { available: false, factor: 1.4 })).toMatchObject({
-      method: 'none',
-    });
+    const d = decide(
+      { available: false, factor: NaN, consistent: 0, note: 'only 1 weak reference(s)' },
+      { available: false, factor: 1.4, agree: true },
+    );
+    expect(d).toMatchObject({ method: 'none', factor: 1 });
+    expect(d.reason).toMatch(/collider: only 1 weak reference\(s\); vision: agreeing runs but too little evidence/);
   });
 
   it('evidence leads with the strongest reference at the calibrated scale (what the HUD shows)', () => {
@@ -139,6 +143,10 @@ describe('writing and running', () => {
     expect(report.geometry?.measurements.map((x) => x.kind)).toEqual(['camera']);
     expect(report.visionSkipped).toBe('disabled');
     expect(report.decision).toMatchObject({ applied: false, factor: 1, confidence: 'low', method: 'none' });
+    expect(report.calibration.evidence.split(' · ')[0]).toBe('unverified');
+    // a stored report read back from JSON (NaN → null) re-decides to the same result
+    const again = redecide(JSON.parse(JSON.stringify(report)));
+    expect(again.calibration).toEqual(report.calibration);
     expect(formatReport(report, 'test')).toMatch(/keep Marble scale/);
 
     const written = await writeCalibration(world, report, { libraryDir: lib, manifest: true });

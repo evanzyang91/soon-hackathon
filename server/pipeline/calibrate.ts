@@ -121,8 +121,8 @@ const pct = (x: number) => `${(Math.abs(x) * 100).toFixed(0)}%`;
 const fx = (n: number | null | undefined, d = 3) => (typeof n === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—');
 
 export function decide(
-  geo: Pick<GeometricEstimate, 'available' | 'factor' | 'consistent'> | null,
-  vision: Pick<VisionEstimate, 'available' | 'factor'> | null,
+  geo: (Pick<GeometricEstimate, 'available' | 'factor' | 'consistent'> & { note?: string }) | null,
+  vision: (Pick<VisionEstimate, 'available' | 'factor'> & { agree?: boolean }) | null,
 ): Decision {
   const g = geo?.available ? geo : null;
   const v = vision?.available ? vision : null;
@@ -169,7 +169,11 @@ export function decide(
     [candidate, confidence, method] = [v.factor, 'medium', 'vision'];
     reason = 'vision only (the collider had no usable references)';
   } else {
-    return keep('low', 'none', 'no usable reference from the collider or vision: Marble scale kept');
+    const why = [
+      geo ? `collider: ${geo.note ?? 'unavailable'}` : 'no collider',
+      vision ? (vision.agree ? 'vision: agreeing runs but too little evidence' : 'vision: runs disagree or found nothing') : 'no vision',
+    ];
+    return keep('low', 'none', `not enough evidence to change anything (${why.join('; ')}): Marble scale kept, unverified`);
   }
   if (!(candidate >= FACTOR_RANGE[0] && candidate <= FACTOR_RANGE[1]))
     return keep('low', method, `×${candidate.toFixed(2)} is outside [${FACTOR_RANGE.join(', ')}]: refused`, candidate);
@@ -233,7 +237,13 @@ const strongest = (ms: Measurement[]) =>
   [...ms].filter((m) => m.kind !== 'camera').sort((a, b) => b.weight - a.weight)[0];
 
 /** "door 2.04 m" for the HUD: the strongest reference at the calibrated scale. */
-export function headline(geo: GeometricEstimate | null, vision: VisionEstimate | null, factor: number): string {
+export function headline(
+  geo: GeometricEstimate | null,
+  vision: VisionEstimate | null,
+  factor: number,
+  method?: string,
+): string {
+  if (method === 'none') return 'unverified';
   const m = geo?.available ? strongest(geo.used) : undefined;
   if (m) return `${EXPECTED[m.kind].label} ${(m.measured * factor).toFixed(2)} m`;
   const o = vision?.runs.flatMap((r) => r.objects).sort((a, b) => b.weight - a.weight)[0];
@@ -251,7 +261,7 @@ export function evidenceText(
   vision: VisionEstimate | null,
   d: Decision,
 ): string {
-  const parts: string[] = [headline(geo, vision, d.factor)];
+  const parts: string[] = [headline(geo, vision, d.factor, d.method)];
   const refs = all
     .filter((m) => m.kind !== 'camera')
     .map((m) => `${EXPECTED[m.kind].label} ${m.measured.toFixed(2)} m (×${m.implied.toFixed(2)}${m.weight < 0.3 ? ', weak' : ''})`);
@@ -367,6 +377,28 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     decision,
     calibration,
     costUsd: vision?.costUsd ?? 0,
+  };
+}
+
+/**
+ * The decision and the written calibration recomputed from a report's stored measurements, so a
+ * rule or wording change applies to an earlier run (`cli calibrate --reuse`) without measuring or
+ * paying again. JSON stores NaN as null; those read back as "unavailable".
+ */
+export function redecide(report: CalibrationReport): CalibrationReport {
+  const geo = report.geometry ? geometricEstimate(report.geometry.measurements) : null;
+  const v = report.vision;
+  const vision = v ? { ...v, factor: typeof v.factor === 'number' ? v.factor : NaN } : null;
+  const decision = decide(geo, vision);
+  return {
+    ...report,
+    decision,
+    calibration: {
+      factor: decision.factor,
+      method: decision.method,
+      confidence: decision.confidence,
+      evidence: evidenceText(geo, report.geometry?.measurements ?? [], vision, decision),
+    },
   };
 }
 
