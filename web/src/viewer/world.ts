@@ -15,6 +15,7 @@ import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
 import type { Look, SceneEdits } from '@shared/look';
 import { SceneLook } from './look/scene-look';
+import { SceneEditsRuntime } from './edits/apply';
 
 export type SplatQuality = 'k100' | 'k500' | 'full';
 
@@ -74,6 +75,8 @@ export interface SceneRuntime {
   getLook(): Look;
   /** The scene's edits.json document (look + scene edits); null until loaded. WP G fills it. */
   edits: SceneEdits | null;
+  /** Applies `edits` (regions, transforms, props) every frame it changes (viewer/edits/apply.ts). */
+  readonly sceneEdits: SceneEditsRuntime | null;
   dispose(): void;
 }
 
@@ -165,6 +168,7 @@ class LoadedScene implements SceneRuntime {
   colliderReady: Promise<THREE.Object3D | null> = Promise.resolve(null);
   dynamics!: DynamicsRuntime;
   readonly look: SceneLook;
+  sceneEdits: SceneEditsRuntime | null = null;
   quality: SplatQuality;
   time = 0;
   playing = false;
@@ -261,6 +265,7 @@ class LoadedScene implements SceneRuntime {
     this.dynamics.update(this.time);
     this.aimHeads();
     for (const a of this.actors.values()) a.update(dt, this.time);
+    this.sceneEdits?.update(this.time);
     this.look.update();
   }
 
@@ -393,6 +398,7 @@ class LoadedScene implements SceneRuntime {
     if (this.placeholderGroup) disposeObject(this.placeholderGroup);
     if (this.collider) disposeObject(this.collider);
     disposeObject(this.grid);
+    this.sceneEdits?.dispose();
     this.look.dispose();
     this.spark.dispose();
     this.scene.clear();
@@ -546,6 +552,7 @@ export async function loadScene(
     }
     return gltf.scene;
   });
+  rt.sceneEdits = new SceneEditsRuntime(rt);
   status(rt.placeholder ? 'placeholder world (SPZ unavailable)' : 'ready');
   return rt;
 }
