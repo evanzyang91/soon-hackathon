@@ -20,8 +20,14 @@
 //   any factor outside [0.5, 2] is refused; a correction under 5 % is not applied (factor 1:
 //   Marble's scale confirmed) but the measurements are still recorded.
 //
-// `evidence` starts with the main reference at the calibrated scale ("door 2.04 m"), then " · "
-// and the details; the laptop HUD shows the part before the first " · ".
+// `headline` is the main reference at the calibrated scale ("door 2.04 m", or "unverified"), which
+// the laptop HUD shows next to the factor; `evidence` starts with the same text, then " · " and
+// the details (the tooltip).
+//
+// Floor offset: the collider's floor near the source camera, measured in Marble's declared frame,
+// says how far the visible ground sits below Marble's ground plane (0.09–0.14 m outdoors on our
+// worlds). It is written as WorldAsset.floorOffsetMeters (transform.ts raises the world by it) for
+// any world with a collider floor, whatever the scale decision; nothing beyond ±0.5 m is written.
 import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { WorldAsset } from '../../shared/schema.ts';
@@ -53,6 +59,8 @@ import { ASSET_FILE } from './marble.ts';
 
 export const REPORT_FILE = 'scale-calibration.json';
 export const DEADBAND = 0.05;
+/** A measured floor offset larger than this is treated as a bad measurement and not written. */
+export const MAX_FLOOR_OFFSET = 0.5;
 export const FACTOR_RANGE = [0.5, 2] as const;
 
 export type Confidence = 'high' | 'medium' | 'low';
@@ -208,7 +216,20 @@ export interface CalibrationReport {
   visionSkipped?: string;
   decision: Decision;
   calibration: ScaleCalibration;
+  /** WorldAsset.floorOffsetMeters this report writes (absent: no collider floor / implausible). */
+  floorOffsetMeters?: number;
   costUsd: number;
+}
+
+/**
+ * The floor offset a report supports: Marble's ground plane minus the collider floor near the
+ * camera (m at Marble's scale, + = the visible ground is lower), to the millimetre; undefined
+ * without a collider measurement or beyond ±MAX_FLOOR_OFFSET.
+ */
+export function floorOffsetOf(report: Pick<CalibrationReport, 'geometry'>): number | undefined {
+  const f = report.geometry?.floorOffset;
+  if (typeof f !== 'number' || !Number.isFinite(f) || Math.abs(f) > MAX_FLOOR_OFFSET) return undefined;
+  return Math.round(f * 1000) / 1000 || 0;
 }
 
 export interface CalibrateOptions {
@@ -361,7 +382,9 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     method: decision.method,
     confidence: decision.confidence,
     evidence: evidenceText(geo, geometry?.measurements ?? [], vision, decision),
+    headline: headline(geo, vision, decision.factor, decision.method),
   };
+  const floorOffsetMeters = floorOffsetOf({ geometry });
   return {
     schema: 'previz.scale-calibration/1',
     worldId: asset.worldId,
@@ -376,6 +399,7 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     visionSkipped,
     decision,
     calibration,
+    ...(floorOffsetMeters !== undefined ? { floorOffsetMeters } : {}),
     costUsd: vision?.costUsd ?? 0,
   };
 }
@@ -390,15 +414,19 @@ export function redecide(report: CalibrationReport): CalibrationReport {
   const v = report.vision;
   const vision = v ? { ...v, factor: typeof v.factor === 'number' ? v.factor : NaN } : null;
   const decision = decide(geo, vision);
+  const floorOffsetMeters = floorOffsetOf(report);
+  const { floorOffsetMeters: _old, ...rest } = report;
   return {
-    ...report,
+    ...rest,
     decision,
     calibration: {
       factor: decision.factor,
       method: decision.method,
       confidence: decision.confidence,
       evidence: evidenceText(geo, report.geometry?.measurements ?? [], vision, decision),
+      headline: headline(geo, vision, decision.factor, decision.method),
     },
+    ...(floorOffsetMeters !== undefined ? { floorOffsetMeters } : {}),
   };
 }
 
@@ -416,6 +444,12 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
     const g = r.geometry;
     L.push(
       `  floor near the camera ${g.floorAtCamera >= 0 ? '+' : ''}${g.floorAtCamera.toFixed(2)} m vs Marble's ground plane; camera ${g.cameraHeight.toFixed(2)} m above it`,
+    );
+    const off = floorOffsetOf(r);
+    L.push(
+      off === undefined
+        ? '  floor offset: not written (implausible measurement)'
+        : `  floor offset: floorOffsetMeters ${off.toFixed(3)} (the world is raised by that much so the visible ground is y = 0)`,
     );
     L.push('  collider (Marble scale)   measured   expected (range)        implied   weight');
     for (const m of g.measurements) {
@@ -451,6 +485,7 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
     `  decision: ${d.applied ? `APPLY ×${d.factor.toFixed(3)}` : 'keep Marble scale (×1)'}  confidence ${d.confidence}  [${d.method}]${typeof d.candidate === 'number' && Number.isFinite(d.candidate) ? `  candidate ×${fx(d.candidate)}` : ''}`,
   );
   L.push(`    ${d.reason}`);
+  L.push(`  headline: ${r.calibration.headline ?? r.calibration.evidence.split(' · ')[0]}`);
   return L.join('\n');
 }
 
@@ -466,14 +501,24 @@ export interface WriteOptions {
   log?: (m: string) => void;
 }
 
-/** Writes scaleCalibration into world-asset.json (+ the full report), the library copy, the manifest. */
+/** What a report writes into a WorldAsset: scaleCalibration and, when measured, floorOffsetMeters. */
+export function calibrated(asset: WorldAsset, report: CalibrationReport): WorldAsset {
+  const { floorOffsetMeters: _old, ...rest } = asset;
+  const off = report.floorOffsetMeters ?? floorOffsetOf(report);
+  return { ...rest, scaleCalibration: report.calibration, ...(off !== undefined ? { floorOffsetMeters: off } : {}) };
+}
+
+/**
+ * Writes scaleCalibration + floorOffsetMeters into world-asset.json (+ the full report), the
+ * library copy, the manifest.
+ */
 export async function writeCalibration(
   worldDir: string,
   report: CalibrationReport,
   o: WriteOptions = {},
 ): Promise<WorldAsset> {
   const log = o.log ?? (() => {});
-  const asset = WorldAsset.parse({ ...(await readWorldAsset(worldDir)), scaleCalibration: report.calibration });
+  const asset = WorldAsset.parse(calibrated(await readWorldAsset(worldDir), report));
   await writeJsonAtomic(join(worldDir, ASSET_FILE), asset);
   await writeJsonAtomic(join(worldDir, REPORT_FILE), report);
   if (o.libraryDir && asset.worldId) {
@@ -483,7 +528,7 @@ export async function writeCalibration(
       if (dir === worldDir) continue;
       const lib = WorldAsset.safeParse(await readJson(join(dir, ASSET_FILE)).catch(() => undefined));
       if (!lib.success || lib.data.worldId !== asset.worldId) continue;
-      await writeJsonAtomic(join(dir, ASSET_FILE), { ...lib.data, scaleCalibration: report.calibration });
+      await writeJsonAtomic(join(dir, ASSET_FILE), calibrated(lib.data, report));
       await copyFile(join(worldDir, REPORT_FILE), join(dir, REPORT_FILE));
       log(`calibrate: library copy ${n} updated`);
     }
@@ -492,7 +537,7 @@ export async function writeCalibration(
     const mpath = join(dirname(worldDir), 'manifest.json');
     const m = (await exists(mpath)) ? await readJson<{ world?: WorldAsset }>(mpath) : undefined;
     if (m?.world && m.world.worldId === asset.worldId) {
-      m.world.scaleCalibration = report.calibration;
+      m.world = calibrated(m.world, report);
       await writeJsonAtomic(mpath, m);
       log(`calibrate: ${mpath} updated`);
     }

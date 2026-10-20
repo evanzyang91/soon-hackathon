@@ -1,8 +1,18 @@
 // Viewport overlays: scene title, loading/error, caption, PiP frame, REC badge, view toggles,
 // plus the director keyboard shortcuts.
+import type { WorldAsset } from '@shared/schema';
+import { floorOffset } from '../viewer/transform';
 import type { SplatQuality } from '../viewer/world';
 import type { Director } from './director';
 import { byId, fmtTime, isTyping } from './dom';
+
+/**
+ * The HUD's scale reference: calibrate.ts's `headline` ("door 2.04 m" / "unverified"); older
+ * calibrations without one lead their evidence with the same text before the first " · ".
+ */
+export function scaleHeadline(cal: NonNullable<WorldAsset['scaleCalibration']>): string {
+  return cal.headline?.trim() || cal.evidence.split(' · ')[0]?.trim() || '';
+}
 
 export function mountHud(director: Director) {
   const title = byId('hud-title');
@@ -83,9 +93,14 @@ export function mountHud(director: Director) {
       const b = document.createElement('span');
       b.className = `badge scale ${cal.confidence}`;
       b.dataset.testid = 'scale-calibration';
-      const ref = cal.evidence.split(' · ')[0]?.trim();
+      const ref = scaleHeadline(cal);
       b.textContent = `scale ×${cal.factor.toFixed(2)}${ref ? ` (${ref})` : ''}`;
-      b.title = `Scale calibration: ×${cal.factor} on top of Marble's metric scale (${cal.method}, ${cal.confidence} confidence)\n${cal.evidence.split(' · ').join('\n')}`;
+      const floor = floorOffset(world);
+      b.title = [
+        `Scale calibration: ×${cal.factor} on top of Marble's metric scale (${cal.method}, ${cal.confidence} confidence)`,
+        ...cal.evidence.split(' · '),
+        ...(floor ? [`Floor: world raised ${(floor * 100).toFixed(0)} cm so actors stand on the visible ground`] : []),
+      ].join('\n');
       badges.append(b);
     }
     for (const opt of quality.options)

@@ -44,6 +44,7 @@ import { buildActor } from './actors.ts';
 import {
   calibrateWorld,
   previousCalibration,
+  redecide,
   writeCalibration,
   type CalibrateOptions,
   type CalibrationReport,
@@ -632,7 +633,14 @@ export class ProjectStore {
     log: (m: string) => void,
   ): Promise<{ asset: WorldAsset; note: string }> {
     if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
-    if (asset.scaleCalibration) return { asset, note: '' };
+    if (asset.scaleCalibration) {
+      // carried by a library copy; one written before headline / floorOffsetMeters existed is
+      // re-decided from its stored report (no measuring, no Claude call)
+      if (asset.scaleCalibration.headline) return { asset, note: '' };
+      const prev = await previousCalibration(outDir, asset.worldId).catch(() => null);
+      if (!prev) return { asset, note: '' };
+      return { asset: await writeCalibration(outDir, redecide(prev), { log }), note: '' };
+    }
     try {
       let report = await previousCalibration(outDir, asset.worldId);
       if (!report) {

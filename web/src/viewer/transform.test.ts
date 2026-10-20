@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { Vec3 } from '@shared/schema';
-import { applyWorldTransform, calibrationFactor, rawFloorY, worldTransform } from './transform';
+import { hasFloor } from './placement';
+import {
+  applyWorldTransform,
+  calibrationFactor,
+  floorOffset,
+  rawFloorY,
+  worldTransform,
+} from './transform';
 
 const close = (a: Vec3, b: Vec3) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i]!, 6));
 
@@ -87,5 +94,60 @@ describe('worldTransform', () => {
     expect(calibrationFactor({ scaleCalibration: { factor: 0 } })).toBe(1);
     expect(calibrationFactor({ scaleCalibration: { factor: Number.NaN } })).toBe(1);
     expect(calibrationFactor({ scaleCalibration: { factor: 1.25 } })).toBe(1.25);
+  });
+
+  it('raises the world by floorOffsetMeters so the visible ground lands at y = 0', () => {
+    // bus stop: Marble's ground plane 9 cm above the collider floor near the camera
+    const w = { metricScaleFactor: 2.2, groundPlaneOffset: 1.49, opencvFrame: true };
+    const ground: Vec3 = [1.5, (1.49 + 0.09) / 2.2, -3]; // raw OpenCV point 9 cm below the plane
+    expect(applyWorldTransform(worldTransform(w), ground)[1]).toBeCloseTo(-0.09, 6);
+    const t = worldTransform({ ...w, floorOffsetMeters: 0.09 });
+    expect(t.positionY).toBeCloseTo(1.49 + 0.09);
+    expect(t.scale).toBe(2.2); // only a shift: sizes are untouched
+    close(applyWorldTransform(t, ground), [3.3, 0, 6.6]);
+    // Marble's declared floor now floats 9 cm up, the source camera 9 cm higher
+    expect(applyWorldTransform(t, [0, 1.49 / 2.2, 0])[1]).toBeCloseTo(0.09, 6);
+    close(applyWorldTransform(t, [0, 0, 0]), [0, 1.49 + 0.09, 0]);
+  });
+
+  it('scales the floor shift with the calibration (the world grows about the declared floor)', () => {
+    const w = { metricScaleFactor: 1, groundPlaneOffset: 1.5, opencvFrame: false, floorOffsetMeters: 0.12 };
+    const t = worldTransform({ ...w, scaleCalibration: { factor: 0.8 } });
+    expect(t.positionY).toBeCloseTo(0.8 * 1.5 + 0.8 * 0.12);
+    // the visible ground (raw y = -1.62 in this Y-up asset) still lands at 0
+    expect(applyWorldTransform(t, [2, -1.62, 1])[1]).toBeCloseTo(0, 6);
+  });
+
+  it('ignores a missing, invalid or implausible floor offset', () => {
+    expect(floorOffset({})).toBe(0);
+    expect(floorOffset({ floorOffsetMeters: null })).toBe(0);
+    expect(floorOffset({ floorOffsetMeters: Number.NaN })).toBe(0);
+    expect(floorOffset({ floorOffsetMeters: 3 })).toBe(0);
+    expect(floorOffset({ floorOffsetMeters: -0.2 })).toBe(-0.2);
+    const w = { metricScaleFactor: 0.8, groundPlaneOffset: 1.4 };
+    expect(worldTransform({ ...w, floorOffsetMeters: 3 })).toEqual(worldTransform(w));
+  });
+
+  it('keeps the collider in sync: a child of the raised world has its floor at 0 for placement', () => {
+    // a collider floor quad 14 cm below Marble's plane (rooftop), raw OpenCV coordinates
+    const w = { metricScaleFactor: 1.25, groundPlaneOffset: 2.17, opencvFrame: true, floorOffsetMeters: 0.14 };
+    const yRaw = (2.17 + 0.14) / 1.25;
+    const raw = [-6, yRaw, -6, 6, yRaw, -6, 6, yRaw, 6, -6, yRaw, -6, 6, yRaw, 6, -6, yRaw, 6];
+    const t = worldTransform(w);
+    const root = new THREE.Object3D();
+    root.rotation.x = t.rotationX;
+    root.scale.setScalar(t.scale);
+    root.position.y = t.positionY;
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(raw, 3)));
+    root.add(mesh);
+    root.updateMatrixWorld(true);
+    const world = new Float32Array(raw.length);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < raw.length; i += 3) {
+      v.set(raw[i]!, raw[i + 1]!, raw[i + 2]!).applyMatrix4(mesh.matrixWorld);
+      world.set([v.x, v.y, v.z], i);
+    }
+    for (let i = 1; i < world.length; i += 3) expect(world[i]).toBeCloseTo(0, 5);
+    expect(hasFloor(world, 0, 2)).toBe(true);
   });
 });
