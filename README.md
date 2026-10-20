@@ -22,7 +22,7 @@ laptop while the actors speak their lines.
    marble.ts       world prompt → Marble text→world, receipt-first (a crash never pays twice)   │
                    ↳ world-library.ts: reuse data/marble/<slug without INT./EXT.>              │
    actors.ts       description → OpenAI reference image → LHM on Modal L4 (worker/) →          │
-                   splat sequence; any failure → procedural mannequin (marked fallback)        │
+                   splat avatar + runtime rig; any failure → procedural mannequin (fallback)   │
                    ↳ actor-library.ts: reuse data/actors-library/<characterId>                 │
    tts.ts          each line → mp3 (ElevenLabs or OpenAI gpt-4o-mini-tts); beeps offline       │
    project.ts      orchestration → <DATA_DIR>/<id>/scene-<n>/manifest.json (shared/schema.ts) ─┘
@@ -36,7 +36,8 @@ laptop while the actors speak their lines.
                   gizmo + picture-in-picture of the phone view, dialogue playback, take recorder
    /phone.html    phone camera: sensors → pose, renders the same scene from the phone's pose
    viewer/        shared loader: SPZ world (Marble OpenCV → metric, floor at y = 0), collider,
-                  actors (splat sequence / mannequin), props on looped paths, placement fix-up
+                  actors (rigged LHM avatars performing shared HY-Motion clips, skinned on the
+                  GPU; baked splat sequence; mannequin), props on looped paths, placement fix-up
 ```
 
 Contracts between the pieces live in `shared/` (`schema.ts`: plans and manifests, `protocol.ts`:
@@ -235,6 +236,16 @@ download, 162 s of L4 time, about $0.08, 72 frames at 12 fps (49 MB slim). Setup
 staging and the worker CLI are in `worker/README.md`. Copy a finished
 `<project>/actors/<id>/sequence/` into `data/actors-library/<id>/` to reuse it.
 
+Each avatar also gets a **runtime rig** (canonical splats + skin weights + SMPL-X skeleton,
+2 MB instead of a 40 MB baked track): the browser animates it on the GPU from a shared library of
+text-to-motion clips (HY-Motion 1.0, generated once: listening idle, two talking loops, seated
+idle/talk, a walk cycle), so actors gesture while they talk, turn their heads to the speaker, sit
+and walk to their marks. Older actors get one without re-running LHM:
+`python3 worker/run_actor.py --rig data/actors-library/<id>`. Measurements and the before/after
+evidence are in `worker/README.md` ("Performance motion").
+
+![After: the 12 s take with rigged actors gesturing, listening and turning to the speaker (1 frame/s; before: docs/images/perf-motion-before-laptop.png)](docs/images/perf-motion-after-laptop.png)
+
 ## Tests
 
 ```sh
@@ -267,9 +278,12 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   rotates freely around the camera it is attached to and adds a damped ±0.3 m handheld sway;
   moving through the scene is done with the on-screen joystick, not by walking with the phone.
   True 6DoF would need a native ARKit/ARCore companion speaking the same protocol.
-- **No lip-sync on splat avatars.** The LHM avatar switches to a talk loop while it speaks; only
-  the mannequin moves its jaw with the audio. Seated blocking lowers a splat avatar by 0.45 m
-  (there is no sitting motion), and walking blocking does not walk.
+- **No visemes.** A rigged LHM avatar opens its jaw with the voice's loudness (the mannequin
+  too); there is no phoneme lip-sync. Seated actors sit on nothing (no chair is placed); a long
+  coat stretches at the hips when seated. A `walking` actor starts 2.4 m behind its mark and
+  walks in when the scene clock runs; the approach ignores the collider. Avatars built before the
+  runtime rig (no `rig` in `sequence.json`) still play their baked idle/talk loop and are lowered
+  0.45 m when seated.
 - **iOS is untested headless.** The automated tests drive desktop Chromium with synthetic sensor
   events; the iOS Safari permission and certificate flow was only exercised by hand.
 - Blocking is written by an LLM without seeing the world. When a collider is available, actors
