@@ -50,7 +50,7 @@ async function verify(buf: ArrayBuffer, expected: string | undefined, label: str
 }
 
 /** Loads sequence.json from the first candidate that answers with valid JSON. */
-async function loadSequence(asset: SplatAsset, baseUrl: string): Promise<{ seq: ActorSequence; dir: string }> {
+export async function loadSequence(asset: SplatAsset, baseUrl: string): Promise<{ seq: ActorSequence; dir: string }> {
   const rel = `${asset.sequenceDir.replace(/\/+$/, '')}/sequence.json`;
   let last: unknown;
   for (const url of projectCandidates(rel, baseUrl)) {
@@ -83,8 +83,12 @@ function extractKey(ply: GaussianPly): Float32Array {
   return out;
 }
 
-export async function loadSplatBody(asset: SplatAsset, baseUrl: string): Promise<SplatBody> {
-  const { seq, dir } = await loadSequence(asset, baseUrl);
+export async function loadSplatBody(
+  asset: SplatAsset,
+  baseUrl: string,
+  loaded?: { seq: ActorSequence; dir: string },
+): Promise<SplatBody> {
+  const { seq, dir } = loaded ?? (await loadSequence(asset, baseUrl));
   const frameUrl = (name: string) => new URL(name, dir).href;
   const buf0 = await (await fetchOk(frameUrl(seq.frames[0]!))).arrayBuffer();
   await verify(buf0, seq.frame_sha256?.[0], seq.frames[0]!);
