@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ActorAsset, type Character } from '../../shared/schema.ts';
 import {
+  ActorBuildError,
   FALLBACK_GLB,
+  actorDirFor,
   buildActor,
   planActor,
   referencePrompt,
@@ -198,6 +200,53 @@ describe('buildActor', () => {
     const asset = await buildActor(opts(), deps(async () => ({ ok: true, code: 0 })));
     expect(asset.kind).toBe('glb-humanoid');
     expect(calls).toEqual([]);
+  });
+
+  describe("detail 'high'", () => {
+    const high = () => ({ ...opts(), detail: 'high' as const });
+
+    it('builds into actors/<id>/high/ from the shared reference with --detail high', async () => {
+      await mkdir(join(projectDir, 'actors', 'maya'), { recursive: true });
+      await writeFile(join(projectDir, 'actors', 'maya', 'reference.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+      const asset = ActorAsset.parse(
+        await buildActor(
+          high(),
+          deps(async (args) => {
+            const out = args[args.indexOf('--out') + 1]!;
+            await writeSequence(join(out, 'sequence'), 1.75);
+            return { ok: true, code: 0, result: { ok: true, estimatedComputeUSD: 0.11 } };
+          }),
+        ),
+      );
+      expect(images).toBe(0); // the standard build's reference is reused
+      expect(calls[0]).toEqual([
+        '--image', join(projectDir, 'actors/maya/reference.png'),
+        '--out', join(projectDir, 'actors/maya/high'),
+        '--frames', '48', '--talk-frames', '24', '--fps', '12', '--detail', 'high',
+      ]);
+      expect(asset).toMatchObject({ kind: 'splat-sequence', detail: 'high', sequenceDir: 'actors/maya/high/sequence' });
+    });
+
+    it('reuses a finished high build without a worker call, and leaves the standard one alone', async () => {
+      await writeSequence(join(projectDir, 'actors', 'maya', 'sequence'), 1.6);
+      await writeSequence(join(actorDirFor(projectDir, 'maya', 'high'), 'sequence'), 1.75);
+      const asset = await buildActor(high(), deps(async () => ({ ok: false, code: 1 })));
+      expect(asset).toMatchObject({ detail: 'high', sequenceDir: 'actors/maya/high/sequence' });
+      expect(calls).toEqual([]);
+      const standard = await buildActor(opts(), deps(async () => ({ ok: false, code: 1 })));
+      expect(standard).toMatchObject({ sequenceDir: 'actors/maya/sequence' });
+      expect('detail' in standard).toBe(false);
+    });
+
+    it('never returns a mannequin: failures throw so the caller keeps the standard build', async () => {
+      await expect(
+        buildActor(high(), deps(async () => ({ ok: false, code: 1, result: { ok: false, error: 'CUDA out of memory' } }))),
+      ).rejects.toThrow(/CUDA out of memory/);
+      await expect(buildActor({ ...high(), mock: true }, deps(async () => ({ ok: true, code: 0 })))).rejects.toBeInstanceOf(ActorBuildError);
+      await expect(
+        buildActor(high(), deps(async () => ({ ok: true, code: 0 }), { ...keys, modalTokenId: '', modalTokenSecret: '' })),
+      ).rejects.toThrow(/Modal keys absent/);
+    });
   });
 
   it('reference prompt asks for the LHM-friendly framing', () => {

@@ -97,6 +97,26 @@ describe('pipeline routes', () => {
     expect((await fetch(base + api.projects, { method: 'DELETE' })).status).toBe(405);
   });
 
+  it('POST /api/projects/:id/actors/:characterId/rebuild validates, and refuses MOCK projects', async () => {
+    const created = ProjectStatus.parse(
+      await (await post(api.projects, { screenplay: FIXTURE })).json(),
+    );
+    await store.idle();
+    const st = ProjectStatus.parse(await (await fetch(base + api.project(created.id))).json());
+    expect(st.actors?.map((a) => [a.characterId, a.detail, a.kind]).sort()).toEqual([
+      ['maya', 'standard', 'glb-humanoid'],
+      ['theo', 'standard', 'glb-humanoid'],
+    ]);
+    const res = await post(api.rebuildActor(created.id, 'maya'), { detail: 'high' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/MOCK/);
+    expect((await post(api.rebuildActor(created.id, 'maya'), { detail: 'ultra' })).status).toBe(400);
+    expect((await post(api.rebuildActor(created.id, 'nobody'), { detail: 'high' })).status).toBe(404);
+    expect((await post(api.rebuildActor('does-not-exist', 'maya'), { detail: 'high' })).status).toBe(404);
+    expect((await fetch(base + api.rebuildActor(created.id, 'maya'))).status).toBe(405);
+    expect((await post(`/api/projects/${created.id}/actors/maya/paint`, { detail: 'high' })).status).toBe(404);
+  });
+
   it('leaves unknown /api paths to the caller', async () => {
     expect((await fetch(`${base}/api/health-not-ours`)).status).toBe(404);
     expect((await fetch(`${base}/api/projects/x/y/z`)).status).toBe(404);

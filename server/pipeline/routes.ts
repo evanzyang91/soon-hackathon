@@ -2,7 +2,7 @@
 // path; we return false for anything that is not ours so it can 404.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { StageName } from '../../shared/schema.ts';
+import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -15,6 +15,8 @@ const RetryBody = z.object({
   sceneIndex: z.number().int().nonnegative().default(0),
   stage: StageName,
 });
+const RebuildBody = z.object({ detail: ActorDetail });
+const CHARACTER_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 
 class HttpError extends Error {
   constructor(
@@ -88,8 +90,11 @@ export function createPipelineHandler(
     res: ServerResponse,
     url: URL,
   ): Promise<boolean> {
-    const parts = url.pathname.replace(/\/+$/, '').split('/').slice(1); // ['api', 'projects', id?, 'retry'?]
-    if (parts[0] !== 'api' || parts[1] !== 'projects' || parts.length > 4) return false;
+    // ['api', 'projects', id?, 'retry'?] or ['api', 'projects', id, 'actors', characterId, 'rebuild']
+    const parts = url.pathname.replace(/\/+$/, '').split('/').slice(1);
+    if (parts[0] !== 'api' || parts[1] !== 'projects') return false;
+    const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';
+    if (parts.length > 4 && !rebuild) return false;
     if (parts.length === 4 && parts[3] !== 'retry') return false;
     const store = getStore();
     // First request after boot picks up pipelines interrupted by a restart.
@@ -125,6 +130,13 @@ export function createPipelineHandler(
       }
       if (method !== 'POST') {
         send(res, 405, { error: 'method not allowed' }, { allow: 'POST' });
+        return true;
+      }
+      if (rebuild) {
+        const characterId = decodeURIComponent(parts[4]!);
+        if (!CHARACTER_ID.test(characterId)) throw new HttpError(404, 'no such character');
+        const body = validate(RebuildBody, await readJsonBody(req));
+        send(res, 202, await store.rebuildActor(id, characterId, body.detail));
         return true;
       }
       const body = validate(RetryBody, await readJsonBody(req));
