@@ -6,9 +6,8 @@ Paste a short-film screenplay. Get one immersive 3D scene per screenplay scene. 
 laptop, drop virtual cameras, and pair an iPhone (browser, no app install) that acts as the
 handheld camera: pan/tilt/roll from the phone's sensors, slight handheld movement from the
 accelerometer, and its position/frustum visible on the laptop. Actors from the screenplay exist in
-the world as 3D avatars generated through the same process OrbisEngine uses (LHM on Modal from a
-reference image → gaussian-splat avatar), and speak their lines out loud so you can film a take
-before going on location.
+the world as 3D avatars (LHM on Modal from a generated reference image → gaussian-splat avatar),
+and speak their lines out loud so you can film a take before going on location.
 
 ## Non-negotiables
 
@@ -32,7 +31,7 @@ screenplay.txt/.fountain
         │                        download SPZ(500k + full) + collider GLB + semantics
         ▼
  server/pipeline/actors.ts       character description → reference image (OpenAI image) →
-        │                        Modal LHM (ported from OrbisEngine worker/modal_lhm.py) →
+        │                        Modal LHM (worker/modal_lhm.py) →
         │                        animated gaussian PLY sequence (talk/idle loop)
         │                        fallback: rigged GLB humanoid w/ viseme morphs
         ▼
@@ -53,11 +52,11 @@ screenplay.txt/.fountain
                actors (splat sequence or GLB), dynamics (looped GLB props on paths), audio
 ```
 
-### Coordinate conventions (from OrbisEngine + Marble docs)
+### Coordinate conventions (from the Marble docs)
 
 - Marble SPZ is OpenCV (Y down, +Z forward). Apply `world.rotation.x = Math.PI` so Y is up.
 - `metric_scale_factor` converts units → meters; floor world-y = `-ground_plane_offset / metric_scale_factor`
-  before the scale is applied (Orbis `fourd-runtime.js`). We scale the world object so 1 unit = 1 m
+  before the scale is applied (`web/src/viewer/transform.ts`). We scale the world object so 1 unit = 1 m
   and translate so the floor sits at y = 0.
 - Actors are placed with feet on y = 0; blocking positions are meters in the world frame, origin at
   Marble's source camera.
@@ -84,10 +83,10 @@ screenplay.txt/.fountain
 ### Actors
 
 - Pipeline: Claude writes a physical description per character → OpenAI image model generates a
-  full-body, front-facing, neutral-background reference → Modal LHM (`worker/modal_lhm.py`,
-  ported from Orbis) builds the gaussian avatar and renders an animated sequence from a bundled
-  SMPL-X talking/idle motion → packaged as PLY frames + `sequence.json` (Orbis `wander.person-motion/1`
-  compatible) → browser plays the loop with Spark `SplatMesh` per frame.
+  full-body, front-facing, neutral-background reference → Modal LHM (`worker/modal_lhm.py`)
+  builds the gaussian avatar and renders an animated sequence from a procedural SMPL-X
+  talking/idle motion → packaged as PLY frames + `sequence.json` with a compact
+  `previz.actor-motion/1` track → browser plays the loop with Spark `SplatMesh` per frame.
 - Speaking: when a line is triggered (laptop clicks a line, or "play scene" runs the dialogue in
   order), the actor's TTS mp3 plays positional (three.js `PositionalAudio`) while the talk loop
   runs; a caption shows the line. Lip-sync on a splat avatar is out of scope; the GLB fallback does

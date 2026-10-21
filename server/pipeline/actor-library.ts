@@ -3,7 +3,7 @@
 //
 //   <ACTORS_LIBRARY_DIR = data/actors-library>/<characterId>/sequence/sequence.json  (+ frames)
 //
-// A slim sequence (frame_000.ply + the wander.person-motion/1 track) is enough: the browser
+// A slim sequence (frame_000.ply + the previz.actor-motion/1 track) is enough: the browser
 // decodes every other frame from the track. A match is copied (APFS clone where possible) into
 // <project>/actors/<characterId>/sequence/ and becomes a splat-sequence ActorAsset.
 import { constants } from 'node:fs';

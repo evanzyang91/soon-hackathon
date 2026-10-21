@@ -3,8 +3,8 @@
 // ceiling…), says how tall the object comes out next to the mannequins and what uniform correction
 // of the WORLD would make it its typical real size. It also marks the object's floor-contact and
 // top pixels; those two rays are cast into the world (base onto the collider floor, top onto the
-// vertical line above that floor point: single-view metrology on the floor plane, the way Orbis
-// measured a door and a person standing on Marble's floor), which gives a perspective-correct
+// vertical line above that floor point: single-view metrology on the floor plane, the same way a
+// door or a person standing on Marble's floor can be measured), which gives a perspective-correct
 // height in Marble metres. A measured height wins over the eyeballed one when both rays land.
 // Two independent requests on different views must agree before the estimate counts.
 //

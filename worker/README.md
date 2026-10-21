@@ -1,8 +1,8 @@
 # Actor worker (WP D): reference image → LHM gaussian avatar on Modal
 
-A trimmed port of OrbisEngine's `worker/modal_lhm.py`. Same CUDA image, same LHM code revision
-(`4f88aaeb`), same `3DAIGC/LHM-500M-HF` weights (`dd639290`), and the same rule of checkpointing
-to a Volume and then returning a small receipt. Input is one generated full-body reference PNG.
+Runs LHM (code revision `4f88aaeb`, `3DAIGC/LHM-500M-HF` weights at `dd639290`) in a pinned CUDA
+image on Modal. Every GPU call checkpoints its outputs to a Volume and then returns a small
+receipt, so nothing is paid for twice. Input is one generated full-body reference PNG.
 Output is a frozen gaussian PLY, a looping idle/talk PLY sequence (the fallback the browser can
 always play, `web/src/viewer/actors/splat-actor.ts`) and a **runtime rig**: the canonical splats
 with skin weights and the SMPL-X skeleton, which the browser animates on the GPU from a shared
@@ -14,9 +14,9 @@ against its reference before any of those outputs are written ("High detail" bel
 | --- | --- |
 | `modal_lhm.py` | GPU app `previz-stage-lhm`: `actor()` on an L4 (4 CPU, 64 GiB, 30 min timeout, `max_containers=1`, `retries=0`) |
 | `modal_lhm_stage.py` | CPU-only app `previz-stage-lhm-setup`: `stage_weights()` (one-time, resumable), `audit()`, `check()` |
-| `lhm_image.py` | The CUDA image, shared by both apps (exactly Orbis's pins) |
+| `lhm_image.py` | The CUDA image, shared by both apps (pinned CUDA 12.1 / torch 2.3.0 / LHM revision) |
 | `run_actor.py` | Local CLI used by `server/pipeline/actors.ts` |
-| `lhm_stages/lhm_actor.py` | Runs inside the GPU container. Port of Orbis `lhm_person.py`: rembg mask → Multi-HMR pose → LHM canonical inference (→ fine-tune, high detail) → frozen + animated frames → packaging |
+| `lhm_stages/lhm_actor.py` | Runs inside the GPU container: rembg mask → Multi-HMR pose → LHM canonical inference (→ fine-tune, high detail) → frozen + animated frames → packaging |
 | `lhm_stages/finetune_actor.py` | High detail: photometric fine-tune of the canonical gaussians against the reference at the source pose / camera (torch; the camera geometry is pure numpy and unit tested) |
 | `lhm_stages/idle_motion.py` | Procedural SMPL-X idle/talk loop (numpy) |
 | `lhm_stages/package_actor.py` | Raw LHM PLYs → avatar-local frames + `sequence.json` + motion track (numpy, no plyfile) |
@@ -26,7 +26,7 @@ against its reference before any of those outputs are written ("High detail" bel
 | `modal_motion.py` | GPU app `previz-stage-motion`: HY-Motion 1.0 text-to-motion on an L40S (`stage()` CPU, `generate()` GPU), run once for the library |
 | `motion_library.py` | CLI: generate clips, build seamless loops (`motion-library/`), upload them to the Volume |
 | `motion-library/` | The built motion library every actor ships with (`motion-library.json` + `motion-clips.bin`, 160 KB) |
-| `lhm_stages/recovery.py` | Receipts, Volume checkpoint manifests, verified download (port of Orbis `lhm_recovery.py`) |
+| `lhm_stages/recovery.py` | Receipts, Volume checkpoint manifests, verified download |
 | `lhm_stages/weights.py` | Pinned revisions, weight URLs, Volume layout |
 | `tests/` | pytest for motion, packaging, recovery and the rig / motion library; `make_synthetic_actor.py` makes a synthetic actor |
 
@@ -76,8 +76,8 @@ one (call `--recover` again later; `actors.ts` polls; inference is never resubmi
 | --- | --- |
 | `data/pretrained_models/`, `data/gfpgan/` | LHM prior archive, 18.8 GB uncompressed tar on Alibaba OSS. Stream-extracted with pinned Range + If-Match, so a rerun resumes instead of restarting. Measured 2026-10-24: 2,127 s (~9 MB/s), ~$0.075 CPU |
 | `huggingface/hub/models--3DAIGC--LHM-500M-HF` | `snapshot_download` at the pinned revision |
-| `huggingface/hub/models--3DAIGC--LHM-1B-HF` | `--stage-high`: Orbis's `larger_model` checkpoint at `92372582`, same architecture with 15 instead of 5 transformer layers |
-| `torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth`, `gfpgan/weights/GFPGANv1.3.pth`, `data/gfpgan/weights/{detection_Resnet50_Final,parsing_parsenet}.pth` | Same auxiliary weights Orbis stages |
+| `huggingface/hub/models--3DAIGC--LHM-1B-HF` | `--stage-high`: the 1B checkpoint at `92372582`, same architecture with 15 instead of 5 transformer layers |
+| `torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth`, `gfpgan/weights/GFPGANv1.3.pth`, `data/gfpgan/weights/{detection_Resnet50_Final,parsing_parsenet}.pth` | The auxiliary weights LHM loads at inference (DINOv2 backbone, GFPGAN face restoration + detection) |
 | `u2net/u2net.onnx` | rembg person matte (used when no mask is sent) |
 
 ## What one GPU call does
@@ -85,9 +85,9 @@ one (call `--recover` again later; `actors.ts` polls; inference is never resubmi
 1. **Mask.** Uses the caller's `mask.png` if given. Otherwise rembg u2net alpha > 127, largest
    component, 2 px dilation, which is LHM upstream's own fallback when SAM2 is absent. A
    generated light-grey studio reference segments cleanly. The mask box must be portrait.
-2. **Pose.** Multi-HMR on the masked reference (verbatim from Orbis).
-3. **Head crop.** The VGG head detector, restricted to the mask (verbatim from Orbis).
-4. **Canonical inference.** Orbis `preprocess` (1.1× box, 5:3 framing, white background), then
+2. **Pose.** Multi-HMR on the masked reference.
+3. **Head crop.** The VGG head detector, restricted to the mask.
+4. **Canonical inference.** LHM's own preprocessing (1.1× box, 5:3 framing, white background), then
    `model.infer_single_view(..., smplx_params=source pose)`.
 5. **Upright root.** If the Multi-HMR root is within 35° of upright (`root_pose = [π,0,0]`,
    meaning SMPL-X +Y up and facing the camera), the avatar is posed with the exact upright root.
@@ -129,7 +129,7 @@ DIR/recovery-receipt.json           written BEFORE submission (status: prepared 
 DIR/recovery-manifest.json          volume manifest snapshot (sizes + SHA-256 of every output)
 DIR/sequence/sequence.json          see below
 DIR/sequence/frame_000.ply …        avatar-local gaussian frames (idle first, then talk)
-DIR/sequence/motion.u16             wander.person-motion/1 track (motion.f32 with --lossless)
+DIR/sequence/motion.u16             previz.actor-motion/1 track (motion.f32 with --lossless)
 DIR/sequence/rig.json, rig-splats.bin   runtime rig (canonical splats + skin + skeleton), see "Formats"
 DIR/sequence/motion-library.json, motion-clips.bin   the shared motion library (copied per actor)
 DIR/frozen.ply                      frozen avatar, same frame as the sequence
@@ -138,7 +138,7 @@ DIR/inference.log, mask.png, observed-mask.png, pose-input.png, estimated-joints
 DIR/model-input.png, head-input.png, source.png, source-pose.json, cache-links.json
 ```
 
-`raw/` (the LHM camera-frame frames, Orbis-equivalent `person-posed.ply`), `canonical-state.pt`
+`raw/` (the LHM camera-frame frames, including the source-pose `person-posed.ply`), `canonical-state.pt`
 and `rig-canonical.npz` stay in the Volume. Download them with `--include-raw` to repackage locally
 (`python3 worker/lhm_stages/package_actor.py DIR/raw DIR/sequence --idle 48 --talk 24`).
 
@@ -146,7 +146,7 @@ and `rig-canonical.npz` stay in the Volume. Download them with `--include-raw` t
 
 Binary little-endian, one `vertex` element, all float32, in LHM `save_ply` order: `x y z nx ny
 nz f_dc_0..2 opacity scale_0..2 rot_0..3`. `rot` is (w,x,y,z), opacity is a logit, and scale is
-a log. This is the layout Orbis `gaussian-ply.ts`, Spark and SuperSplat read. Raw LHM frames are
+a log. This is the layout Spark and SuperSplat read. Raw LHM frames are
 in the Multi-HMR camera frame (OpenCV: x right, y down, z forward, subject facing the camera).
 Packaging applies Rz(π), `(x,y,z) → (−x,−y,z)`, a proper rotation (no mirror), plus a
 translation measured on frame 0. That gives the **avatar-local OpenGL frame**: +Y up, the avatar
@@ -155,7 +155,7 @@ and x/z centred on the opaque median. Units stay LHM-native (SMPL-X metres).
 
 ### `sequence.json`
 
-Fields from Orbis's person sequences, which Orbis's loader reads unchanged:
+Playback fields (the baked loop):
 
 | Field | Value |
 | --- | --- |
@@ -167,7 +167,7 @@ Fields from Orbis's person sequences, which Orbis's loader reads unchanged:
 | `gaussiansPerFrame` | splat count (~40 k for LHM-500M) |
 | `allNativeGaussianAttributesFinite`, `people_only`, `canonicalShapeFixed` | `true` |
 | `coordinates` | human-readable frame description |
-| `motion` | `wander.person-motion/1` record: `file`, `dtype` (`uint16` by default, `float32` with `--lossless`), `frames`, `splats`, `channels` = `x,y,z,rot_0,rot_1,rot_2,rot_3`, `frameFiles`, `base` {file, bytes, sha256} = frame_000, `bytes`, `sha256`, `min`, `scale`, `maxAbsError`, `layout`, `plyBytes`. The payload is frame-major, then splat, then channel, little-endian; `value = code·scale + min`. Written only when every static attribute is bit-identical across frames (always true for LBS); otherwise `motionSkipped` gives the reason. Orbis's viewer reads uint16 tracks only with `?motionquantize=1`; ours reads both. |
+| `motion` | `previz.actor-motion/1` record: `file`, `dtype` (`uint16` by default, `float32` with `--lossless`), `frames`, `splats`, `channels` = `x,y,z,rot_0,rot_1,rot_2,rot_3`, `frameFiles`, `base` {file, bytes, sha256} = frame_000, `bytes`, `sha256`, `min`, `scale`, `maxAbsError`, `layout`, `plyBytes`. The payload is frame-major, then splat, then channel, little-endian; `value = code·scale + min`. Written only when every static attribute is bit-identical across frames (always true for LBS); otherwise `motionSkipped` gives the reason. The viewer reads both dtypes. |
 
 Fields added for Previz Stage:
 
@@ -214,13 +214,12 @@ The laptop's per-character **High detail (~5 min per actor)** button (`POST
 are the standard ones (frozen PLY, baked sequence + motion track, runtime rig, motion library), so
 the viewer needs no change.
 
-**The two levers.** (1) LHM-1B-HF instead of LHM-500M-HF, as Orbis's `modal_lhm.py
-larger_model`: identical config except 15 transformer layers (still 40,000 gaussians, same
-SMPL-X skinning, so the rig export is unchanged); 15.0 GB peak VRAM on the L4 (500M: 11.9 GB).
-Orbis rejected 1B for *video* likeness ("more invented facial detail is not more likeness"); here
-the second lever ties the detail back to the reference. (2) A short fine-tune
-(`lhm_stages/finetune_actor.py`), after Orbis's `scripts/finetune_gsplat.py` (masked L1 + 0.2
-D-SSIM, quadratic tether to the initial values, hard clamp on displacement, no densify/prune),
+**The two levers.** (1) LHM-1B-HF instead of LHM-500M-HF: identical config except 15 transformer
+layers (still 40,000 gaussians, same SMPL-X skinning, so the rig export is unchanged); 15.0 GB
+peak VRAM on the L4 (500M: 11.9 GB). On its own the larger model invents facial detail rather
+than matching the photo (more detail is not more likeness), so the second lever ties the detail
+back to the reference. (2) A short fine-tune (`lhm_stages/finetune_actor.py`): masked L1 + 0.2
+D-SSIM, quadratic tether to the initial values, hard clamp on displacement, no densify/prune,
 adapted to one view:
 
 - *Where.* LHM's posed output is in the Multi-HMR camera frame, so rendering it with Multi-HMR's
@@ -390,7 +389,7 @@ agree. If any rig file fails to load or verify, the baked sequence plays.
 ### Formats
 
 `sequence.json` gains `rig: {schema: "previz.actor-rig/1", file: "rig.json", sha256, clips:
-"motion-library.json", clipsSha256, clipNames}`; nothing else changes (Orbis readers ignore it).
+"motion-library.json", clipsSha256, clipNames}`; nothing else changes (older readers ignore it).
 
 `rig.json`: `splats`, `bones` (55), `joints` (SMPL-X names), `parents`, `rest` (zero-pose joints,
 SMPL-X frame: +Y up, faces +Z, native metres), `sourcePose` (root/body/jaw/hands axis-angle; the

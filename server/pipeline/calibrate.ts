@@ -1,7 +1,7 @@
 // Scale calibration: is Marble's metric_scale_factor right, and if not, by how much?
 //
-// Orbis (scripts/world_ruler.py, fourd-runtime.js) found Marble's metric scale off by up to 2× on
-// some worlds, measured against a 1.7 m human and a door on the floor plane. This step measures
+// Marble's metric_scale_factor is only approximate: checked against a 1.7 m human and a door
+// standing on the floor plane, it can be off by up to 2× on some worlds. This step measures
 // every Marble world after download with two independent sources and records the result as
 // WorldAsset.scaleCalibration (effective scale = factor × metricScaleFactor, see
 // web/src/viewer/transform.ts):

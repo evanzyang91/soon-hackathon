@@ -1,6 +1,6 @@
 """Durable generated actor outputs and read-only, inference-free recovery.
 
-Trimmed port of OrbisEngine ``worker/stages/lhm_recovery.py``: the GPU function writes every
+The GPU function writes every
 output under ``/cache/recovery/<id>/output`` and a finalized ``manifest.json`` (sizes + SHA-256)
 before it returns a small receipt; the caller then downloads from the Volume and verifies each
 file. A local ``recovery-receipt.json`` is written *before* submission so an interrupted call is

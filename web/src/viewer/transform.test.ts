@@ -19,7 +19,7 @@ function worldLabsReference(p: Vec3, msf: number, gpo: number): Vec3 {
 }
 
 describe('worldTransform', () => {
-  it('matches the Orbis floor for the Diagon Alley world (-gpo/msf in the flipped frame)', () => {
+  it('puts the raw floor at -gpo/msf in the flipped frame (sample Marble world)', () => {
     expect(rawFloorY({ metricScaleFactor: 1.7405, groundPlaneOffset: 2.1357 })).toBeCloseTo(
       -1.227,
       3,

@@ -33,7 +33,7 @@ describe('validateSequence', () => {
     frame_sha256: [hex('a'), hex('b')],
     loops: { idle: { start: 0, count: 1 }, talk: { start: 1, count: 1 } },
   });
-  it('accepts a minimal Orbis-style sequence', () => {
+  it('accepts a minimal sequence', () => {
     expect(validateSequence(good()).count).toBe(2);
   });
   it.each([
@@ -48,7 +48,7 @@ describe('validateSequence', () => {
   });
   it('binds a motion track to the frame order and byte length', () => {
     const motion: MotionRecord = {
-      schema: 'wander.person-motion/1',
+      schema: 'previz.actor-motion/1',
       file: 'motion.u16',
       dtype: 'uint16',
       frames: 2,

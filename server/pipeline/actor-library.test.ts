@@ -19,7 +19,7 @@ async function writeLibraryActor(lib: string, id: string, over: Record<string, u
     nativeHeight: 1.812259935736556,
     loops: { idle: { start: 0, count: 4 }, talk: { start: 4, count: 2 } },
     motion: {
-      schema: 'wander.person-motion/1',
+      schema: 'previz.actor-motion/1',
       file: 'motion.u16',
       dtype: 'uint16',
       frames: 6,

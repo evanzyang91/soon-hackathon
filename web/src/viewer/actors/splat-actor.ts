@@ -1,7 +1,7 @@
-// LHM splat-sequence actor. Follows Orbis fourd-runtime's "interp" person path: ONE SplatMesh
-// built from frame_000.ply, and per frame only the splat centres + rotations change (colour,
-// opacity and scale are identical across LHM frames), so a frame switch rewrites those words of
-// the PackedSplats in place. Frames come from the compact wander.person-motion/1 track when
+// LHM splat-sequence actor (the baked fallback): ONE SplatMesh built from frame_000.ply, and per
+// frame only the splat centres + rotations change (colour, opacity and scale are identical
+// across LHM frames), so a frame switch rewrites those words of the PackedSplats in place.
+// Frames come from the compact previz.actor-motion/1 track when
 // present (one fetch, decoded per frame on demand), else from the individual PLYs.
 import * as THREE from 'three';
 import { PackedSplats, SplatMesh, setPackedSplat, utils as sparkUtils } from '@sparkjsdev/spark';
@@ -136,7 +136,7 @@ export async function loadSplatBody(
   await mesh.initialized;
 
   // Orientation: packaged sequences (avatarFrame) are already Y-up, facing -Z, feet at 0.
-  // A raw LHM/Orbis camera-frame sequence (OpenCV, y down, facing the camera) gets pi about Z,
+  // A raw LHM camera-frame sequence (OpenCV, y down, facing the camera) gets pi about Z,
   // then is grounded/centred from frame 0.
   const orient = new THREE.Group();
   orient.add(mesh);

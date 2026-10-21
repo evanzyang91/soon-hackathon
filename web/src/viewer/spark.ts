@@ -5,7 +5,7 @@ import { SparkRenderer, type SparkRendererOptions } from '@sparkjsdev/spark';
 export type SparkOptions = Partial<Omit<SparkRendererOptions, 'renderer'>>;
 
 /**
- * Splat renderer settings used for Marble worlds (same as Orbis `fourd-runtime.js`): Z-depth
+ * Splat renderer settings used for Marble worlds: Z-depth
  * sort, 0.3 px pre-blur, Gaussians cut at sqrt(5) std devs. `overrides` win.
  */
 export function createSpark(

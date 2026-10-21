@@ -5,9 +5,9 @@ Standard actors use LHM-500M-HF; "high detail" (``--model`` LHM-1B-HF + ``--fine
 short photometric fine-tune of the canonical gaussians against the reference right after the
 canonical inference (finetune_actor.py), so every output below comes from the fine-tuned state.
 
-Runs inside the Modal GPU image (cwd /opt/lhm). Ported from OrbisEngine
-``worker/stages/lhm_person.py`` (mask crop, Multi-HMR source pose, head crop, canonical LHM
-inference via ``infer_single_view`` + native ``animation_infer_gs`` skinning). Differences:
+Runs inside the Modal GPU image (cwd /opt/lhm): mask crop, Multi-HMR source pose, head crop,
+canonical LHM inference via ``infer_single_view`` + native ``animation_infer_gs`` skinning.
+Compared with LHM's upstream inference script:
 
 * No mask given -> person matte from ``rembg`` (u2net), LHM upstream's no-SAM2 fallback.
 * The posed output uses an upright root (``root_pose = [pi, 0, 0]``: SMPL-X +Y up / facing +Z
@@ -74,7 +74,7 @@ def person_mask(rgb: np.ndarray, dilate: int = 2) -> tuple[np.ndarray, np.ndarra
 
 
 def pose_parameters(pose, betas=None):
-    """Orbis lhm_person.pose_parameters: Multi-HMR rotvecs -> LHM SMPL-X params on CUDA."""
+    """Multi-HMR rotvecs -> LHM SMPL-X params on CUDA."""
     import torch
 
     rv = pose["rotvec"]
@@ -94,7 +94,7 @@ def pose_parameters(pose, betas=None):
 
 
 def preprocess(repo, source, mask):
-    """Orbis lhm_person.preprocess: original LHM mask crop, white background, 5:3 framing."""
+    """LHM's mask crop: 1.1x box, white background, 5:3 framing, 896 px."""
     import torch
     from engine.SegmentAPI.base import Bbox
 
@@ -139,7 +139,7 @@ def preprocess(repo, source, mask):
 
 
 def prepare_head_input(raw, mask, detector):
-    """Orbis lhm_person.prepare_head_input: head detection restricted to the person mask.
+    """Head detection restricted to the person mask.
     Returns (112 x 112 head crop, head box x0 y0 x1 y1 in reference pixels)."""
     import torch
 
@@ -325,7 +325,7 @@ def main():
         timings["finetune"] = time.time() - t0
     with torch.inference_mode():
         posed = model.animation_infer_gs(attrs, query, params)
-        posed.save_ply(str(out / "raw/person-posed.ply"))  # Orbis-equivalent source-pose output
+        posed.save_ply(str(out / "raw/person-posed.ply"))  # the source-pose output
         torch.save(dict(attrs=attrs, query=query, neutral=neutral, params=params), out / "canonical-state.pt")
 
     estimated_root = pose["rotvec"][0].numpy().astype(np.float64)

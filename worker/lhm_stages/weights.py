@@ -1,7 +1,7 @@
 """Pinned LHM code/weights and where each staged file lives inside the cache Volume.
 
 Shared by ``worker/modal_lhm.py`` (GPU inference app) and ``worker/modal_lhm_stage.py`` (CPU-only
-staging app). Revisions are exactly OrbisEngine's validated pins.
+staging app). Revisions are pinned so a rebuilt image produces the same avatars.
 """
 
 from pathlib import Path
@@ -10,8 +10,8 @@ VOLUME_NAME = "previz-stage-lhm-cache"
 LHM_REV = "4f88aaeb3629249fbbddb4d0784a06962d9e1338"
 MODEL_ID = "3DAIGC/LHM-500M-HF"
 MODEL_REV = "dd6392905187a91fd67b3f6962aa74481e943764"
-# "High detail" actors (run_actor --detail high): the larger checkpoint Orbis compared under
-# `larger_model` (same architecture and 40,000 gaussians, 15 instead of 5 transformer layers),
+# "High detail" actors (run_actor --detail high): the larger checkpoint (same architecture and
+# 40,000 gaussians, 15 instead of 5 transformer layers),
 # 6.85 GB of safetensors at this revision.
 LARGE_MODEL_ID = "3DAIGC/LHM-1B-HF"
 LARGE_MODEL_REV = "92372582f660066b9f1b9513860744357265b3d5"
