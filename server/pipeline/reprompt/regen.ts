@@ -163,7 +163,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
   try {
     let note: string;
     if (o.regen.method === 'pano-inpaint') {
-      const mask = maskFor(o.regen.prompt);
+      const mask = o.regen.imageEdit?.mask ?? maskFor(o.regen.prompt);
       const panoPath = join(jobDir, 'pano.png');
       const editedPath = join(jobDir, 'pano-edited.png');
       if (!(await exists(panoPath))) {
@@ -191,7 +191,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
         await writeFile(join(jobDir, 'pano-input.png'), encodePng(pano));
         await writeFile(join(jobDir, 'edit-canvas.png'), encodePng(canvas.image));
         await writeFile(join(jobDir, 'mask.png'), encodePng(canvas.mask));
-        const prompt = imageEditPrompt(o.regen.prompt);
+        const prompt = imageEditPrompt(o.regen.imageEdit?.prompt ?? o.regen.prompt);
         await writeJsonAtomic(join(jobDir, 'image-edit-request.json'), {
           method: 'POST',
           url: 'https://api.openai.com/v1/images/edits',
