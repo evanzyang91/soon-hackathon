@@ -66,6 +66,13 @@ import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } fr
 import { parseScreenplay } from './screenplay.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
+import type { Attachment } from '../../shared/chat.ts';
+import type { AmendResult } from './chat/apply.ts';
+import { planCardMessage } from './chat/plan-card.ts';
+import { planDiff } from './chat/plan-diff.ts';
+import { mergeReplan } from './chat/replan.ts';
+import { ChatStore, newMessageId } from './chat/store.ts';
+import { adoptUpload } from './chat/uploads.ts';
 
 export type StageName = 'parse' | 'world' | 'actors' | 'tts' | 'manifest';
 type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -223,6 +230,14 @@ function initJob(scene: ScenePlan): SceneJob {
   };
 }
 
+/** A draft's scene job: the same stages, each waiting for generate(). */
+function draftJob(scene: ScenePlan): SceneJob {
+  const job = initJob(scene);
+  for (const s of Object.values(job.stages))
+    if (s.status === 'pending') s.note = 'waiting for generate';
+  return job;
+}
+
 export class ProjectStore {
   readonly dataDir: string;
   private readonly mock: boolean;
@@ -249,6 +264,9 @@ export class ProjectStore {
   private readonly worldRetryFailed = new Set<string>();
   private active = 0;
   private idleWaiters: (() => void)[] = [];
+  /** <project>/chat.json (server/pipeline/chat/); each write is mirrored into chatRevision. */
+  readonly chat: ChatStore;
+  private readonly planLocks = new Map<string, Promise<unknown>>();
 
   constructor(o: StoreOptions) {
     this.dataDir = resolve(o.dataDir);
@@ -271,13 +289,28 @@ export class ProjectStore {
     this.worldSem = new Semaphore(o.maxWorldJobs ?? 3);
     this.actorSem = new Semaphore(o.maxActorJobs ?? 2);
     this.ttsSem = new Semaphore(o.maxTtsJobs ?? 4);
+    this.chat = new ChatStore(
+      (id) => this.dir(id),
+      (id, revision) => this.mirrorChatRevision(id, revision),
+    );
   }
 
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
 
-  async createProject(input: { title?: string; screenplay: string }): Promise<ProjectStatus> {
+  /**
+   * `draft`: a chat-first project (shared/chat.ts): only the parse runs; the screenplay becomes
+   * the thread's first message, the plan card its answer, and generate() starts the rest.
+   * `attachments`: upload ids (any project's uploads; they are content-addressed) carried by the
+   * screenplay message.
+   */
+  async createProject(input: {
+    title?: string;
+    screenplay: string;
+    draft?: boolean;
+    attachments?: string[];
+  }): Promise<ProjectStatus> {
     const screenplay = input.screenplay.replace(/\r\n?/g, '\n');
     if (!screenplay.trim()) throw new PipelineError('screenplay is empty', 400);
     const given = input.title?.trim().slice(0, 200) || undefined;
@@ -285,6 +318,15 @@ export class ProjectStore {
     const id = `${slugify(title, 24)}-${randomBytes(3).toString('hex')}`;
     const dir = this.dir(id);
     await mkdir(dir, { recursive: true });
+    const photos: Attachment[] = [];
+    for (const ref of input.attachments ?? []) {
+      const a = await adoptUpload(this.dataDir, dir, ref);
+      if (!a) {
+        await rm(dir, { recursive: true, force: true });
+        throw new PipelineError(`no upload ${ref}`, 400);
+      }
+      photos.push(a);
+    }
     await writeFile(join(dir, 'screenplay.fountain'), screenplay);
     await writeJsonAtomic(join(dir, 'input.json'), { title: given ?? null });
     const status: ProjectStatus = {
@@ -294,15 +336,27 @@ export class ProjectStore {
       mock: this.mock,
       parse: { status: 'pending' },
       scenes: [],
+      ...(input.draft ? { draft: true } : {}),
     };
     this.statuses.set(id, status);
     await this.persist(id);
     await this.log(
       id,
-      `project created (${screenplay.length} chars, ${this.mock ? 'MOCK' : 'live'})`,
+      `project created (${screenplay.length} chars, ${this.mock ? 'MOCK' : 'live'}${input.draft ? ', draft' : ''})`,
     );
+    if (input.draft || photos.length) {
+      await this.chat.appendMessages(id, [
+        {
+          id: newMessageId(),
+          at: status.createdAt,
+          role: 'user',
+          text: screenplay,
+          ...(photos.length ? { attachments: photos } : {}),
+        },
+      ]);
+    }
     this.enqueue(id, () => this.runParse(id));
-    return structuredClone(status);
+    return structuredClone(this.statuses.get(id)!);
   }
 
   async getProject(id: string): Promise<ProjectStatus | undefined> {
@@ -336,6 +390,8 @@ export class ProjectStore {
   async retry(id: string, sceneIndex: number, stage: StageName): Promise<ProjectStatus> {
     const st = await this.load(id);
     if (!st) throw new PipelineError(`no project ${id}`, 404);
+    if (st.draft && stage !== 'parse')
+      throw new PipelineError('draft project: start the generation first (POST /generate)', 409);
     if (stage === 'parse') {
       if (st.parse.status === 'done')
         throw new PipelineError('parse already succeeded; create a new project to re-plan', 409);
@@ -476,6 +532,8 @@ export class ProjectStore {
     const resumed: string[] = [];
     for (const st of await this.listProjects()) {
       const live = this.statuses.get(st.id)!;
+      // a parsed draft waits for generate(): its pending stages are not unfinished work
+      if (live.draft && settled(live.parse)) continue;
       const rebuilding = (live.actors ?? []).filter((a) => a.rebuild?.status === 'running');
       const unfinished =
         !settled(live.parse) ||
@@ -517,6 +575,154 @@ export class ProjectStore {
   projectDir(id: string): string {
     return this.dir(id);
   }
+
+  // -------------------------------------------------------------------------
+  // Project chat (server/pipeline/chat/): plan amendments, draft generation, re-plans
+  // -------------------------------------------------------------------------
+
+  async getPlan(id: string): Promise<ScreenplayPlan | undefined> {
+    const plan = await this.plan(id);
+    return plan && structuredClone(plan);
+  }
+
+  readScreenplay(id: string): Promise<string> {
+    return readFile(join(this.dir(id), 'screenplay.fountain'), 'utf8');
+  }
+
+  /** A line in the project's log.txt (the chat logs every action it applies). */
+  logEvent(id: string, message: string): Promise<void> {
+    return this.log(id, message);
+  }
+
+  /**
+   * Rewrites plan.json through `fn` (a mutation of a copy, or a returned plan): validated, the
+   * plan cache and project.json (title, scene headings, actor names) follow, the change is logged.
+   * Characters and scenes keep their ids and order (structural changes go through replan).
+   * Nothing is scheduled: the caller decides what the change invalidates.
+   */
+  amendPlan(id: string, fn: (plan: ScreenplayPlan) => void | ScreenplayPlan): Promise<AmendResult> {
+    return this.underPlanLock(id, async () => {
+      const st = await this.load(id);
+      const before = await this.plan(id);
+      if (!st) throw new PipelineError(`no project ${id}`, 404);
+      if (!before) throw new PipelineError(`${id} has no plan yet`, 409);
+      const copy = structuredClone(before);
+      const plan = ScreenplayPlan.parse(fn(copy) ?? copy);
+      const same = (a: { id?: string; slug?: string }[], b: { id?: string; slug?: string }[]) =>
+        a.length === b.length && a.every((x, i) => (x.id ?? x.slug) === (b[i]!.id ?? b[i]!.slug));
+      if (!same(plan.scenes, before.scenes) || plan.scenes.some((s, i) => s.index !== i))
+        throw new PipelineError('a plan amendment cannot add, remove or reorder scenes; re-plan instead', 400);
+      if (!same(plan.characters, before.characters))
+        throw new PipelineError('a plan amendment cannot add or remove characters; re-plan instead', 400);
+      const changed = planDiff(before, plan);
+      if (changed.length) {
+        await writeJsonAtomic(join(this.dir(id), 'plan.json'), plan);
+        this.plans.set(id, plan);
+        if (plan.title !== before.title) st.title = plan.title;
+        for (const s of plan.scenes) if (st.scenes[s.index]) st.scenes[s.index]!.heading = s.heading;
+        if (st.actors) await this.syncActors(st, plan);
+        await this.persist(id);
+        await this.log(id, `plan amended: ${changed.join('; ').slice(0, 800)}`);
+      }
+      return { plan: structuredClone(plan), before: structuredClone(before), changed };
+    });
+  }
+
+  /**
+   * Starts a draft project's worlds, actors and voices (POST /api/projects/:id/generate): clears
+   * `draft` and schedules every scene like an ordinary parse does. A no-op for a project that is
+   * not a draft (already generating or generated). Before the parse finishes it only clears the
+   * flag, and the parse schedules the stages when it is done.
+   */
+  async generate(id: string): Promise<ProjectStatus> {
+    const st = await this.load(id);
+    if (!st) throw new PipelineError(`no project ${id}`, 404);
+    if (!st.draft) return structuredClone(st);
+    delete st.draft;
+    const plan = st.parse.status === 'done' ? await this.plan(id) : undefined;
+    if (plan) st.scenes = plan.scenes.map(initJob);
+    await this.persist(id);
+    await this.log(
+      id,
+      plan
+        ? `generate: starting worlds, actors and voices for ${plan.scenes.length} scene(s)`
+        : `generate: starts when the parse is done (parse ${st.parse.status})`,
+    );
+    if (plan)
+      for (const scene of plan.scenes)
+        for (const stage of ['world', 'actors', 'tts'] as const) this.scheduleStage(id, scene.index, stage);
+    return structuredClone(st);
+  }
+
+  /**
+   * Re-plans from an amended screenplay (the chat's structural changes). The new parse is merged
+   * with the current plan (chat/replan.ts: characters keep their ids, amendments and photos;
+   * scenes with an unchanged heading keep their world prompt, marks and scene-<n>/ folder, moved
+   * to their new index). A draft only gets the new plan; a generated project re-runs every scene
+   * (kept worlds are reused from their receipts, cached actors and line audio stay valid) and
+   * folders of removed scenes are set aside as scene-<n>.replaced-<tag>/.
+   */
+  replan(id: string, screenplay: string): Promise<ProjectStatus> {
+    return this.underPlanLock(id, async () => {
+      const st = await this.load(id);
+      const prev = await this.plan(id);
+      if (!st) throw new PipelineError(`no project ${id}`, 404);
+      if (!prev) throw new PipelineError(`${id} has no plan yet`, 409);
+      const busy = st.scenes.some((j) => (['world', 'actors', 'tts'] as const).some((s) => j.stages[s].status === 'running'));
+      if (!st.draft && busy) throw new PipelineError('stages are still running; re-plan when they are done', 409);
+      const text = screenplay.replace(/\r\n?/g, '\n');
+      if (!text.trim()) throw new PipelineError('screenplay is empty', 400);
+      const dir = this.dir(id);
+      const input = (await readJson<{ title?: string | null }>(join(dir, 'input.json'))) ?? {};
+      const offline = st.mock || !this.keys.anthropic;
+      await this.log(id, `replan: planning the amended screenplay (${text.length} chars)`);
+      const next = ScreenplayPlan.parse(
+        await this.deps.parseScreenplay(text, {
+          mock: offline,
+          log: this.logger(id, 'replan: '),
+          title: input.title ?? undefined,
+        }),
+      );
+      const merged = mergeReplan(prev, next);
+      const old = await readFile(join(dir, 'screenplay.fountain'), 'utf8').catch(() => '');
+      await writeFile(join(dir, 'screenplay.prev.fountain'), old);
+      await writeFile(join(dir, 'screenplay.fountain'), text);
+      if (!st.draft) await this.moveSceneDirs(id, merged.sceneFrom, merged.droppedScenes);
+      await writeJsonAtomic(join(dir, 'plan.json'), merged.plan);
+      this.plans.set(id, merged.plan);
+      if (!input.title) st.title = merged.plan.title;
+      st.scenes = merged.plan.scenes.map(st.draft ? draftJob : initJob);
+      st.parse = {
+        status: 'done',
+        note: `${merged.plan.scenes.length} scene(s), ${merged.plan.characters.length} character(s) (re-planned)`,
+      };
+      await this.syncActors(st, merged.plan);
+      await this.persist(id);
+      const moves = merged.sceneFrom.map((j, i) => (j === null ? `${i}: new` : `${i} ← ${j}`)).join(', ');
+      await this.log(
+        id,
+        `replan: done — characters kept ${merged.kept.join(', ') || 'none'}, new ${merged.added.join(', ') || 'none'}, removed ${merged.removed.join(', ') || 'none'}; scenes ${moves}`,
+      );
+      if (!st.draft)
+        for (const scene of merged.plan.scenes)
+          for (const stage of ['world', 'actors', 'tts'] as const) this.scheduleStage(id, scene.index, stage);
+      return structuredClone(st);
+    });
+  }
+
+  // WP4 stub — replaced by WP5 at merge
+  // (rebuildActor(…, 'standard') refuses MOCK projects, so the stub redoes the actors stage of the
+  // first scene with the character instead: it rebuilds from the current plan in MOCK and live.)
+  async rebuildActorFromPlan(id: string, characterId: string): Promise<ProjectStatus> {
+    const scene = (await this.plan(id))?.scenes.find((s) => s.characterIds.includes(characterId));
+    if (!scene) throw new PipelineError(`no character ${characterId} in ${id}`, 404);
+    return this.retry(id, scene.index, 'actors');
+  }
+
+  async regenerateWorld(id: string, sceneIndex: number): Promise<ProjectStatus> {
+    return this.retry(id, sceneIndex, 'world');
+  }
+  // end WP4 stub
 
   /**
    * A cached offline fallback (mannequin / beeps) is not final in a live project once the keys
@@ -591,6 +797,66 @@ export class ProjectStore {
     return (m: string) => void this.log(id, `${prefix}${m}`);
   }
 
+  /** Plan rewrites (amendPlan, replan) of one project run one at a time. */
+  private underPlanLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.planLocks.get(id) ?? Promise.resolve();
+    const p = prev.then(fn, fn);
+    const tail = p.catch(() => {});
+    this.planLocks.set(id, tail);
+    void tail.then(() => {
+      if (this.planLocks.get(id) === tail) this.planLocks.delete(id);
+    });
+    return p;
+  }
+
+  private async mirrorChatRevision(id: string, revision: number): Promise<void> {
+    const st = await this.load(id);
+    if (!st || (st.chatRevision ?? 0) >= revision) return;
+    st.chatRevision = revision;
+    await this.persist(id);
+  }
+
+  /** A parsed (or failed) draft answers in its thread: the plan card, or why there is none. */
+  private async draftParsed(st: ProjectStatus, plan: ScreenplayPlan | undefined, error?: string) {
+    try {
+      const first = (await this.chat.read(st.id)).messages[0];
+      const source = st.mock || !this.keys.anthropic ? 'mock' : 'claude';
+      await this.chat.appendMessages(st.id, [
+        plan
+          ? planCardMessage(plan, { draft: true, photos: first?.attachments, source })
+          : {
+              id: newMessageId(),
+              at: new Date().toISOString(),
+              role: 'assistant',
+              text: `I could not plan this screenplay (${error ?? 'unknown error'}). Retry the parse, or check the scene headings and character cues and paste it again.`,
+              source,
+            },
+      ]);
+    } catch (e) {
+      await this.log(st.id, `chat: plan card not written: ${errMsg(e)}`);
+    }
+  }
+
+  /**
+   * Re-plan of a generated project: scene-<j>/ becomes scene-<i>/ for every new scene i that
+   * continues old scene j (its world, receipt and edits come along; its line cache is dropped
+   * because line ids follow the new order), folders of dropped scenes are set aside.
+   */
+  private async moveSceneDirs(id: string, sceneFrom: (number | null)[], dropped: number[]) {
+    const tag = randomBytes(3).toString('hex');
+    const tmp = (j: number) => join(this.dir(id), `.replan-${tag}-scene-${j}`);
+    const olds = [...sceneFrom.filter((j): j is number => j !== null), ...dropped];
+    for (const j of olds) if (await exists(this.sceneDir(id, j))) await rename(this.sceneDir(id, j), tmp(j));
+    for (const [i, j] of sceneFrom.entries()) {
+      if (j === null || !(await exists(tmp(j)))) continue;
+      await rename(tmp(j), this.sceneDir(id, i));
+      await rm(join(this.sceneDir(id, i), 'audio.json'), { force: true });
+    }
+    for (const j of dropped)
+      if (await exists(tmp(j))) await rename(tmp(j), join(this.dir(id), `scene-${j}.replaced-${tag}`));
+    for (const k of [...this.worldRetryFailed]) if (k.startsWith(`${id}:`)) this.worldRetryFailed.delete(k);
+  }
+
   /** Serial task queue per key; a key already waiting to run is not queued twice. */
   private enqueue(key: string, fn: () => Promise<void>): void {
     if (this.queued.has(key)) return;
@@ -658,18 +924,22 @@ export class ProjectStore {
         await writeJsonAtomic(join(dir, 'plan.json'), plan);
         this.plans.set(id, plan);
         if (!input.title) st.title = plan.title;
-        st.scenes = plan.scenes.map(initJob);
+        st.scenes = plan.scenes.map(st.draft ? draftJob : initJob);
         const note = `${plan.scenes.length} scene(s), ${plan.characters.length} character(s)${offline && !st.mock ? ' (offline parser: ANTHROPIC_API_KEY not set)' : ''}`;
         st.parse = { status: 'done', note };
         await this.persist(id);
         await this.log(id, `parse: done — ${note}`);
+        if (st.draft) await this.draftParsed(st, plan);
       } catch (e) {
         st.parse = { status: 'failed', note: errMsg(e) };
         await this.persist(id);
         await this.log(id, `parse: FAILED ${errMsg(e)}`);
+        if (st.draft) await this.draftParsed(st, undefined, errMsg(e));
         return;
       }
     }
+    // a draft stops after the parse; generate() schedules the rest
+    if (st.draft) return;
     if (st.scenes.length !== plan.scenes.length) {
       st.scenes = plan.scenes.map((s) => st.scenes[s.index] ?? initJob(s));
       await this.persist(id);
@@ -1215,7 +1485,7 @@ export function defaultStore(o: Partial<StoreOptions> = {}): ProjectStore {
   return store;
 }
 
-export const createProject = (input: { title?: string; screenplay: string }) =>
+export const createProject = (input: Parameters<ProjectStore['createProject']>[0]) =>
   defaultStore().createProject(input);
 export const getProject = (id: string) => defaultStore().getProject(id);
 export const listProjects = () => defaultStore().listProjects();
