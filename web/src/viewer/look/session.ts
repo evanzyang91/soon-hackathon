@@ -196,7 +196,9 @@ export class LookSession {
   private adopted(t: SessionTarget, doc: SceneEdits) {
     if (this.target !== t || doc.revision <= this.revision) return;
     this.revision = doc.revision;
-    this.history?.push(doc.look);
+    // another writer (the edits store saving a drag, the Edit tab) usually leaves the look as it
+    // is: only a changed look is an undo step, so ⌘Z in the Look tab never "does nothing"
+    if (this.history && !same(this.history.current, doc.look)) this.history.push(doc.look);
     this.dirty = false;
     this.setStatus('saved');
     this.opts.onBroadcast?.(true);
