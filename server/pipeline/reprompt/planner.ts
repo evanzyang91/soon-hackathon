@@ -3,9 +3,9 @@
 // Real path: Claude (claude-opus-5-5, low effort, ≤ 2k output tokens) with structured output
 // against the Draft schema (draft.ts), then draftToPlan applies the scope rules. A splat-region op
 // without a viewport selection comes back with `needsTarget`; when the request carries the current
-// view (jpeg ≤ 300 KB) one vision request (vision.ts) boxes the named objects and the boxes travel
-// back as `targets` next to the plan (not inside EditPlan — contract proposal:
-// `needsTarget[].box`). Mock path (MOCK=1 or no ANTHROPIC_API_KEY): mock.ts.
+// view (jpeg ≤ 300 KB) one vision request (vision.ts) boxes the named objects: each box lands on
+// the plan as `needsTarget[].box` + `confidence` (and, for older clients, in `targets` next to the
+// plan). Mock path (MOCK=1 or no ANTHROPIC_API_KEY): mock.ts.
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type { EditPlan } from '../../../shared/look.ts';
@@ -55,7 +55,7 @@ How to fill the plan
 - splat-region: objects that are part of the generated world (shelter, bench, lamp, sign, wall, car parked in the world …) — not actors or listed props. One region per object with its label as the director names it. Colour: "hue" to recolour keeping shading (the usual choice for "make X red"), "multiply" to tint/darken, "set" for flat paint. hide removes it. moveBy shifts it (metres, world frame). scale grows/shrinks it. You never place a region: the director's selection or a vision box does.
 - world-regen: only for changes a grade, a region edit or a prop cannot make: a different sky, weather, season, time of day as lighting in the world itself, or a different place. environmental = true for sky / weather / season / time of day / materials of the whole place (the world's panorama can be edited); then imageEdit is an instruction that changes ONLY that and keeps the layout and objects (start it with "Replace only the sky" when only the sky changes). worldPrompt is always the complete new environment description (no people). A "night mood" or "darker" alone is a look, not a regen.
 - clarify: when the prompt does not identify what to change (e.g. "the thing on the left", "fix it"), ask one short question.
-- summary: what will change and what will not, in one or two short sentences, in the director's words.`;
+- summary: what will change and what will not, in one or two short sentences, in the director's words. For world-regen start it with "Regenerate the world with …" (e.g. "Regenerate the world with a stormy sky").`;
 
 // ---------------------------------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ export interface PlanInput {
 
 export interface PlanResult {
   plan: EditPlan;
-  /** Pixel boxes of named objects in the view (normalised), for ops listed in needsTarget. */
+  /** The same boxes as plan.needsTarget[].box, flat (the HTTP response's `targets`). */
   targets: TargetBox[];
   source: 'claude' | 'mock';
   notes: string[];
@@ -214,5 +214,16 @@ export async function planEdit(input: PlanInput): Promise<PlanResult> {
       }
     }
   }
-  return { plan, targets, source: offline ? 'mock' : 'claude', notes, usage };
+  // the vision boxes ride on the plan itself (EditPlan.needsTarget[].box / confidence)
+  const r4 = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1e4) / 1e4;
+  const located: EditPlan = {
+    ...plan,
+    needsTarget: plan.needsTarget.map((t) => {
+      const hit = targets.find((x) => x.opId === t.opId);
+      return hit
+        ? { ...t, box: { x: r4(hit.box.x), y: r4(hit.box.y), w: r4(hit.box.w), h: r4(hit.box.h) }, confidence: r4(hit.confidence) }
+        : t;
+    }),
+  };
+  return { plan: located, targets, source: offline ? 'mock' : 'claude', notes, usage };
 }

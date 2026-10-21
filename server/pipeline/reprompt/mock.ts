@@ -225,7 +225,7 @@ export function mockDraft(prompt: string, scene: SceneContext, o: { selection?: 
     const env = REGEN_ENV.test(p) && !REGEN_TEXT.test(p);
     d.scope = 'world-regen';
     const change = prompt.trim().replace(/^(please\s+)?(make|turn)\s+(it|the scene|the world)\s+/i, '').replace(/[.!]+$/, '');
-    d.summary = `This changes the whole environment (${change}): the world has to be regenerated.`;
+    d.summary = `Regenerate the world for “${change}”: the whole environment changes, which a grade or a region edit cannot do.`;
     d.regen = {
       environmental: env,
       imageEdit: env ? `Edit this 360° panorama: ${prompt.trim().replace(/[.!]+$/, '')}. Keep the layout, buildings, street and objects exactly where they are; change only the environment.` : '',

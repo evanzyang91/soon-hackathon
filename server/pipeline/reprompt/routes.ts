@@ -5,8 +5,7 @@
 //   with a 3D target) are appended to scene-<n>/edits.json right away (EditsStore.update: revision
 //   bump + a history entry with the prompt); world-regen and clarify come back unapplied, and so
 //   do region ops still waiting for a target. Response: { plan, edits, targets?, applied, notes }.
-//   `targets` (normalised pixel boxes from the vision request) is a sibling of `plan`, not part of
-//   EditPlan: contract proposal `needsTarget[].box`.
+//   Vision boxes are on the plan (needsTarget[].box + confidence); `targets` repeats them flat.
 // regen: runs the world stage again for the scene from the confirmed plan.regen (regen.ts) in the
 //   background → 202 ProjectStatus. When the new world is in place, region edits are dropped from
 //   edits.json with a note in its history (look, actors, props, moves are kept). Idempotent per
