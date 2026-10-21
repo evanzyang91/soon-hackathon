@@ -3,9 +3,14 @@
 // ≤30 Hz while rendering the scene from the phone's pose (or the 2D viewfinder fallback).
 //
 // Pose streaming is the critical path: it never waits on, or breaks because of, the 3D view.
+//
+// ?pose=external (the native ARKit app in ios/, "Web side contract" in ios/README.md): no start
+// screen, sensors, walk controls or relay. The app owns the relay socket and pushes its pose and
+// the relay's messages through window.__previzPose / __previzMessage; the page only renders.
 import { Euler, Quaternion } from 'three';
 import type { PhonePose, SceneState, ServerMessage } from '@shared/protocol';
-import { SceneManifest, type Vec3 } from '@shared/schema';
+import { SceneManifest, type Quat, type Vec3 } from '@shared/schema';
+import { parseExternalPose, type ExternalPose } from './external.ts';
 import { clampFov, DEFAULT_FOV, focalLabel, pinchFov } from './fov.ts';
 import { Gestures } from './gestures.ts';
 import { KeyboardWalk, TouchStick } from './joystick.ts';
@@ -30,6 +35,8 @@ import type { PhoneView } from './view.ts';
 import { cameraPosition, headingOf, NO_WALK, Walker, type WalkInput } from './walk.ts';
 
 const params = new URLSearchParams(location.search);
+/** ?pose=external: the native app streams the pose and relays messages; the page only renders. */
+const EXTERNAL = params.get('pose') === 'external';
 const SIM = params.get('sim') === '1';
 const ANGLE_OVERRIDE = params.has('angle') ? Number(params.get('angle')) : null;
 const AUTO_RECENTER = params.get('recenter') !== '0';
@@ -74,6 +81,16 @@ let hintedScene: string | null = null;
 let stick: TouchStick | null = null;
 let heightSlider: TouchStick | null = null;
 let keys: KeyboardWalk | null = null;
+/** ?pose=external: the latest native pose, and its orientation as a three.js quaternion. */
+let ext: ExternalPose = {
+  q: [0, 0, 0, 1],
+  nudge: [0, 0, 0],
+  offset: [0, 0, 0],
+  fovDeg,
+  recording: false,
+};
+const extQuat = new Quaternion();
+let extAudioUnlocked = false;
 
 const angle = () =>
   ANGLE_OVERRIDE !== null && Number.isFinite(ANGLE_OVERRIDE) ? ANGLE_OVERRIDE : screenAngle();
@@ -83,7 +100,12 @@ const debug = {
   sim: SIM,
   room: '',
   started: false,
-  conn: 'idle' as ConnState,
+  /** Relay link (ConnState); with ?pose=external, window.__previzNative.conn (the app's link). */
+  conn: 'idle' as ConnState | (string & {}),
+  /** 'external': the native app streams the pose (?pose=external); 'browser': this page does. */
+  poseSource: (EXTERNAL ? 'external' : 'browser') as 'external' | 'browser',
+  /** Native poses applied through window.__previzPose. */
+  externalPoses: 0,
   peers: { laptop: false, phones: 0 },
   posesSent: 0,
   lastPose: null as PhonePose | null,
@@ -123,6 +145,8 @@ const debug = {
   walk: { ...NO_WALK } as WalkInput,
   /** Phone camera position = anchor + offset + nudge (as rendered, when 3D is drawing). */
   cameraPosition: [0, 1.6, 0] as Vec3,
+  /** Phone camera orientation [x, y, z, w] in the world frame (what the 3D view renders). */
+  cameraQuaternion: [0, 0, 0, 1] as Quat,
   recording: false,
   /** The director's look as rendered here: name, edits.json revision, frames through the post pass. */
   look: { name: 'Default', revision: -1, postFrames: 0 },
@@ -139,6 +163,12 @@ export type PhoneDebug = typeof debug;
 declare global {
   interface Window {
     __phone?: PhoneDebug;
+    // ?pose=external bridge (ios/README.md "Web side contract")
+    __previzPose?: (pose: PhonePose) => void;
+    __previzMessage?: (msg: ServerMessage) => void;
+    __previzNative?: Record<string, unknown>;
+    __previzNativeHost?: { platform: 'ios'; source: 'arkit'; bridge: number };
+    webkit?: { messageHandlers?: { previz?: { postMessage(msg: unknown): void } } };
   }
 }
 window.__phone = debug;
@@ -146,15 +176,19 @@ window.__phone = debug;
 // -- start screen ------------------------------------------------------------------------------
 
 const initialRoom = (params.get('room') ?? '').trim().toUpperCase();
-ui.roomInput.value = initialRoom;
-if (!window.isSecureContext) {
-  ui.startError('Motion sensors need HTTPS. Open the https:// link printed by the server.');
+if (EXTERNAL) {
+  startExternal();
+} else {
+  ui.roomInput.value = initialRoom;
+  if (!window.isSecureContext) {
+    ui.startError('Motion sensors need HTTPS. Open the https:// link printed by the server.');
+  }
+  ui.startButton.addEventListener('click', () => start());
+  ui.roomInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') start();
+  });
+  if (params.get('autostart') === '1' && initialRoom) start();
 }
-ui.startButton.addEventListener('click', () => start());
-ui.roomInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') start();
-});
-if (params.get('autostart') === '1' && initialRoom) start();
 
 /** Must run inside the user-gesture handler: permission + fullscreen requests happen synchronously. */
 function start(): void {
@@ -248,8 +282,6 @@ function start(): void {
   });
   if (SIM) keys = new KeyboardWalk();
 
-  void initView();
-  window.addEventListener('resize', () => view?.resize());
   ui.onRecenter(() => {
     recenter();
     ui.toast(`Recentered to ${anchor.name}`);
@@ -262,10 +294,76 @@ function start(): void {
   ui.onNextCamera(() => relay?.send({ type: 'cmd', cmd: 'next-camera' }));
   ui.onAction(() => sendSceneCommand('play-scene'));
   ui.onNextLine(() => sendSceneCommand('next-line'));
+  boot();
+}
+
+/**
+ * ?pose=external: start at once. No start screen, sensor permission, fullscreen, orientation or
+ * wake lock, sensor listeners, walk controls, pinch lens or relay. Install the bridge the app
+ * calls, then tell it the page is ready (it replays the latest peers + scene + pose).
+ */
+function startExternal(): void {
+  started = true;
+  debug.started = true;
+  debug.room = initialRoom;
+  document.body.dataset.pose = 'external'; // phone.html hides the page's own controls
+  ui.showHud(initialRoom);
+  window.__previzPose = onExternalPose;
+  window.__previzMessage = (msg) => {
+    if (typeof msg?.type === 'string') onMessage(msg);
+  };
+  boot();
+  mirrorNativeConn();
+  toNative({ type: 'ready' });
+}
+
+/** Both modes: the 3D view, the lens label and the loops. */
+function boot() {
+  void initView();
+  window.addEventListener('resize', () => view?.resize());
   setFov(fovDeg);
   requestAnimationFrame(frame);
   // rAF stalls when rendering is slow or the tab is hidden; keep the pose stream alive anyway.
   setInterval(() => pump(performance.now()), 20);
+}
+
+/**
+ * window.__previzPose: keep the latest native pose (up to 60 Hz, so cheap); frame() renders it.
+ * Already world frame and re-centred: q verbatim, position = anchor + offset + nudge, its fov.
+ */
+function onExternalPose(raw: unknown) {
+  const p = parseExternalPose(raw);
+  if (!p) return;
+  // ?voice=1: the app's web view lets media start without a gesture, so the first pose unlocks
+  if (VOICE && !extAudioUnlocked) {
+    extAudioUnlocked = true;
+    unlockAudio((s) => (debug.audio = s));
+  }
+  ext = p;
+  extQuat.set(p.q[0], p.q[1], p.q[2], p.q[3]);
+  debug.externalPoses++;
+  debug.offset = p.offset;
+  if (p.fovDeg !== fovDeg) {
+    fovDeg = p.fovDeg;
+    ui.setLens(focalLabel(fovDeg));
+  }
+  setRecording(p.recording, false);
+}
+
+/** ?pose=external: the app's relay link (window.__previzNative is refreshed at 1 Hz). */
+function mirrorNativeConn() {
+  const c = window.__previzNative?.conn;
+  if (typeof c === 'string') debug.conn = c;
+}
+
+/** Page → native app (?pose=external). A no-op without the WKWebView bridge (desktop browsers). */
+function toNative(msg: { type: 'ready' } | { type: 'log'; message: string }) {
+  if (!EXTERNAL) return;
+  try {
+    window.webkit?.messageHandlers?.previz?.postMessage(msg);
+  } catch {
+    // the bridge went away: nothing to tell
+  }
 }
 
 function enableManualLook() {
@@ -302,6 +400,7 @@ async function initView() {
     }
   } catch (err) {
     console.warn('[phone] 3D view unavailable', err);
+    toNative({ type: 'log', message: `3D view unavailable: ${String(err)}` });
     viewUnavailable = true;
     ui.setViewMode('viewfinder');
   }
@@ -340,6 +439,8 @@ function listenSensors() {
 }
 
 function recenter() {
+  // ?pose=external: the app re-centres its own pose (a laptop 'recenter' only shows a toast)
+  if (EXTERNAL) return;
   // only the heading: a recenter keeps where the joystick has walked to
   tracker.recenter(anchor.yaw);
   debug.yawOffset = tracker.yawOffset;
@@ -430,7 +531,8 @@ function refreshAnchor() {
   anchor = next;
   debug.anchor = next;
   ui.setCameraName(next.name);
-  if (changed) {
+  // ?pose=external: the app's pose carries its own fov, offset and heading
+  if (changed && !EXTERNAL) {
     setFov(next.fovDeg);
     // walking is relative to the attached camera: a new camera starts where it stands
     resetWalk();
@@ -455,6 +557,7 @@ async function fetchManifest(url: string) {
     }
   } catch (err) {
     console.warn('[phone] manifest fetch failed', err);
+    toNative({ type: 'log', message: `manifest fetch failed: ${String(err)}` });
   }
 }
 
@@ -497,6 +600,7 @@ function pump(now: number) {
   // Main-thread stalls between pump ticks are what starve the pose stream.
   if (document.visibilityState === 'visible' && view?.mode === 'webgl')
     governor.observeGap(now, gapMs);
+  if (EXTERNAL) return; // the app owns sway, walking and the pose stream
   if (now - lastMotionAt > 250) nudge.update(null, tracker.deviceFrame, dt);
   const input = walkInput();
   debug.walk = input;
@@ -532,10 +636,12 @@ function frame(now: number) {
   pump(now);
   const dt = Math.min(0.1, (now - lastFrameAt) / 1000);
   lastFrameAt = now;
-  const q = tracker.quaternion;
-  const off = nudge.offset;
-  const pose = { position: anchor.position, quaternion: q, fovDeg, offset: walker.offset, nudge: off };
+  const q = EXTERNAL ? extQuat : tracker.quaternion;
+  const off = EXTERNAL ? ext.nudge : nudge.offset;
+  const walked = EXTERNAL ? ext.offset : walker.offset;
+  const pose = { position: anchor.position, quaternion: q, fovDeg, offset: walked, nudge: off };
   debug.cameraPosition = cameraPosition(pose);
+  debug.cameraQuaternion = toQuat(q);
   if (view) {
     const t0 = performance.now();
     const draw = governor.shouldRender(now);
@@ -580,6 +686,7 @@ function frame(now: number) {
     fpsAt = now;
     fpsFrames = debug.framesRendered;
     ui.setPerf(perfLabel(perfState()));
+    if (EXTERNAL) mirrorNativeConn();
     if (view) debug.look = { name: view.look.look.name, revision: view.look.revision, postFrames: view.postFrames };
   }
   if (view && now - lastVoiceCheck > 100) {
