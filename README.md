@@ -74,20 +74,23 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
 ## Make a scene
 
 1. Open `https://localhost:5173/` and accept the self-signed certificate once.
-2. Paste a screenplay (or press **Sample**) and press **Generate**. The project appears with one
-   row per scene and a chip per stage (parse, world, actors, tts, manifest). Hover a chip for the
-   detail; a red (failed) or amber (fallback) chip can be clicked to retry.
+2. In the projects drawer (left, ☰ or `[` toggles it), paste a screenplay (or press **Sample**)
+   and press **Generate**. The project appears with one row per scene and a chip per stage
+   (parse, world, actors, tts, manifest). Hover a chip for the detail; a red (failed) or amber
+   (fallback) chip can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
-4. Under the scenes, each character has a row: name, build detail (`standard` / `high`), kind
-   (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min per actor)** rebuilds that
-   character with LHM-1B plus a fine-tune against its reference image (see below).
+4. The **Scene** tab (right panel) lists the open project's scenes, the world (splat quality,
+   measured scale, floor offset) and the cast: one row per character with its build detail
+   (`standard` / `high`), kind (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min
+   per actor)** rebuilds that character with LHM-1B plus a fine-tune against its reference image
+   (see below).
 
 ## High detail actors
 
 The standard actor is LHM-500M from one generated reference photo: right silhouette, soft face
 and clothing. **High detail (~5 min per actor)** in the project panel (tooltip: "LHM-1B +
 fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build
-stays until the new one lands.") calls `POST /api/projects/:id/actors/:characterId/rebuild
+stays until the new one lands.") in the Scene tab's cast calls `POST /api/projects/:id/actors/:characterId/rebuild
 {detail: 'high'}` (202). The server runs `worker/run_actor.py --detail high` in the background into
 `<project>/actors/<id>/high/`; the chip reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
 time. When the build lands, every scene manifest showing the character is rewritten to it
@@ -137,6 +140,54 @@ meshes. Depth of field is Spark's own (aperture from f-stop and the camera's foc
 
 ![A light 2 m from the actor](docs/images/look-light.png)
 
+## Laptop layout and direct manipulation
+
+The director page has a slim projects drawer on the left (new project + every project and its
+scenes; ☰ or `[` collapses it), the viewport, and a right panel with four tabs: **Scene** (the
+project's scenes, world quality and scale, cast with High detail, and an outliner of the props,
+lights and cameras), **Look** (grade / lens / lights), **Edit** (re-prompting: describe a change in
+words) and **Shoot** (phone pairing, scene clock, takes, cameras, suggested shots, dialogue). The
+top bar shows the scene title with its scale badge, the look's name, Play / Pause with the clock,
+undo / redo and `?`, which opens a keyboard and mouse cheatsheet. A three-step tour (fly → drop a
+camera → pair the phone) shows once on first run; the cheatsheet can replay it. Every button has
+a hover hint.
+
+Everything in the viewport can be grabbed (`web/src/viewer/manipulate/`):
+
+- **Hover** outlines an actor, prop, light or dropped camera; **click** selects it: a ring on the
+  floor, a yellow rotate ring, an orange knob (a prop's scale, a light's radius), a green focus
+  point on a camera's view axis when depth of field is on, and a small toolbar over it (Reset to
+  blocking, Delete, Make active, Look through).
+- **Drag** moves it on a floor-parallel plane through the point you grabbed, so it stays under
+  the cursor; **Shift+drag** raises / lowers; the ring turns (Shift snaps to 15°); arrow keys nudge
+  5 cm (Shift 50 cm) along the world axis the view faces most. Actors cannot be dragged into walls:
+  the collider's body probe (the same test that fixes LLM blocking at load) stops them at the last
+  free spot. **Delete** removes props, lights and cameras; actors are reset to their blocking
+  instead. **Esc** deselects. Left-drag on empty space looks around (as does right-drag), so the
+  fly controls and the manipulator never fight.
+- **Click the world** (nothing under the cursor) to select a region of splats: a sphere at the hit
+  with an auto radius from the splats around it (the Edit tab's selection code), resized by
+  dragging its outline. Its toolbar recolours the region (luminance-keeping hue), hides it, moves
+  its splats (Move, then drag inside), hands it to the Edit tab as the selection for a prompt
+  (`director.pendingRegion`), or deletes the region's edit. Clicking an object already edited
+  selects that edit again.
+- Where changes go: actors and props become `transform` / `prop-remove` scene edits and regions
+  `splat-region` edits in `edits.json` (one director edit per target, kept last so it wins; live
+  while dragging, saved on release), which the viewer's edit applier renders on the laptop and the
+  phone; lights and focus go into the look; cameras stay in the laptop's camera list, and a phone
+  attached to a dragged camera follows it live (≤ 20 Hz). Every change is one undo step: ⌘Z / ⇧⌘Z
+  undo / redo whichever changed last, the director's stack or the Look panel's own history.
+
+![The four tabs: Scene, Look, Edit, Shoot](docs/images/ux-scene.png)
+
+![A selected actor: floor ring, rotate ring, toolbar](docs/images/ux-manipulate.png)
+
+![A region on the shelter's ad panel, recoloured from its toolbar](docs/images/ux-region-recoloured.png)
+
+More: [Look tab](docs/images/ux-look.png), [Edit tab](docs/images/ux-edit.png),
+[Shoot tab](docs/images/ux-shoot.png), [region selected](docs/images/ux-region.png),
+[cheatsheet](docs/images/ux-cheatsheet.png), [first-run tour](docs/images/ux-tour.png).
+
 ## Pair the phone
 
 1. Phone and laptop on the same Wi-Fi. The laptop's right panel shows a room code, a QR code and
@@ -171,7 +222,12 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | Input | Action |
 | --- | --- |
 | W A S D, Q / E, Shift | fly, down / up, faster |
-| right-drag, or double-click for mouselook | look |
+| drag empty space, right-drag, or double-click for mouselook | look |
+| click / drag an actor, prop, light or camera | select / move it (Shift+drag: up / down; yellow ring: turn; orange knob: scale / radius; green point: focus) |
+| ← ↑ → ↓ (Shift), ⌫ / Delete, Esc | nudge 5 cm (50 cm); delete a prop / light / camera; deselect |
+| click the world | select a region of splats: **Recolour**, **Hide**, **Move**, **Edit ›**, **Delete region** |
+| ⌘Z / ⇧⌘Z, top-bar ↶ ↷ | undo / redo a move, delete or region edit (or a look change when the Look tab changed last) |
+| `?`, `[` | keyboard and mouse cheatsheet; projects drawer |
 | wheel | zoom (field of view) |
 | Space | play / pause the scene clock (moving props, dialogue sync) |
 | C, or **Drop** | drop a camera at the current view; 1–9 jump to a camera |
@@ -180,7 +236,7 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | G, **Grid**, **Collider** | ground grid at y = 0, collider wireframe |
 | click a dialogue line / **Play scene** | speak one line / the whole scene in order (caption + positional audio) |
 | **Re-center phone**, **Still**, **New room** | phone heading reset, PNG from the phone camera, new pairing code |
-| **Look** tab, Alt+click, ⌘Z / ⇧⌘Z, hold **Compare** | grade / lens / lights; focus on the clicked splat; undo / redo a look change; ungraded frame |
+| **Look** tab, Alt+click, hold **Compare** | grade / lens / lights; focus on the clicked splat; ungraded frame |
 
 **Phone**
 
@@ -400,7 +456,14 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   sky mask is a rule (far, and above the horizon as seen from the camera) rather than a
   segmentation: tall buildings far away can pick up some of the sky tint.
 - A camera's own lens is stored in the laptop's browser storage, next to the dropped cameras. It
-  is not in `edits.json`.
+  is not in `edits.json`. The focus point in the viewport edits the scene lens; a camera with its
+  own lens shows its focus point dimmed (edit it in the Look tab).
+- Direct manipulation: only actors are kept out of walls (props, lights and cameras move freely);
+  actor and prop moves apply once the collider has settled the blocking (a second or two after a
+  real world loads; the toolbar says so if you grab earlier); a prop driving along its path is
+  moved by shifting its whole path and cannot be turned. Dropped cameras and lights are not scene
+  edits (cameras live on the laptop, lights in the look), so the Edit tab's history does not list
+  their moves; the undo stack does.
 
 ## Repository map
 
