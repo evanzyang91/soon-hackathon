@@ -107,6 +107,36 @@ through. The cost is pale streaks when the face is seen from far to the side.
 
 Method, the artefacts that shaped it, and the numbers are in `worker/README.md` ("High detail").
 
+## Look development
+
+The right panel's **Look** tab grades the open scene, and the paired phone renders the same frame.
+Groups: **Exposure & grade** (exposure in stops, contrast about mid grey, saturation, white-balance
+temperature / tint, shadows, highlights), **Film** (LUT preset + strength, vignette, animated
+grain, bloom), **Atmosphere** (fog colour + density, sky tint), **Lens** (depth of field: focus
+distance, f-stop; **Pick focus** or Alt+click the view focuses on the splat under the cursor) and
+**Lights** (up to four point / spot / sun lights with colour, intensity, radius, cone, position,
+**Place at camera**; "Scene light" scales the captured lighting). The header has a name, presets
+(seven LUTs and four looks: Daylight neutral, Night street, Warm interior, Overcast), undo / redo
+(⌘Z / ⇧⌘Z, 50 steps), per-group **Reset** and a **Compare** button that shows the ungraded frame
+while held. A dropped camera can get its own lens ("Own lens for camera …"); the phone attached
+to it uses that lens.
+
+Every change renders on the next frame and is saved to `scene-<n>/edits.json` 300 ms after the
+last one (`GET / PUT /api/projects/:id/scenes/:n/edits`, revision-checked). While a change is
+unsaved the look rides in `SceneState.look` (8 Hz while dragging), then `editsRevision` tells the
+phone to fetch the file. The phone shows the look's name when it changes. Stills and takes capture
+the graded frame.
+
+How it renders (`web/src/viewer/look/`): the grade, LUTs, vignette, grain and bloom are one post
+pass. The view is rendered into a target that holds exactly the canvas's bytes, so an ungraded
+scene is unchanged (it skips the pass and renders straight to the canvas). Lights, fog and sky
+tint are a Spark world modifier that recolours each splat, plus three.js lights and fog for
+meshes. Depth of field is Spark's own (aperture from f-stop and the camera's focal length).
+
+![Look presets on the bus stop scene](docs/images/look-presets.png)
+
+![A light 2 m from the actor](docs/images/look-light.png)
+
 ## Pair the phone
 
 1. Phone and laptop on the same Wi-Fi. The laptop's right panel shows a room code, a QR code and
@@ -150,6 +180,7 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | G, **Grid**, **Collider** | ground grid at y = 0, collider wireframe |
 | click a dialogue line / **Play scene** | speak one line / the whole scene in order (caption + positional audio) |
 | **Re-center phone**, **Still**, **New room** | phone heading reset, PNG from the phone camera, new pairing code |
+| **Look** tab, Alt+click, ⌘Z / ⇧⌘Z, hold **Compare** | grade / lens / lights; focus on the clicked splat; undo / redo a look change; ungraded frame |
 
 **Phone**
 
@@ -319,6 +350,7 @@ pnpm e2e                              # Playwright against a MOCK server on :539
 pnpm check                            # all three
 npx tsx scripts/actor-browser-check.ts [--sequence data/actors-library/maya --gpu]
 npx tsx scripts/compare-shots.ts --base https://localhost:<your port> --col <manifest> --col <manifest> --view x,y,z:tx,ty,tz:fov --out x.png
+npx tsx scripts/look-check.ts all --base https://localhost:<your port> --project <id> [--before https://localhost:<pre-look build>] [--docs]
 cd worker && python3 -m pytest -q tests
 ```
 
@@ -363,6 +395,12 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   view) the face and trousers show pale streaks. The back is unchanged.
 - Moving props are simple procedural shapes on straight looped paths, composited over the splats.
 - Takes record the laptop canvas (WebM), not the phone's own render.
+- Look lights recolour baked splats; they cast no new shadows and do not reveal what the capture
+  never saw. Only four lights reach the splats. Fog and sky tint are applied per splat, so the
+  sky mask is a rule (far, and above the horizon as seen from the camera) rather than a
+  segmentation: tall buildings far away can pick up some of the sky tint.
+- A camera's own lens is stored in the laptop's browser storage, next to the dropped cameras. It
+  is not in `edits.json`.
 
 ## Repository map
 
