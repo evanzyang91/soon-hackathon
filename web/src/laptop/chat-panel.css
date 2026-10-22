@@ -44,7 +44,7 @@ body.chat-docked #left > .projects-card {
   overflow-y: auto;
 }
 /* typing or reading in the chat: the drawer grows over the viewport (the canvas keeps its size) */
-body.chat-docked #left:has(> .chat:focus-within) {
+body.chat-docked.chat-wide #left {
   width: 452px;
   z-index: 20;
   box-shadow: 10px 0 28px rgba(0, 0, 0, 0.5);
@@ -682,7 +682,7 @@ textarea.chat-input {
 textarea.chat-input:focus {
   outline: none;
 }
-textarea.chat-input:disabled {
+textarea.chat-input.busy {
   opacity: 0.55;
 }
 .chat-tools {
