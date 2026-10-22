@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,8 +12,10 @@ import {
   planActor,
   referencePrompt,
   type ActorDeps,
+  type PhotoInput,
   type WorkerResult,
 } from '../../server/pipeline/actors.ts';
+import { decodePng, encodePng } from '../../server/pipeline/reprompt/png.ts';
 
 const maya: Character = {
   id: 'maya',
@@ -87,6 +89,12 @@ describe('planActor', () => {
     const failed = planActor({ ...base, receipt: { status: 'recovered', resultStatus: 'failed' } });
     expect(failed.action).toBe('fallback');
     expect(planActor({ ...base, receipt: { status: 'prepared' } })).toEqual({ action: 'run', needsReference: true });
+  });
+  it("a director's photo can always become the reference, even without an OpenAI key", () => {
+    expect(planActor({ ...base, hasOpenAI: false, photo: true })).toEqual({ action: 'run', needsReference: true, fromPhoto: true });
+    expect(planActor({ ...base, hasReference: true, photo: true })).toEqual({ action: 'run', needsReference: false, fromPhoto: true });
+    expect(planActor({ ...base, photo: true, sequenceValid: true })).toEqual({ action: 'cached' });
+    expect(planActor({ ...base, photo: true, mock: true }).action).toBe('fallback');
   });
 });
 
@@ -253,5 +261,81 @@ describe('buildActor', () => {
     const p = referencePrompt(maya);
     for (const s of ['Full-body', 'front-facing', 'slightly away from the body', 'neutral expression', 'light-grey', 'soft even lighting', 'photoreal'])
       expect(p).toContain(s);
+  });
+
+  describe("a director's photo (Character.referenceImage)", () => {
+    const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
+    /** A solid-colour landscape "photo" (the worker wants a portrait: it gets letterboxed). */
+    const photo = (rgb: [number, number, number], width = 60, height = 40) =>
+      encodePng({ width, height, channels: 3, data: new Uint8Array(width * height * 3).map((_, i) => rgb[i % 3]!) });
+    const leo = (file: string): Character => ({ ...maya, referenceImage: file });
+    let normalised: PhotoInput[];
+    const photoDeps = (k = keys) => ({
+      ...deps(async (args) => {
+        await writeSequence(join(args[args.indexOf('--out') + 1]!, 'sequence'), 1.7);
+        return { ok: true, code: 0, result: { ok: true } };
+      }, k),
+      normalisePhoto: async (p: PhotoInput, out: string) => {
+        normalised.push(p);
+        await writeFile(out, photo([200, 200, 200], 4, 6));
+        return { model: 'gpt-image-1.5' };
+      },
+    });
+    const upload = async (name: string, png: Buffer) => {
+      await mkdir(join(projectDir, 'uploads'), { recursive: true });
+      await writeFile(join(projectDir, 'uploads', name), png);
+      return png;
+    };
+    const actorFile = (f: string) => join(projectDir, 'actors', 'maya', f);
+    beforeEach(() => {
+      normalised = [];
+    });
+
+    it('is normalised with images/edits, built with LHM, cached by its sha256; a new photo is a new build', async () => {
+      const a = await upload('a.png', photo([180, 40, 40]));
+      const asset = await buildActor({ ...opts(), character: leo('uploads/a.png') }, photoDeps());
+      expect(asset).toMatchObject({ kind: 'splat-sequence', sequenceDir: 'actors/maya/sequence' });
+      expect(images).toBe(0); // no reference generated from the description
+      expect(normalised.map((p) => [p.mime, sha(p.bytes)])).toEqual([['image/png', sha(a)]]);
+      expect(calls[0]!.slice(0, 2)).toEqual(['--image', actorFile('reference.png')]);
+      expect(sha(await readFile(actorFile('reference-source.png')))).toBe(sha(a));
+      expect(JSON.parse(await readFile(actorFile('reference.json'), 'utf8'))).toMatchObject({
+        from: 'photo',
+        source: 'uploads/a.png',
+        sourceSha256: sha(a),
+        method: 'openai-edit',
+        model: 'gpt-image-1.5',
+      });
+      expect(JSON.parse(await readFile(actorFile('build-source.json'), 'utf8'))).toMatchObject({ referenceSha256: sha(a) });
+      expect(logs.some((l) => l.endsWith('built from your photo'))).toBe(true);
+
+      // the same photo again: the build is reused, nothing is paid for
+      calls.length = 0;
+      await buildActor({ ...opts(), character: leo('uploads/a.png') }, photoDeps());
+      expect([calls.length, normalised.length]).toEqual([0, 1]);
+
+      // another photo is another person: the sequence and its reference are not reused
+      const b = await upload('b.png', photo([40, 40, 180]));
+      await buildActor({ ...opts(), character: leo('uploads/b.png') }, photoDeps());
+      expect(calls).toHaveLength(1);
+      expect(sha(normalised.at(-1)!.bytes)).toBe(sha(b));
+      expect(JSON.parse(await readFile(actorFile('reference.json'), 'utf8')).sourceSha256).toBe(sha(b));
+      expect(await readdir(join(projectDir, 'actors', 'maya'))).toContain(`reference.${sha(a).slice(0, 12)}.png`);
+    });
+
+    it('MOCK and key-less builds use the photo itself, letterboxed to the portrait PNG the worker takes', async () => {
+      await upload('a.png', photo([180, 40, 40]));
+      const mocked = await buildActor({ ...opts(true), character: leo('uploads/a.png') }, photoDeps());
+      expect(mocked.kind).toBe('glb-humanoid');
+      expect([calls.length, normalised.length, images]).toEqual([0, 0, 0]);
+      const ref = decodePng(await readFile(actorFile('reference.png')));
+      expect([ref.width, ref.height]).toEqual([60, 90]);
+      expect(JSON.parse(await readFile(actorFile('reference.json'), 'utf8')).method).toBe('as-is');
+
+      // live without OPENAI_API_KEY: LHM runs on the photo as it is
+      const live = await buildActor({ ...opts(), character: leo('uploads/a.png') }, photoDeps({ ...keys, openai: '' }));
+      expect(live.kind).toBe('splat-sequence');
+      expect([calls.length, normalised.length]).toEqual([1, 0]);
+    });
   });
 });
