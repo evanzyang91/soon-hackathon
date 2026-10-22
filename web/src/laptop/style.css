@@ -335,6 +335,21 @@ button.icon {
   border-radius: 4px;
   background: #0f1217;
 }
+/* the Marble thumbnail and, when the director gave one, their photo of the place */
+.scene-thumbs {
+  display: flex;
+  gap: 4px;
+  max-width: 160px;
+}
+.scene-thumbs .scene-thumb {
+  min-width: 0;
+  flex: 1 1 0;
+}
+.scene-thumb.ref {
+  flex: 0 0 auto;
+  width: 34%;
+  outline: 1px solid var(--accent);
+}
 .scene-slug {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -360,6 +375,19 @@ button.icon {
 .actor-name {
   min-width: 44px;
   font-weight: 600;
+}
+/* a character built from the director's photo */
+.ref-photo {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.ref-photo img {
+  width: 22px;
+  height: 33px;
+  object-fit: cover;
+  border-radius: 3px;
+  outline: 1px solid var(--accent);
+  background: #0f1217;
 }
 .actor-row button {
   margin-left: auto;
