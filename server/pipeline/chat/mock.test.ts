@@ -69,13 +69,13 @@ describe('mock chat planner', () => {
         type: 'plan-patch',
         target: 'character:theo',
         field: 'heightMeters',
-        value: '1.80',
+        value: '1.90',
       }),
     ]);
-    expect(a.reply).toBe('Theo is now 1.80 m.');
+    expect(a.reply).toBe('Theo is now 1.90 m.');
     const b = plan('Make MAYA older and shorter, then generate');
     expect(b.actions.map((x) => [x.target, x.field, x.value.slice(-7)])).toEqual([
-      ['character:maya', 'heightMeters', '1.60'],
+      ['character:maya', 'heightMeters', '1.59'],
       ['character:maya', 'description', ', older'],
       ['', '', ''],
     ]);

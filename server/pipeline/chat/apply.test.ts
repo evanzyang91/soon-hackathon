@@ -145,18 +145,18 @@ describe('project chat on a MOCK project', () => {
 
   it('draft: amendments and photos are applied at once and nothing is scheduled', async () => {
     const taller = await say(id, 'make Theo taller');
-    expect(taller.answer.text).toBe('Theo is now 1.80 m.');
+    expect(taller.answer.text).toBe('Theo is now 1.90 m.');
     expect(taller.answer.source).toBe('mock');
     expect(taller.answer.actions).toEqual([
       expect.objectContaining({
         type: 'plan-patch',
         target: 'character:theo',
         field: 'heightMeters',
-        after: 1.8,
+        after: 1.9,
         status: 'applied',
       }),
     ]);
-    expect((await planOf(id)).characters.find((c) => c.id === 'theo')!.heightMeters).toBe(1.8);
+    expect((await planOf(id)).characters.find((c) => c.id === 'theo')!.heightMeters).toBe(1.9);
 
     const maya = await say(id, 'this is Maya', [{ id: photo.id }]);
     expect(types(maya.answer.actions)).toEqual(['character-reference:applied']);
@@ -167,7 +167,7 @@ describe('project chat on a MOCK project', () => {
     expect(maya.status.scenes.every((j) => j.stages.world.status === 'pending')).toBe(true);
     const log = await readFile(join(dataDir, id, 'log.txt'), 'utf8');
     expect(log).toMatch(
-      /chat: plan-patch character:theo heightMeters — Theo is now 1\.80 m \[applied\]/,
+      /chat: plan-patch character:theo heightMeters — Theo is now 1\.90 m \[applied\]/,
     );
     expect(log).toMatch(
       /chat: character-reference maya — Maya is built from this photo \[applied\]/,
@@ -182,7 +182,7 @@ describe('project chat on a MOCK project', () => {
     const st = await statusOf(id);
     expect(st.scenes.every((j) => j.stages.manifest.status === 'done')).toBe(true);
     const m = await manifest(id, 0);
-    expect(m.characters.find((c) => c.id === 'theo')!.heightMeters).toBe(1.8);
+    expect(m.characters.find((c) => c.id === 'theo')!.heightMeters).toBe(1.9);
     expect(m.characters.find((c) => c.id === 'maya')!.referenceImage).toBe(photo.file);
     // a second generate is a no-op
     expect((await post(api.generate(id), {})).status).toBe(202);
@@ -309,7 +309,7 @@ describe('project chat on a MOCK project', () => {
     ]);
     expect(plan.characters.map((c) => c.id).sort()).toEqual(['maya', 'theo']);
     expect(plan.characters.find((c) => c.id === 'theo')).toMatchObject({
-      heightMeters: 1.8,
+      heightMeters: 1.9,
       description: expect.stringMatching(/, older$/),
     });
     expect(plan.characters.find((c) => c.id === 'maya')!.referenceImage).toBe(photo.file);
