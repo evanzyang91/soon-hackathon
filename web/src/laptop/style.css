@@ -880,6 +880,9 @@ button.st-scene.current {
   margin: 0;
   padding: 0;
 }
+.st-cast-note {
+  padding: 0 6px;
+}
 .actor-tools {
   display: flex;
   gap: 4px;

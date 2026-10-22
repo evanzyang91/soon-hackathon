@@ -1,6 +1,6 @@
 // Right panel "Scene" tab: the open project's scenes (switch scene), the world (splat quality,
 // provider, measured scale and floor offset), the cast (build detail + the High detail rebuild
-// button, select / reset to blocking) and an outliner of what can be grabbed in the viewport
+// button, the staged mark's note, select / reset to blocking) and an outliner of what can be grabbed in the viewport
 // (props, lights, dropped cameras: click to select, × to delete — the same undoable actions as
 // the viewport's toolbar).
 import { api } from '@shared/api';
@@ -153,7 +153,12 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
           ? h('button', { type: 'button', class: 'small', title: "Back to the screenplay's blocking mark", 'data-testid': 'reset-actor', onclick: () => manip.manipulator.reset(ref) }, 'Reset')
           : null,
       );
-      cast.append(h('div', { class: 'st-cast-item' }, row, tools));
+      // why the staging step (server/pipeline/staging.ts) put them there; absent for blind marks
+      const note = rt.manifest.plan.blocking.find((b) => b.characterId === id)?.note;
+      const why = note
+        ? h('div', { class: 'muted small st-cast-note', title: 'Staged on the set by the pipeline; Reset returns here', 'data-testid': 'cast-note' }, note)
+        : null;
+      cast.append(h('div', { class: 'st-cast-item' }, row, why, tools));
     }
   };
 
