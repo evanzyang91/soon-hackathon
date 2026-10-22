@@ -13,6 +13,7 @@ import { scaleHeadline } from './hud';
 import type { LookPanel } from './look-panel';
 import type { Manipulation } from './manipulate';
 import { sceneReady, type ProjectsPanel } from './projects-panel';
+import { characterPhoto, projectPlan } from './references';
 
 type Ref = NonNullable<Director['selection']>;
 
@@ -108,6 +109,9 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
       const a = builds.get(id);
       const ref: Ref = { type: 'actor', id };
       const row = a && p ? projects.actorRow(p, a) : h('div', { class: 'actor-row', 'data-character': id }, h('span', { class: 'actor-name' }, id));
+      // the plan is current (the chat may have just set the photo); the manifest is the fallback
+      const character = (p && projectPlan(p, renderCast)?.characters.find((c) => c.id === id)) ?? rt.manifest.characters.find((c) => c.id === id);
+      if (character?.referenceImage) row.prepend(characterPhoto(rt.manifest.projectId, id, character.referenceImage));
       const tools = h(
         'div',
         { class: 'actor-tools' },
