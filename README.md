@@ -416,6 +416,61 @@ a Claude call). A live project re-measures each scene's world at that scene's ma
 
 ![Bus stop at feet level: Marble's plane, collider-based, splat-based](docs/images/floor-offset-before-after.png)
 
+### Ground field: each actor on the ground at its own spot
+
+One median is right only where it was measured. The city street's kerb runs through the blocking
+area, the rooftop's walkway sits 0.2 m above its tar deck, and an actor the collider nudges to free
+floor lands on a spot nobody measured. So every world also gets a ground height field: `ground.json`
+next to the world files, referenced by `WorldAsset.ground` (format and sampler in `shared/ground.ts`).
+The viewer stands every actor on it: at load, after the collider nudge, during a drag, under a
+re-prompt `transform`, after a High detail body swap, and under a walking body on its way to the
+mark. The laptop and the phone share this loader. Actor heights are stored relative to the ground:
+a blocking or transform `y` of 0 means "on the ground there", so existing `edits.json` files keep
+working.
+
+How a 0.25 m column's ground is chosen (`calibrate-ground.ts`):
+
+- **Flat splats only.** It uses opaque splats lying flat (flat discs within 41° of horizontal).
+  92–96 % of floor splats are like that, while walls, cabinet fronts and posts are upright discs.
+- **Thin layers.** It takes the column's thin dense layers (2 cm histogram, ≥ 8 splats within
+  ±5 cm and at least half of those within ±17 cm).
+- **The lowest layer is the ground.** A bench seat, kerb top, table or car bonnet stands on top
+  of the ground, so it can't out-vote it.
+- **No stepping onto furniture.** A pick more than 0.25 m (one stair step) from its 5×5
+  neighbourhood's median is furniture over unseen ground and becomes a hole.
+- **Spikes only.** Isolated spikes take their 3×3 median. Nothing is blurred, so a kerb stays a
+  one-cell step.
+- **The drawn tier decides.** The k500 tier, which the laptop and phone draw, decides every column
+  it can. `world_full.spz` (4× denser) fills the rest, shifted by the median tier difference
+  (the full tier's ground is 0.5–1.1 cm lower outdoors).
+
+Measuring takes about 0.4 s. It runs in the pipeline for every world (the MOCK floor included), on a
+world regeneration, and with `calibrate … --write`. Library copies carry `ground.json`.
+
+| World | Field | With ground | Ground vs Marble's plane | Feet error at the marks, before → after | At the most uneven spots |
+| --- | --- | --- | --- | --- | --- |
+| bus stop (`the-last-bus`) | 63×60 | 74 % | -0.60…+0.21 m | 2.9 → 0.4 cm | 6.3 → 0.5 cm |
+| city-street-night | 64×60 | 90 % | -0.34…+0.23 m | 9.3 → 0.3 cm | 13.6 → 0.2 cm |
+| rooftop-dusk | 64×60 | 93 % | -0.33…+0.26 m | 4.0 → 0.2 cm | 23.9 → 0.1 cm |
+| kitchen-morning | 24×21 (the room) | 50 % | -0.07…+0.10 m | 3.6 → 1.2 cm | — |
+
+The feet error is the gap between the feet and the k500 splats lying flat within 0.15 m of them,
+an independent look at the ground the viewer draws. For the library worlds the marks are the floor
+probes. `pnpm tsx scripts/ground-evidence.ts <worldDir> --name <n>` renders the pictures below
+(1.70 m mannequins in GPU Chromium; feet close-ups, before | after).
+
+![Bus stop: feet at the median floor vs on the ground field](docs/images/ground-bus-stop-before-after.png)
+
+More: [city street](docs/images/ground-city-street-before-after.png),
+[rooftop](docs/images/ground-rooftop-before-after.png), and the fields as heat maps:
+[bus stop](docs/images/ground-bus-stop-field.png),
+[city street](docs/images/ground-city-street-field.png),
+[rooftop](docs/images/ground-rooftop-field.png).
+
+To refresh an existing scene's ground offline (no Claude call, no Marble call):
+`pnpm tsx server/pipeline/cli.ts calibrate data/projects/<id>/scene-<n>/world --reuse --no-vision --write`.
+This writes `ground.json`, `world-asset.json` and the scene's `manifest.json`.
+
 ### Real avatars need Modal billing
 
 The LHM stage runs on a Modal L4 GPU. Modal refuses L4 functions until the workspace has a payment
@@ -484,9 +539,11 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
 - Scale is verified only where the world has standard objects near the camera. Interiors
   (counters, doors, ceilings) measure well. The three outdoor worlds have coarse colliders and few
   doors or benches in reach, so they stay at Marble's scale marked `low` / unverified.
-- The floor offset is one shift per world. On uneven ground the marks disagree (rooftop: -0.24 m
-  under MAYA, -0.17 m under LEO), so one actor can still float or sink a few centimetres. Setting
-  each actor's blocking `y` to the splat ground at its mark would fix that within the schema.
+- The ground field is a 0.25 m grid. On the line of a kerb the bilinear sampler blends the two
+  heights over one cell, so a foot right on the edge can be a few centimetres off. Columns with too
+  few flat splats (under benches and parked objects, far edges) are holes. There the nearest ground
+  within 0.5 m is used, else the median floor. Worlds calibrated before the field existed stand on
+  the median floor until `calibrate … --write` (or a world retry) measures one.
 - High-detail actors carry front-view texture: seen from far to the side (≳60° off the reference
   view) the face and trousers show pale streaks. The back is unchanged.
 - Moving props are simple procedural shapes on straight looped paths, composited over the splats.
