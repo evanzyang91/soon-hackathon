@@ -395,16 +395,21 @@ describe('project pipeline (mock)', () => {
     expect(live.st.scenes[0]!.stages.actors.note).toContain('reused library actor: maya');
     const m = await readManifest(live.id, 0);
     const maya = m.actors.find((a) => a.characterId === 'maya')!;
+    const height = (id: string) => m.characters.find((c) => c.id === id)!.heightMeters;
     expect(maya).toEqual({
       kind: 'splat-sequence',
       characterId: 'maya',
       sequenceDir: 'actors/maya/sequence',
       fps: 12,
       nativeHeight: 1.8123,
-      heightMeters: 1.7,
+      // the library body stands at the planned character's height
+      heightMeters: height('maya'),
     });
     expect(existsSync(join(dataDir, live.id, 'actors/maya/sequence/frame_001.ply'))).toBe(true);
-    expect(m.actors.find((a) => a.characterId === 'theo')!.kind).toBe('glb-humanoid');
+    const theo = m.actors.find((a) => a.characterId === 'theo')!;
+    expect(theo.kind).toBe('glb-humanoid');
+    expect(theo.heightMeters).toBe(height('theo'));
+    expect(height('theo')).not.toBe(height('maya'));
 
     const mock = await run(true);
     expect(mock.built.sort()).toEqual(['maya', 'theo']);

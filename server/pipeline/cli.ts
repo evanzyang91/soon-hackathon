@@ -178,7 +178,8 @@ async function main() {
       console.log(describeField(field, written, marks));
       const ba = str(flags['before-after']);
       if (ba) {
-        await renderBeforeAfter(worldDir, report, resolve(ba), { log });
+        // --reuse: the stored decision (old rule) on the left, the re-decided one on the right
+        await renderBeforeAfter(worldDir, report, resolve(ba), { log, ...(prev ? { previous: prev } : {}) });
         log(`before/after image: ${ba}`);
       }
       return;
