@@ -6,14 +6,16 @@
 //                     procedural mannequin (mannequin.ts); `glb: 'procedural:mannequin'` asks
 //                     for the mannequin directly (what server/pipeline/actors.ts writes).
 // `object` stands with its feet at local y = 0 and faces -Z; the caller sets position and
-// rotation.y = yaw. A splat actor that fails to load degrades to the mannequin.
+// rotation.y = yaw. Every body kind stands at the character's height (asset.heightMeters, from
+// Character.heightMeters; 1.7 m when absent), and head, label, caption, voice and the seated
+// drop scale with it; object.userData.heightMeters says how tall (the manipulator's hit box). A splat actor that fails to load degrades to the mannequin.
 // While speaking, a caption above the head shows the line (`speak(..., text)`), word-wrapped.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { headYawToward } from '../gaze';
-import { buildMannequin, type Pose } from './mannequin';
+import { buildMannequin, MANNEQUIN_HEIGHT_M, type Pose } from './mannequin';
 import { loadSequence, loadSplatBody } from './splat-actor';
 import { loadSkinnedBody } from './skinned-actor';
 import type { RigPointer } from './rig';
@@ -62,7 +64,17 @@ export const PROCEDURAL_GLB = 'procedural:mannequin';
  * blocking that says "sitting" still reads at a plausible seated eye line.
  */
 export const SIT_DROP_M = 0.45;
-export const poseDrop = (pose: Pose) => (pose === 'sitting' ? SIT_DROP_M : 0);
+export const poseDrop = (pose: Pose, heightM = MANNEQUIN_HEIGHT_M) =>
+  pose === 'sitting' ? (SIT_DROP_M * heightM) / MANNEQUIN_HEIGHT_M : 0;
+/** Default standing height when neither the asset nor the character says (m). */
+export const DEFAULT_HEIGHT_M = MANNEQUIN_HEIGHT_M;
+
+/** The height an actor's body is scaled to: the asset's, else the character's, else 1.7 m. */
+export function actorHeight(asset: Pick<ActorAsset, 'heightMeters'>, character?: Pick<Character, 'heightMeters'>): number {
+  for (const h of [asset.heightMeters, character?.heightMeters])
+    if (typeof h === 'number' && Number.isFinite(h) && h > 0) return h;
+  return DEFAULT_HEIGHT_M;
+}
 /** Head drop of a rigged splat actor playing the seated clips (measured on the library). */
 export const SKINNED_SIT_DROP_M = 0.42;
 
@@ -71,27 +83,36 @@ export function wantsGlbFile(glb: string): boolean {
   return !!glb && !glb.startsWith('procedural:') && /\.(glb|gltf)(\?|#|$)/i.test(glb);
 }
 
-function mannequinBody(tint: string): Body {
+function mannequinBody(tint: string, heightM: number): Body {
   const m = buildMannequin(tint);
+  // built 1.7 m tall: scaling the root scales every joint, the sitting pose included
+  const s = heightM / MANNEQUIN_HEIGHT_M;
+  m.root.scale.setScalar(s);
   return {
     kind: 'mannequin',
     root: m.root,
-    headY: m.headY,
+    headY: m.headY * s,
     animate: (dt, t, speaking, level) => m.animate(dt, t, speaking, level),
     setPose: (p) => m.setPose(p),
+    drop: (p) => poseDrop(p, heightM),
     look: (yaw) => m.setLook(yaw),
     debug: () => ({ jaw: m.jawOpen(), look: m.lookYaw(), shift: m.weightShift() }),
     dispose: () => m.dispose(),
   };
 }
 
-async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, baseUrl: string, tint: string): Promise<Body> {
+async function glbBody(
+  asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>,
+  baseUrl: string,
+  tint: string,
+  heightM: number,
+): Promise<Body> {
   const gltf = await new GLTFLoader().loadAsync(resolveUrl(asset.glb, baseUrl));
   const root = gltf.scene;
   const box = new THREE.Box3().setFromObject(root);
-  const h = box.max.y - box.min.y || 1.7;
-  root.scale.setScalar(1.7 / h);
-  const baseY = (-box.min.y * 1.7) / h;
+  const h = box.max.y - box.min.y || heightM;
+  root.scale.setScalar(heightM / h);
+  const baseY = (-box.min.y * heightM) / h;
   root.position.y = baseY;
   root.traverse((o) => {
     if (o instanceof THREE.Mesh && asset.tint && o.material instanceof THREE.MeshStandardMaterial) {
@@ -129,7 +150,7 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
   return {
     kind: 'glb',
     root,
-    headY: 1.6,
+    headY: heightM * 0.94,
     animate(dt, _t, speaking, level) {
       play(speaking ? actions.talk ?? actions.idle : pose === 'walking' ? actions.walk ?? actions.idle : actions.idle);
       mixer.update(dt);
@@ -137,8 +158,9 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
     },
     setPose(p) {
       pose = p;
-      root.position.y = baseY - poseDrop(p); // no sitting clip: lower the standing body
+      root.position.y = baseY - poseDrop(p, heightM); // no sitting clip: lower the standing body
     },
+    drop: (p) => poseDrop(p, heightM),
     dispose() {
       mixer.stopAllAction();
       root.traverse((o) => {
@@ -148,28 +170,30 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
   };
 }
 
-async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promise<Body> {
+async function makeBody(asset: ActorAsset, baseUrl: string, tint: string, heightM: number): Promise<Body> {
+  // splat bodies scale themselves from asset.heightMeters (nativeHeight → metres)
+  const k = heightM / MANNEQUIN_HEIGHT_M;
   if (asset.kind === 'splat-sequence') {
     try {
       const loaded = await loadSequence(asset, baseUrl);
       const rig = (loaded.seq as { rig?: RigPointer }).rig;
       if (rig?.file && rig.clips) {
         try {
-          const k = await loadSkinnedBody(asset, loaded.dir, rig);
+          const sk = await loadSkinnedBody(asset, loaded.dir, rig);
           return {
             kind: 'splat',
-            root: k.root,
-            headY: k.headY,
-            animate: (dt, _t, speaking, level, sceneTime) => k.animate(dt, sceneTime, speaking, level),
+            root: sk.root,
+            headY: sk.headY,
+            animate: (dt, _t, speaking, level, sceneTime) => sk.animate(dt, sceneTime, speaking, level),
             setPose: (p) => {
-              k.setPose(p);
-              k.root.position.y = k.canSit ? 0 : -poseDrop(p);
+              sk.setPose(p);
+              sk.root.position.y = sk.canSit ? 0 : -poseDrop(p, heightM);
             },
-            drop: (p) => (p === 'sitting' ? (k.canSit ? SKINNED_SIT_DROP_M : SIT_DROP_M) : 0),
-            look: (yaw) => k.look(yaw),
-            offset: k.offset,
-            debug: () => k.debug(),
-            dispose: () => k.dispose(),
+            drop: (p) => (p === 'sitting' ? (sk.canSit ? SKINNED_SIT_DROP_M * k : poseDrop(p, heightM)) : 0),
+            look: (yaw) => sk.look(yaw),
+            offset: sk.offset,
+            debug: () => sk.debug(),
+            dispose: () => sk.dispose(),
           };
         } catch (err) {
           console.warn(`actor ${asset.characterId}: runtime rig failed, playing the baked sequence`, err);
@@ -183,24 +207,25 @@ async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promi
         animate: (dt, _t, speaking) => s.animate(dt, speaking),
         // one captured idle/talk motion: no sitting/walking frames, so a seated actor is lowered
         setPose: (p) => {
-          s.root.position.y = -poseDrop(p);
+          s.root.position.y = -poseDrop(p, heightM);
         },
+        drop: (p) => poseDrop(p, heightM),
         debug: () => ({ frame: s.frame, frames: s.sequence.count }),
         dispose: () => s.dispose(),
       };
     } catch (err) {
       console.warn(`actor ${asset.characterId}: splat sequence failed, using mannequin`, err);
-      return mannequinBody(tint);
+      return mannequinBody(tint, heightM);
     }
   }
   if (wantsGlbFile(asset.glb)) {
     try {
-      return await glbBody(asset, baseUrl, tint);
+      return await glbBody(asset, baseUrl, tint, heightM);
     } catch (err) {
       console.warn(`actor ${asset.characterId}: ${asset.glb} failed to load, using mannequin`, err);
     }
   }
-  return mannequinBody(tint);
+  return mannequinBody(tint, heightM);
 }
 
 export async function createActor(
@@ -213,7 +238,9 @@ export async function createActor(
   const object = new THREE.Group();
   object.name = `actor:${character.id}`;
   object.userData.characterId = character.id;
-  const body = await makeBody(asset, baseUrl, tint);
+  const heightM = actorHeight(asset, character);
+  object.userData.heightMeters = heightM;
+  const body = await makeBody(asset, baseUrl, tint, heightM);
   object.userData.actorKind = body.kind;
   object.add(body.root);
 
@@ -276,7 +303,7 @@ export async function createActor(
     },
     setPose(pose) {
       body.setPose(pose);
-      headY = body.headY - (body.drop ? body.drop(pose) : poseDrop(pose));
+      headY = body.headY - (body.drop ? body.drop(pose) : poseDrop(pose, heightM));
       place();
     },
     lookAt(target) {

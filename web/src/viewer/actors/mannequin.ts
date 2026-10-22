@@ -4,8 +4,12 @@
 // a look target (the speaker / scene partner, see viewer/gaze.ts), talk = head bob + jaw opening
 // driven by the voice's amplitude (AnalyserNode), walk = in-place leg/arm swing, sitting = hips
 // lowered with thighs forward. Everything is slow and eased: alive, never jittery.
-// ~20 low-poly meshes: phone-light.
+// ~20 low-poly meshes: phone-light. A character of another height scales `root` uniformly
+// (actors/index.ts mannequinBody), so every proportion and pose below stays in 1.7 m units.
 import * as THREE from 'three';
+
+/** The mannequin's built standing height (m). */
+export const MANNEQUIN_HEIGHT_M = 1.7;
 
 export type Pose = 'standing' | 'sitting' | 'walking';
 

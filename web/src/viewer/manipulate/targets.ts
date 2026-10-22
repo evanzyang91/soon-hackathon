@@ -103,7 +103,9 @@ export function targetInfo(ctx: TargetContext, ref: TargetRef): TargetInfo | nul
       if (!a) return null;
       const pose = (rt.manifest.plan.blocking.find((b) => b.characterId === ref.id)?.pose ?? 'standing') as Pose;
       const p = a.object.position.clone();
-      const h = ACTOR_HEIGHT[pose] ?? 1.8;
+      // the boxes fit a 1.7 m actor; createActor records each actor's own height
+      const tall = (a.object.userData.heightMeters as number | undefined) ?? 1.7;
+      const h = ((ACTOR_HEIGHT[pose] ?? 1.8) * tall) / 1.7;
       return info({
         ref,
         label: ctx.names.get(ref.id) ?? ref.id,
