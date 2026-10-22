@@ -2,6 +2,9 @@
 import './style.css';
 import { api } from '@shared/api';
 import { getHealth } from './api';
+import { HttpChatApi, type ChatApi } from './chat-client';
+import { createFakeChatApi } from './chat-fake';
+import { mountChatPanel } from './chat-panel';
 import { installDebugHook } from './debug';
 import { Director } from './director';
 import { byId } from './dom';
@@ -49,7 +52,12 @@ const edit = (() => {
     return false;
   }
 })();
-const projects = mountProjectsPanel(director);
+// ?fakechat=1: the project chat runs on an in-memory server (chat-fake.ts) — UI work and evidence
+// without the chat routes; real projects stay listed and can be chatted with (nothing is sent)
+const realChat = new HttpChatApi();
+const chatApi: ChatApi = new URLSearchParams(location.search).has('fakechat') ? createFakeChatApi(realChat) : realChat;
+const projects = mountProjectsPanel(director, { list: () => chatApi.listProjects() });
+mountChatPanel(director, projects, chatApi);
 // the four tabs, drawer, top bar, cheatsheet and tour (after the panels made their sections)
 const shell = mountShell(director, { edit });
 const manip = mountManipulation(director, look, {

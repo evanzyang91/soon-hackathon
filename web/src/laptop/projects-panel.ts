@@ -1,12 +1,11 @@
-// Left drawer: screenplay input → POST /api/projects and the project list with per-scene stage
-// chips. The open project's cast (one row per character: build detail, kind, fallback, the
-// "High detail" rebuild button) is rendered by the Scene tab through `actorRow`.
+// Left drawer: the project list with per-scene stage chips (new projects start in the project
+// chat, chat-panel.ts). The open project's cast (one row per character: build detail, kind,
+// fallback, the "High detail" rebuild button) is rendered by the Scene tab through `actorRow`.
 import { api } from '@shared/api';
 import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
-import { createProject, getHealth, listProjects, rebuildActor, retryStage } from './api';
+import { getHealth, listProjects, rebuildActor, retryStage } from './api';
 import type { Director } from './director';
 import { byId, h } from './dom';
-import { SAMPLE_SCREENPLAY, SAMPLE_TITLE } from './sample';
 
 type SceneJob = ProjectStatus['scenes'][number];
 const STAGES = ['parse', 'world', 'actors', 'tts', 'manifest'] as const;
@@ -50,6 +49,8 @@ export function sceneReady(job: SceneJob): boolean {
 function busy(p: ProjectStatus) {
   if (p.parse.status === 'pending' || p.parse.status === 'running') return true;
   if (p.actors?.some((a) => a.rebuild?.status === 'running')) return true;
+  // a parsed draft waits for the director (its stages stay pending until /generate)
+  if (p.draft) return false;
   return p.scenes.some((s) =>
     Object.values(s.stages).some((st) => st?.status === 'pending' || st?.status === 'running'),
   );
@@ -63,16 +64,34 @@ export interface ProjectsPanel {
   onChange(fn: () => void): () => void;
   /** One cast row: name, detail chip, kind, fallback, rebuild status, High detail / use standard. */
   actorRow(p: ProjectStatus, a: ActorBuildStatus): HTMLElement;
+  /** A scene's stage chips (failed / fallback ones retry on click), as in the scene rows. */
+  chips(p: ProjectStatus, job: SceneJob): HTMLElement;
+  /** Opens the project's first ready scene as soon as there is one (after Generate). */
+  openWhenReady(projectId: string): void;
+  /** Takes a status the chat got back (POST chat / generate) before the next poll. */
+  upsert(p: ProjectStatus): void;
+  /** Polls fast (1.5 s) while `fn` says so (a chat waiting for its plan or a running action). */
+  pollFastWhile(fn: () => boolean): void;
+  /** Clicking a project's name in the list (the chat switches to its thread). */
+  onPick(fn: (projectId: string) => void): void;
+  /** The project whose thread the chat shows (highlighted in the list). */
+  setChatProject(projectId: string | null): void;
   refresh(): Promise<void>;
 }
 
-export function mountProjectsPanel(director: Director): ProjectsPanel {
-  const title = byId<HTMLInputElement>('pp-title');
-  const text = byId<HTMLTextAreaElement>('pp-screenplay');
-  const status = byId('pp-status');
+export interface ProjectsPanelOptions {
+  /** Where the list comes from (the fake chat adds its own projects); default GET /api/projects. */
+  list?: () => Promise<ProjectStatus[]>;
+}
+
+export function mountProjectsPanel(director: Director, opts: ProjectsPanelOptions = {}): ProjectsPanel {
   const list = byId('pp-list');
+  const lister = opts.list ?? listProjects;
   let projects: ProjectStatus[] = [];
   let autoOpen: string | null = null;
+  let chatProject: string | null = null;
+  const fast = new Set<() => boolean>();
+  const pickers = new Set<(id: string) => void>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let apiDown = false;
   let modalKeys: boolean | null = null;
@@ -86,32 +105,6 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
       render();
     })
     .catch(() => {});
-
-  byId('pp-sample').addEventListener('click', () => {
-    title.value = SAMPLE_TITLE;
-    text.value = SAMPLE_SCREENPLAY;
-  });
-
-  byId('pp-generate').addEventListener('click', async () => {
-    const screenplay = text.value.trim();
-    if (!screenplay) {
-      status.textContent = 'Paste a screenplay first.';
-      return;
-    }
-    const btn = byId<HTMLButtonElement>('pp-generate');
-    btn.disabled = true;
-    status.textContent = 'Submitting…';
-    try {
-      const p = await createProject(screenplay, title.value.trim() || undefined);
-      autoOpen = p.id;
-      status.textContent = `Project ${p.id} queued.`;
-      await refresh();
-    } catch (err) {
-      status.textContent = `Generate failed: ${err instanceof Error ? err.message : err}`;
-    } finally {
-      btn.disabled = false;
-    }
-  });
 
   const open = (p: ProjectStatus, job: SceneJob) => {
     const url = job.manifestUrl ?? api.manifest(p.id, job.sceneIndex);
@@ -140,6 +133,9 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
       stage,
     );
   };
+
+  const chips = (p: ProjectStatus, job: SceneJob) =>
+    h('span', { class: 'chips' }, ...STAGES.map((s) => chip(p, job, s)));
 
   const rebuild = (p: ProjectStatus, a: ActorBuildStatus, detail: ActorDetail) => {
     const key = `${p.id}:${a.characterId}`;
@@ -225,7 +221,7 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
       return;
     }
     if (!projects.length) {
-      list.append(h('div', { class: 'muted' }, 'No projects yet. Paste a screenplay above.'));
+      list.append(h('div', { class: 'muted' }, 'No projects yet. Paste a screenplay in the chat.'));
       return;
     }
     for (const p of projects) {
@@ -249,18 +245,26 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
             job.thumbnailUrl
               ? h('img', { class: 'scene-thumb', src: job.thumbnailUrl, alt: '', loading: 'lazy' })
               : null,
-            h('span', { class: 'chips' }, ...STAGES.map((s) => chip(p, job, s))),
+            chips(p, job),
           ),
         );
       }
       list.append(
         h(
           'div',
-          { class: 'project', 'data-testid': 'project', 'data-id': p.id },
+          { class: `project${chatProject === p.id ? ' chatting' : ''}`, 'data-testid': 'project', 'data-id': p.id },
           h(
             'div',
-            { class: 'project-head' },
+            {
+              class: 'project-head',
+              'data-testid': 'project-head',
+              title: 'Open this project in the chat',
+              onclick: () => {
+                for (const fn of pickers) fn(p.id);
+              },
+            },
             h('strong', {}, p.title || p.id),
+            p.draft ? h('span', { class: 'badge warn', title: 'Planned, not generated yet: Generate in the chat' }, 'DRAFT') : null,
             p.mock ? h('span', { class: 'badge' }, 'MOCK') : null,
             h('span', { class: `chip ${p.parse.status}`, title: p.parse.note ?? '' }, 'parse'),
           ),
@@ -282,7 +286,7 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
 
   const refresh = async () => {
     try {
-      projects = (await listProjects()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      projects = (await lister()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       apiDown = false;
     } catch {
       apiDown = true;
@@ -309,8 +313,11 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
   };
 
   const poll = async () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
     await refresh();
-    timer = setTimeout(poll, apiDown || projects.some(busy) || autoOpen ? 1500 : 5000);
+    const hurry = apiDown || projects.some(busy) || !!autoOpen || [...fast].some((fn) => fn());
+    timer = setTimeout(poll, hurry ? 1500 : 5000);
   };
   director.on((c) => {
     if (c === 'scene') render();
@@ -325,6 +332,29 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
       return () => listeners.delete(fn);
     },
     actorRow,
+    chips,
+    openWhenReady: (id) => {
+      autoOpen = id;
+      void poll();
+    },
+    upsert: (p) => {
+      const i = projects.findIndex((x) => x.id === p.id);
+      if (i >= 0) projects[i] = p;
+      else projects = [p, ...projects];
+      render();
+      for (const fn of listeners) fn();
+    },
+    pollFastWhile: (fn) => {
+      fast.add(fn);
+    },
+    onPick: (fn) => {
+      pickers.add(fn);
+    },
+    setChatProject: (id) => {
+      if (chatProject === id) return;
+      chatProject = id;
+      render();
+    },
     refresh,
   };
 }
