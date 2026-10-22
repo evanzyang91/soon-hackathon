@@ -23,7 +23,11 @@ export const Attachment = z.object({
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   bytes: z.number().int().nonnegative(),
-  /** What the director said it is, when they said it ("character:leo", "scene:1"). */
+  /**
+   * What the director said it is, when they said it: "character:<id>" or "scene:<index>" with
+   * the 0-based ScenePlan.index (the same index the API routes and ChatAction.sceneIndex use;
+   * "scene 2" in spoken text is the 1-based form the planner maps to index 1).
+   */
   hint: z.string().optional(),
 });
 export type Attachment = z.infer<typeof Attachment>;
@@ -141,13 +145,27 @@ export type ChatMessage = z.infer<typeof ChatMessage>;
 
 export const ProjectChat = z.object({
   version: z.literal(1),
-  /** Bumped on every append; mirrored into ProjectStatus.chatRevision. */
+  /**
+   * Bumped on EVERY change to the document: an appended message and an action's status change
+   * (needs-confirm → running → done / failed) alike; mirrored into ProjectStatus.chatRevision so
+   * the laptop refetches whenever it differs.
+   */
   revision: z.number().int().nonnegative(),
+  /**
+   * A draft project's thread starts with two messages the server writes itself: the director's
+   * screenplay as the first user message (full text) and the assistant's plan card reply.
+   */
   messages: z.array(ChatMessage),
 });
 export type ProjectChat = z.infer<typeof ProjectChat>;
 
 export const emptyChat = (): ProjectChat => ({ version: 1, revision: 0, messages: [] });
+
+/** What POST chat and POST chat/confirm answer. */
+export interface ChatResponse {
+  chat: ProjectChat;
+  status: import('./schema.ts').ProjectStatus;
+}
 
 export const ChatRequest = z.object({
   text: z.string().trim().max(8000),
@@ -155,5 +173,10 @@ export const ChatRequest = z.object({
 });
 export type ChatRequest = z.infer<typeof ChatRequest>;
 
-export const ChatConfirmRequest = z.object({ messageId: z.string(), actionId: z.string() });
+/** Confirms a needs-confirm action (runs it), or with `decline` marks it skipped. */
+export const ChatConfirmRequest = z.object({
+  messageId: z.string(),
+  actionId: z.string(),
+  decline: z.boolean().optional(),
+});
 export type ChatConfirmRequest = z.infer<typeof ChatConfirmRequest>;
