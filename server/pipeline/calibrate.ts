@@ -51,6 +51,9 @@
 // stand, measured from the splats themselves (calibrate-ground.ts; the collider sits ~0.1 m below
 // the splats outdoors and is not used for this). Written as WorldAsset.floorOffsetMeters
 // (transform.ts raises the world by it) whatever the scale decision; nothing beyond ±0.5 m.
+// Writing a calibration also measures the ground height FIELD (ground.json → WorldAsset.ground,
+// calibrate-ground.ts): the ground per 0.25 m cell, which is what the viewer stands each actor on;
+// floorOffsetMeters stays the raise and the fallback where the field has no ground.
 import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { WorldAsset } from '../../shared/schema.ts';
@@ -77,7 +80,7 @@ import {
   type VisionCall,
   type VisionEstimate,
 } from './calibrate-vision.ts';
-import { splatGround, type GroundMeasurement } from './calibrate-ground.ts';
+import { splatGround, writeGroundField, type GroundMeasurement } from './calibrate-ground.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { glbTriangles } from './glb.ts';
 import { ASSET_FILE } from './marble.ts';
@@ -770,6 +773,8 @@ export interface WriteOptions {
   libraryDir?: string | null;
   /** Also patch ../manifest.json when it shows this world (CLI on an existing project). */
   manifest?: boolean;
+  /** Blocking marks (xz, scene metres): the ground field's grid grows to include them. */
+  marks?: readonly (readonly [number, number])[];
   log?: (m: string) => void;
 }
 
@@ -781,8 +786,20 @@ export function calibrated(asset: WorldAsset, report: CalibrationReport): WorldA
 }
 
 /**
- * Writes scaleCalibration + floorOffsetMeters into world-asset.json (+ the full report), the
- * library copy, the manifest.
+ * `ground` (world-dir-relative, as in world-asset.json) re-based for a manifest whose world paths
+ * carry a project prefix (scene-<n>/world/), read off its k500 path; undefined removes it.
+ */
+export function manifestGround(manifestWorld: WorldAsset, asset: WorldAsset): WorldAsset['ground'] {
+  if (!asset.ground) return undefined;
+  const k500 = manifestWorld.spz.k500;
+  const prefix = k500.endsWith(asset.spz.k500) ? k500.slice(0, k500.length - asset.spz.k500.length) : '';
+  return { ...asset.ground, file: prefix + asset.ground.file };
+}
+
+/**
+ * Writes scaleCalibration + floorOffsetMeters into world-asset.json (+ the full report), measures
+ * the ground height field again (ground.json, calibrate-ground.ts; local, ~1 s) and writes all of
+ * it into the library copy and the manifest.
  */
 export async function writeCalibration(
   worldDir: string,
@@ -790,9 +807,18 @@ export async function writeCalibration(
   o: WriteOptions = {},
 ): Promise<WorldAsset> {
   const log = o.log ?? (() => {});
-  const asset = WorldAsset.parse(calibrated(await readWorldAsset(worldDir), report));
+  let asset = WorldAsset.parse(calibrated(await readWorldAsset(worldDir), report));
+  try {
+    asset = await writeGroundField(worldDir, asset, { marks: o.marks, log });
+  } catch (e) {
+    log(`ground field not measured (${(e as Error).message.slice(0, 120)}); actors stand on the median floor`);
+  }
   await writeJsonAtomic(join(worldDir, ASSET_FILE), asset);
   await writeJsonAtomic(join(worldDir, REPORT_FILE), report);
+  const withField = (a: WorldAsset, ground: WorldAsset['ground']): WorldAsset => {
+    const { ground: _old, ...rest } = a;
+    return ground ? { ...rest, ground } : rest;
+  };
   if (o.libraryDir && asset.worldId) {
     const names = await readdir(o.libraryDir).catch(() => [] as string[]);
     for (const n of names) {
@@ -800,7 +826,8 @@ export async function writeCalibration(
       if (dir === worldDir) continue;
       const lib = WorldAsset.safeParse(await readJson(join(dir, ASSET_FILE)).catch(() => undefined));
       if (!lib.success || lib.data.worldId !== asset.worldId) continue;
-      await writeJsonAtomic(join(dir, ASSET_FILE), calibrated(lib.data, report));
+      if (asset.ground) await copyFile(join(worldDir, asset.ground.file), join(dir, asset.ground.file));
+      await writeJsonAtomic(join(dir, ASSET_FILE), withField(calibrated(lib.data, report), asset.ground));
       await copyFile(join(worldDir, REPORT_FILE), join(dir, REPORT_FILE));
       log(`calibrate: library copy ${n} updated`);
     }
@@ -809,7 +836,7 @@ export async function writeCalibration(
     const mpath = join(dirname(worldDir), 'manifest.json');
     const m = (await exists(mpath)) ? await readJson<{ world?: WorldAsset }>(mpath) : undefined;
     if (m?.world && m.world.worldId === asset.worldId) {
-      m.world = calibrated(m.world, report);
+      m.world = withField(calibrated(m.world, report), manifestGround(m.world, asset));
       await writeJsonAtomic(mpath, m);
       log(`calibrate: ${mpath} updated`);
     }

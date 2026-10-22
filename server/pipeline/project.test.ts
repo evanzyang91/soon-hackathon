@@ -504,6 +504,11 @@ describe('project pipeline (mock)', () => {
       expect(st.scenes[n]!.heading).toBe(m.plan.heading);
       expect(st.scenes[n]!.thumbnailUrl).toBe(`/projects/${id}/scene-${n}/world/thumbnail.png`);
       expect(existsSync(join(dataDir, id, `scene-${n}`, 'world', 'thumbnail.png'))).toBe(true);
+      // the mock world's flat floor is measured too, so the viewer's ground path runs offline
+      expect(m.world.ground).toMatchObject({ file: `scene-${n}/world/ground.json`, cell: 0.25 });
+      expect(m.world.ground!.covered / m.world.ground!.cells).toBeGreaterThan(0.8);
+      const field = JSON.parse(await readFile(join(dataDir, id, m.world.ground!.file), 'utf8'));
+      expect(Math.max(...field.heights.map((h: number | null) => Math.abs(h ?? 0)))).toBeLessThan(0.02);
     }
     expect(st.scenes[0]!.heading).toBe('EXT. CITY STREET - NIGHT');
   });
