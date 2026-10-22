@@ -46,7 +46,12 @@ const CHAT_KEY = 'previz:chat-project';
 const MAX_ATTACHMENTS = 12;
 const PAPERCLIP =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.2-8 8a5.2 5.2 0 0 1-7.4-7.4l8.4-8.4a3.4 3.4 0 0 1 4.9 4.9l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7"/></svg>';
-const EXAMPLES = ['make Theo older and taller', "Maya's second line is 'I let it go.'", 'scene 2 is a diner', 'a photo + “this is Maya”'];
+const EXAMPLES = [
+  'make Theo older and taller',
+  "Maya's second line is 'I let it go.'",
+  'scene 2 is a diner',
+  'a photo + “this is Maya”',
+];
 
 /** An image in the composer: prepared (≤ 1600 px PNG) as soon as it is attached. */
 interface Draft {
@@ -84,44 +89,119 @@ export interface ChatPanel {
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export function mountChatPanel(director: Director, projects: ProjectsPanel, chat: ChatApi): ChatPanel {
+export function mountChatPanel(
+  director: Director,
+  projects: ProjectsPanel,
+  chat: ChatApi,
+): ChatPanel {
   const left = byId('left');
   const projectsCard = byId('pp-card');
   const home = h('div', { id: 'chat-home', 'data-testid': 'chat-home' });
   byId('hud-empty').after(home);
 
   // ---- DOM ------------------------------------------------------------------------------------
-  const root = h('section', { class: 'card chat', tabindex: '-1', 'data-testid': 'chat', 'aria-label': 'Project chat' });
+  const root = h('section', {
+    class: 'card chat',
+    tabindex: '-1',
+    'data-testid': 'chat',
+    'aria-label': 'Project chat',
+  });
   const headTitle = h('span', { class: 'chat-title', 'data-testid': 'chat-title' });
   const headBadges = h('span', { class: 'chat-badges' });
   const newBtn = h(
     'button',
-    { type: 'button', class: 'small', 'data-testid': 'chat-new', title: 'Start a new project (paste another screenplay)' },
+    {
+      type: 'button',
+      class: 'small',
+      'data-testid': 'chat-new',
+      title: 'Start a new project (paste another screenplay)',
+    },
     '+ New',
   );
-  const thread = h('div', { class: 'chat-thread', role: 'log', 'aria-live': 'polite', 'data-testid': 'chat-thread' });
+  const thread = h('div', {
+    class: 'chat-thread',
+    role: 'log',
+    'aria-live': 'polite',
+    'data-testid': 'chat-thread',
+  });
   const chipsRow = h('div', { class: 'chat-attachments', 'data-testid': 'chat-attachments' });
-  const titleInput = h('input', { class: 'chat-title-input', placeholder: 'Title (optional)', 'data-testid': 'title', title: 'Project title (optional)' });
-  const sampleBtn = h('button', { type: 'button', class: 'small', 'data-testid': 'sample', title: 'Fill in the sample screenplay (The Last Bus)' }, 'Sample');
+  const titleInput = h('input', {
+    class: 'chat-title-input',
+    placeholder: 'Title (optional)',
+    'data-testid': 'title',
+    title: 'Project title (optional)',
+  });
+  const sampleBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'small',
+      'data-testid': 'sample',
+      title: 'Fill in the sample screenplay (The Last Bus)',
+    },
+    'Sample',
+  );
   const newRow = h('div', { class: 'chat-newrow' }, titleInput, sampleBtn);
-  const input = h('textarea', { class: 'chat-input', rows: 3, spellcheck: 'false', 'data-testid': 'screenplay', 'aria-label': 'Message' });
-  const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/*', multiple: true, hidden: true, 'data-testid': 'chat-file' });
-  const attachBtn = h('button', { type: 'button', class: 'icon-btn', 'data-testid': 'chat-attach', title: 'Attach photos of the people or places (or drop / paste them here)' });
+  const input = h('textarea', {
+    class: 'chat-input',
+    rows: 3,
+    spellcheck: 'false',
+    'data-testid': 'screenplay',
+    'aria-label': 'Message',
+  });
+  const fileInput = h('input', {
+    type: 'file',
+    accept: 'image/png,image/jpeg,image/webp,image/*',
+    multiple: true,
+    hidden: true,
+    'data-testid': 'chat-file',
+  });
+  const attachBtn = h('button', {
+    type: 'button',
+    class: 'icon-btn',
+    'data-testid': 'chat-attach',
+    title: 'Attach photos of the people or places (or drop / paste them here)',
+  });
   attachBtn.innerHTML = PAPERCLIP;
   const hint = h('span', { class: 'chat-hint muted small' });
-  const generateBtn = h('button', { type: 'button', class: 'generate', 'data-testid': 'generate' }, 'Generate');
-  const sendBtn = h('button', { type: 'button', class: 'primary', 'data-testid': 'chat-send' }, 'Send');
+  const generateBtn = h(
+    'button',
+    { type: 'button', class: 'generate', 'data-testid': 'generate' },
+    'Generate',
+  );
+  const sendBtn = h(
+    'button',
+    { type: 'button', class: 'primary', 'data-testid': 'chat-send' },
+    'Send',
+  );
   const composer = h(
     'div',
     { class: 'chat-composer' },
     newRow,
     chipsRow,
     input,
-    h('div', { class: 'chat-tools' }, attachBtn, fileInput, hint, h('span', { class: 'spacer' }), generateBtn, sendBtn),
+    h(
+      'div',
+      { class: 'chat-tools' },
+      attachBtn,
+      fileInput,
+      hint,
+      h('span', { class: 'spacer' }),
+      generateBtn,
+      sendBtn,
+    ),
   );
   const dropZone = h('div', { class: 'chat-drop', hidden: true }, 'Drop photos to attach');
   root.append(
-    h('div', { class: 'chat-head' }, h('h2', {}, 'Chat'), headTitle, headBadges, h('span', { class: 'spacer' }), newBtn),
+    h(
+      'div',
+      { class: 'chat-head' },
+      h('h2', {}, 'Chat'),
+      headTitle,
+      headBadges,
+      h('span', { class: 'spacer' }),
+      newBtn,
+    ),
     thread,
     composer,
     dropZone,
@@ -149,13 +229,26 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
 
   const thr = (id: string): Thread => {
     let t = threads.get(id);
-    if (!t) threads.set(id, (t = { chat: null, plan: null, planTried: -1, planStamp: 0, loadingChat: false, loadingPlan: false }));
+    if (!t)
+      threads.set(
+        id,
+        (t = {
+          chat: null,
+          plan: null,
+          planTried: -1,
+          planStamp: 0,
+          loadingChat: false,
+          loadingPlan: false,
+        }),
+      );
     return t;
   };
-  const project = () => (selected ? (projects.projects().find((p) => p.id === selected) ?? null) : null);
+  const project = () =>
+    selected ? (projects.projects().find((p) => p.id === selected) ?? null) : null;
   const sending = () => creating || (!!selected && pending.has(selected));
   const preparing = () => drafts.some((d) => !d.image && !d.error);
-  const parsing = (p: ProjectStatus) => p.parse.status === 'pending' || p.parse.status === 'running';
+  const parsing = (p: ProjectStatus) =>
+    p.parse.status === 'pending' || p.parse.status === 'running';
 
   // ---- placement: the empty viewport, or the drawer once a scene is open ------------------------
   const place = () => {
@@ -210,7 +303,8 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       const rev = p.chatRevision ?? 0;
       if (p.parse.status === 'done' && t.planTried !== rev) void loadPlan(p.id, rev);
       // an empty thread (revision 0, or a server without chat) is not fetched at all
-      if (rev > 0 && !pending.has(p.id) && (t.chat?.revision !== rev || hasRunning(t.chat))) void loadChat(p.id);
+      if (rev > 0 && !pending.has(p.id) && (t.chat?.revision !== rev || hasRunning(t.chat)))
+        void loadChat(p.id);
       if (p.parse.status === 'failed' && firstAttach.delete(p.id)) generateAfterFirst.delete(p.id);
       void flushFirst(p.id);
     }
@@ -245,7 +339,11 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
 
   const sendMessage = async (id: string, text: string, images: Draft[]): Promise<boolean> => {
     const t = thr(id);
-    const p: Pending = { text, images: images.map((d) => ({ url: d.url, hint: d.hint })), status: 'Thinking…' };
+    const p: Pending = {
+      text,
+      images: images.map((d) => ({ url: d.url, hint: d.hint })),
+      status: 'Thinking…',
+    };
     pending.set(id, p);
     errors.delete(id);
     renderAll(true);
@@ -312,7 +410,15 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
   const flushFirst = async (id: string) => {
     const queued = firstAttach.get(id);
     const p = projects.projects().find((x) => x.id === id);
-    if (!queued || !p || p.parse.status !== 'done' || !thr(id).plan || flushing.has(id) || pending.has(id)) return;
+    if (
+      !queued ||
+      !p ||
+      p.parse.status !== 'done' ||
+      !thr(id).plan ||
+      flushing.has(id) ||
+      pending.has(id)
+    )
+      return;
     flushing.add(id);
     firstAttach.delete(id);
     const ok = await sendMessage(id, '', queued);
@@ -340,7 +446,9 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     renderAll();
     try {
       const title = titleInput.value.trim() || undefined;
-      const st = draft ? await chat.createDraft(screenplay, title) : await chat.createProject(screenplay, title);
+      const st = draft
+        ? await chat.createDraft(screenplay, title)
+        : await chat.createProject(screenplay, title);
       screenplays.set(st.id, screenplay);
       input.value = '';
       titleInput.value = '';
@@ -414,7 +522,14 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         flash(`${f.name || 'That file'} is not an image.`);
         continue;
       }
-      const d: Draft = { key: `d${++keySeq}`, name: f.name || 'Pasted image', url: URL.createObjectURL(f), image: null, error: null, hint: '' };
+      const d: Draft = {
+        key: `d${++keySeq}`,
+        name: f.name || 'Pasted image',
+        url: URL.createObjectURL(f),
+        image: null,
+        error: null,
+        hint: '',
+      };
       drafts.push(d);
       void prepareImage(f, f.name || 'pasted.png').then(
         (img) => {
@@ -450,20 +565,42 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         : parsing(p)
           ? h('span', { class: 'badge' }, 'PLANNING')
           : p.draft
-            ? h('span', { class: 'badge warn', title: 'Planned, not generated: nothing has been spent yet' }, 'DRAFT')
+            ? h(
+                'span',
+                {
+                  class: 'badge warn',
+                  title: 'Planned, not generated: nothing has been spent yet',
+                },
+                'DRAFT',
+              )
             : null;
     headBadges.replaceChildren(
       ...[
         state,
-        chat.fake ? h('span', { class: 'badge warn', title: 'In-memory chat (?fakechat=1): nothing reaches the server' }, 'FAKE CHAT') : null,
+        chat.fake
+          ? h(
+              'span',
+              {
+                class: 'badge warn',
+                title: 'In-memory chat (?fakechat=1): nothing reaches the server',
+              },
+              'FAKE CHAT',
+            )
+          : null,
       ].filter((x): x is HTMLSpanElement => !!x),
     );
     newBtn.hidden = !p;
   };
 
-  const img = (src: string, cls: string, title = '') => h('img', { class: cls, src, alt: '', title, loading: 'lazy', draggable: 'false' });
+  const img = (src: string, cls: string, title = '') =>
+    h('img', { class: cls, src, alt: '', title, loading: 'lazy', draggable: 'false' });
 
-  const userBubble = (p: ProjectStatus | null, m: Pick<ChatMessage, 'id' | 'text' | 'attachments'>, first: boolean, plan: ScreenplayPlan | null) => {
+  const userBubble = (
+    p: ProjectStatus | null,
+    m: Pick<ChatMessage, 'id' | 'text' | 'attachments'>,
+    first: boolean,
+    plan: ScreenplayPlan | null,
+  ) => {
     const lines = m.text.split('\n');
     const long = lines.length > 14 || m.text.length > 1200;
     const open = expanded.has(m.id);
@@ -509,8 +646,19 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       'div',
       { class: 'plan-char', 'data-testid': 'plan-character', 'data-character': c.id },
       c.referenceImage
-        ? img(chat.fileUrl(p.id, c.referenceImage), 'plan-avatar', 'Reference photo: the actor is built from it')
-        : h('span', { class: 'plan-avatar mono', title: 'No reference photo: the actor is generated from the description' }, displayName(c.name).charAt(0)),
+        ? img(
+            chat.fileUrl(p.id, c.referenceImage),
+            'plan-avatar',
+            'Reference photo: the actor is built from it',
+          )
+        : h(
+            'span',
+            {
+              class: 'plan-avatar mono',
+              title: 'No reference photo: the actor is generated from the description',
+            },
+            displayName(c.name).charAt(0),
+          ),
       h(
         'div',
         { class: 'plan-main' },
@@ -518,8 +666,20 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
           'div',
           { class: 'plan-line' },
           h('b', {}, displayName(c.name)),
-          h('span', { class: 'plan-tag', 'data-testid': 'plan-height', title: 'Standing height: the actor is scaled to it' }, heightLabel(c)),
-          h('span', { class: 'plan-tag voice', title: `Voice (${c.voice.gender})` }, `voice ${c.voice.id}`),
+          h(
+            'span',
+            {
+              class: 'plan-tag',
+              'data-testid': 'plan-height',
+              title: 'Standing height: the actor is scaled to it',
+            },
+            heightLabel(c),
+          ),
+          h(
+            'span',
+            { class: 'plan-tag voice', title: `Voice (${c.voice.gender})` },
+            `voice ${c.voice.id}`,
+          ),
           c.referenceImage ? h('span', { class: 'plan-tag ref' }, 'photo') : null,
         ),
         h('div', { class: 'plan-desc', title: c.description }, excerpt(c.description, 150)),
@@ -538,18 +698,35 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         'data-testid': 'plan-scene',
         'data-scene': s.index,
         title: ready ? 'Open this scene' : `World prompt: ${s.worldPrompt}`,
-        onclick: ready ? () => void director.openScene(p.id, s.index, job.manifestUrl ?? api.manifest(p.id, s.index)) : undefined,
+        onclick: ready
+          ? () =>
+              void director.openScene(p.id, s.index, job.manifestUrl ?? api.manifest(p.id, s.index))
+          : undefined,
       },
       h(
         'span',
         { class: 'plan-thumb-wrap' },
-        thumb ? img(thumb, 'plan-thumb') : h('span', { class: 'plan-thumb empty' }, String(s.index + 1)),
-        ref && thumb === ref ? h('span', { class: 'plan-thumb-tag' }, s.worldReference!.isPano ? '360° photo' : 'photo') : null,
+        thumb
+          ? img(thumb, 'plan-thumb')
+          : h('span', { class: 'plan-thumb empty' }, String(s.index + 1)),
+        ref && thumb === ref
+          ? h(
+              'span',
+              { class: 'plan-thumb-tag' },
+              s.worldReference!.isPano ? '360° photo' : 'photo',
+            )
+          : null,
       ),
       h(
         'div',
         { class: 'plan-main' },
-        h('div', { class: 'plan-line' }, h('span', { class: 'plan-num' }, s.index + 1), h('b', { class: 'plan-heading' }, s.heading), h('span', { class: `plan-tod ${s.timeOfDay}` }, s.timeOfDay)),
+        h(
+          'div',
+          { class: 'plan-line' },
+          h('span', { class: 'plan-num' }, s.index + 1),
+          h('b', { class: 'plan-heading' }, s.heading),
+          h('span', { class: `plan-tod ${s.timeOfDay}` }, s.timeOfDay),
+        ),
         h('div', { class: 'plan-desc', title: s.worldPrompt }, excerpt(s.worldPrompt, 160)),
         job && !p.draft ? projects.chips(p, job) : null,
       ),
@@ -566,13 +743,27 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         'div',
         { class: 'plan-head' },
         h('strong', {}, plan.title),
-        h('span', { class: 'muted small' }, `${n} scene${n === 1 ? '' : 's'} · ${plan.characters.length} character${plan.characters.length === 1 ? '' : 's'}`),
+        h(
+          'span',
+          { class: 'muted small' },
+          `${n} scene${n === 1 ? '' : 's'} · ${plan.characters.length} character${plan.characters.length === 1 ? '' : 's'}`,
+        ),
       ),
       h(
         'div',
         { class: 'plan-cols' },
-        h('div', { class: 'plan-section' }, h('h3', {}, 'Cast'), ...plan.characters.map((c) => charRow(p, c))),
-        h('div', { class: 'plan-section' }, h('h3', {}, 'Scenes'), ...plan.scenes.map((s) => sceneRow(p, s))),
+        h(
+          'div',
+          { class: 'plan-section' },
+          h('h3', {}, 'Cast'),
+          ...plan.characters.map((c) => charRow(p, c)),
+        ),
+        h(
+          'div',
+          { class: 'plan-section' },
+          h('h3', {}, 'Scenes'),
+          ...plan.scenes.map((s) => sceneRow(p, s)),
+        ),
       ),
       p.draft
         ? h(
@@ -590,13 +781,22 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
               },
               generating.has(p.id) ? 'Starting…' : `Generate ${n} scene${n === 1 ? '' : 's'}`,
             ),
-            h('span', { class: 'muted small' }, 'Worlds, actors and voices. Change anything first: say it, or attach photos.'),
+            h(
+              'span',
+              { class: 'muted small' },
+              'Worlds, actors and voices. Change anything first: say it, or attach photos.',
+            ),
           )
         : null,
     );
   };
 
-  const actionCard = (p: ProjectStatus, m: ChatMessage, a: ChatAction, atts: Map<string, Attachment>) => {
+  const actionCard = (
+    p: ProjectStatus,
+    m: ChatMessage,
+    a: ChatAction,
+    atts: Map<string, Attachment>,
+  ) => {
     const cost = 'cost' in a ? a.cost : undefined;
     const effect = a.type === 'plan-patch' ? a.effect : undefined;
     const diff = patchDiff(a);
@@ -604,12 +804,21 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     const busy = confirming.has(a.id);
     return h(
       'div',
-      { class: `action-card ${a.status}`, 'data-testid': 'action-card', 'data-type': a.type, 'data-status': a.status },
+      {
+        class: `action-card ${a.status}`,
+        'data-testid': 'action-card',
+        'data-type': a.type,
+        'data-status': a.status,
+      },
       h(
         'div',
         { class: 'action-head' },
         h('span', { class: 'action-kind' }, ACTION_LABEL[a.type]),
-        h('span', { class: `chat-status ${a.status}`, 'data-testid': 'action-status' }, STATUS_LABEL[a.status]),
+        h(
+          'span',
+          { class: `chat-status ${a.status}`, 'data-testid': 'action-status' },
+          STATUS_LABEL[a.status],
+        ),
         h('span', { class: 'spacer' }),
         cost ? h('span', { class: 'action-cost', title: 'Time and Marble credits' }, cost) : null,
       ),
@@ -662,8 +871,12 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         'div',
         { class: 'msg-meta' },
         h('span', { class: 'msg-who' }, 'Previz'),
-        m.source && m.source !== 'local' ? h('span', { class: 'msg-source', title: 'Which planner answered' }, m.source) : null,
-        m.costUsd ? h('span', { title: 'Planner and vision cost of this answer' }, fmtUsd(m.costUsd)) : null,
+        m.source && m.source !== 'local'
+          ? h('span', { class: 'msg-source', title: 'Which planner answered' }, m.source)
+          : null,
+        m.costUsd
+          ? h('span', { title: 'Planner and vision cost of this answer' }, fmtUsd(m.costUsd))
+          : null,
       ),
       m.text ? h('div', { class: 'msg-text' }, m.text) : null,
       m.planCard
@@ -671,13 +884,22 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
           ? h('div', { class: 'muted small' }, 'Loading the plan…')
           : m.id === latestPlan
             ? planCard(p, plan)
-            : h('div', { class: 'plan-compact muted small' }, `Plan: ${planSummary(plan)} The current plan is further down.`)
+            : h(
+                'div',
+                { class: 'plan-compact muted small' },
+                `Plan: ${planSummary(plan)} The current plan is further down.`,
+              )
         : null,
       ...(m.actions ?? []).map((a) => actionCard(p, m, a, atts)),
     );
 
   const thinking = (text: string) =>
-    h('div', { class: 'msg assistant thinking', 'data-testid': 'chat-thinking' }, h('div', { class: 'msg-meta' }, h('span', { class: 'msg-who' }, 'Previz')), h('div', { class: 'msg-text' }, text, h('span', { class: 'dots' }, h('i'), h('i'), h('i'))));
+    h(
+      'div',
+      { class: 'msg assistant thinking', 'data-testid': 'chat-thinking' },
+      h('div', { class: 'msg-meta' }, h('span', { class: 'msg-who' }, 'Previz')),
+      h('div', { class: 'msg-text' }, text, h('span', { class: 'dots' }, h('i'), h('i'), h('i'))),
+    );
 
   const errorBubble = (text: string, onClose: () => void) =>
     h(
@@ -691,10 +913,18 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
   const messagesOf = (p: ProjectStatus, t: Thread): ChatMessage[] => {
     const out = [...(t.chat?.messages ?? [])];
     const sp = screenplays.get(p.id);
-    if (!out.length && sp) out.push({ id: 'local-screenplay', at: p.createdAt, role: 'user', text: sp });
+    if (!out.length && sp)
+      out.push({ id: 'local-screenplay', at: p.createdAt, role: 'user', text: sp });
     if (t.plan && !out.some((m) => m.planCard)) {
       const at = out.findIndex((m) => m.role === 'user') + 1;
-      out.splice(at, 0, { id: 'local-plan', at: p.createdAt, role: 'assistant', text: planSummary(t.plan), planCard: true, source: 'local' });
+      out.splice(at, 0, {
+        id: 'local-plan',
+        at: p.createdAt,
+        role: 'assistant',
+        text: planSummary(t.plan),
+        planCard: true,
+        source: 'local',
+      });
     }
     return out;
   };
@@ -704,8 +934,16 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       'div',
       { class: 'chat-hero', 'data-testid': 'chat-hero' },
       h('h1', {}, 'Previz Stage'),
-      h('p', {}, 'Paste a screenplay to start a project. I plan the scenes and the cast; change anything in words, attach photos of the people and places, then Generate.'),
-      h('div', { class: 'chat-examples' }, ...EXAMPLES.map((x) => h('span', { class: 'chat-example' }, x))),
+      h(
+        'p',
+        {},
+        'Paste a screenplay to start a project. I plan the scenes and the cast; change anything in words, attach photos of the people and places, then Generate.',
+      ),
+      h(
+        'div',
+        { class: 'chat-examples' },
+        ...EXAMPLES.map((x) => h('span', { class: 'chat-example' }, x)),
+      ),
     );
 
   let lastKey = '';
@@ -746,15 +984,42 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       for (const m of msgs) for (const a of m.attachments ?? []) atts.set(a.id, a);
       const firstUser = msgs.find((m) => m.role === 'user')?.id;
       for (const m of msgs)
-        items.push(m.role === 'user' ? userBubble(p, m, m.id === firstUser && m.text.length > 200, t!.plan) : assistantBubble(p, m, t!.plan, latest, atts));
+        items.push(
+          m.role === 'user'
+            ? userBubble(p, m, m.id === firstUser && m.text.length > 200, t!.plan)
+            : assistantBubble(p, m, t!.plan, latest, atts),
+        );
       const local = pending.get(p.id);
       if (local)
         items.push(
-          userBubble(null, { id: 'local-pending', text: local.text, attachments: local.images.map((im, i) => ({ id: `local-${i}`, kind: 'image', file: im.url, width: 1, height: 1, bytes: 0, ...(im.hint ? { hint: im.hint } : {}) })) }, false, t!.plan),
+          userBubble(
+            null,
+            {
+              id: 'local-pending',
+              text: local.text,
+              attachments: local.images.map((im, i) => ({
+                id: `local-${i}`,
+                kind: 'image',
+                file: im.url,
+                width: 1,
+                height: 1,
+                bytes: 0,
+                ...(im.hint ? { hint: im.hint } : {}),
+              })),
+            },
+            false,
+            t!.plan,
+          ),
           thinking(local.status.replace(/…$/, '')),
         );
       else if (parsing(p)) items.push(thinking('Reading the screenplay'));
-      if (p.parse.status === 'failed') items.push(errorBubble(`The screenplay could not be planned: ${p.parse.note ?? 'parse failed'}`, () => {}));
+      if (p.parse.status === 'failed')
+        items.push(
+          errorBubble(
+            `The screenplay could not be planned: ${p.parse.note ?? 'parse failed'}`,
+            () => {},
+          ),
+        );
       const err = errors.get(p.id);
       if (err) items.push(errorBubble(err, () => (errors.delete(p.id), renderThread())));
     }
@@ -782,19 +1047,35 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     );
 
   const targetMenu = (d: Draft) => {
-    const opts = targetOptions(project() ? thr(selected!).plan : null, project() ? '' : input.value);
+    const opts = targetOptions(
+      project() ? thr(selected!).plan : null,
+      project() ? '' : input.value,
+    );
     const group = (g: TargetOption['group'], label: string) => {
       const list = opts.filter((o) => o.group === g);
-      return list.length ? [h('div', { class: 'att-group' }, label), ...list.map((o) => optionButton(o, d))] : [];
+      return list.length
+        ? [h('div', { class: 'att-group' }, label), ...list.map((o) => optionButton(o, d))]
+        : [];
     };
     return h(
       'div',
-      { class: 'att-menu', role: 'listbox', 'data-testid': 'attach-target-menu', 'aria-label': 'What the photo shows' },
+      {
+        class: 'att-menu',
+        role: 'listbox',
+        'data-testid': 'attach-target-menu',
+        'aria-label': 'What the photo shows',
+      },
       h('div', { class: 'att-menu-title' }, 'This photo is…'),
       optionButton(opts[0]!, d),
       ...group('character', 'A character · the actor is built from it'),
       ...group('scene', 'A scene’s set · the world is built from it'),
-      opts.length === 1 ? h('div', { class: 'muted small att-empty' }, 'Characters and scenes show up once the plan exists; you can also say “this is Maya”.') : null,
+      opts.length === 1
+        ? h(
+            'div',
+            { class: 'muted small att-empty' },
+            'Characters and scenes show up once the plan exists; you can also say “this is Maya”.',
+          )
+        : null,
     );
   };
 
@@ -808,7 +1089,11 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       h(
         'div',
         { class: 'att-main' },
-        h('div', { class: 'att-name', title: d.name }, d.image ? `${d.name} · ${d.image.width}×${d.image.height}` : d.name),
+        h(
+          'div',
+          { class: 'att-name', title: d.name },
+          d.image ? `${d.name} · ${d.image.width}×${d.image.height}` : d.name,
+        ),
         d.error
           ? h('div', { class: 'error small att-error' }, d.error)
           : !d.image
@@ -831,7 +1116,16 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
                 h('span', { class: 'caret' }, '▾'),
               ),
       ),
-      h('button', { type: 'button', class: 'icon att-remove', title: 'Remove this photo', onclick: () => removeDraft(d) }, '×'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'icon att-remove',
+          title: 'Remove this photo',
+          onclick: () => removeDraft(d),
+        },
+        '×',
+      ),
       menuFor === d.key ? targetMenu(d) : null,
     );
   };
@@ -853,13 +1147,15 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       : docked
         ? 'Ask for a change, or attach a photo…'
         : p.draft || parsing(p)
-        ? 'Change the plan in words: “make Theo taller”, “scene 2 is a diner”… or attach a photo'
-        : 'Ask for a change: “Maya’s second line is ‘I let it go.’”, “scene 2 is a diner”… or attach a photo';
+          ? 'Change the plan in words: “make Theo taller”, “scene 2 is a diner”… or attach a photo'
+          : 'Ask for a change: “Maya’s second line is ‘I let it go.’”, “scene 2 is a diner”… or attach a photo';
     // read-only, not disabled: a disabled field drops focus (and the widened drawer with it)
     input.readOnly = busy;
     input.classList.toggle('busy', busy);
     sendBtn.disabled = busy || preparing();
-    sendBtn.title = isNew ? 'Plan the scenes and the cast first; nothing is generated yet (⌘Enter)' : 'Send (Enter)';
+    sendBtn.title = isNew
+      ? 'Plan the scenes and the cast first; nothing is generated yet (⌘Enter)'
+      : 'Send (Enter)';
     const draftLike = isNew || !!p.draft;
     generateBtn.hidden = !draftLike;
     generateBtn.disabled = busy || preparing() || (!!p && (generating.has(p.id) || parsing(p)));
@@ -868,7 +1164,9 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
       : 'Build the worlds, actors and voices (sends what you typed first)';
     if (!flashTimer) {
       hint.classList.remove('warn');
-      hint.textContent = isNew ? '⌘Enter sends · drop or paste photos' : 'Enter sends · Shift+Enter new line · drop or paste photos';
+      hint.textContent = isNew
+        ? '⌘Enter sends · drop or paste photos'
+        : 'Enter sends · Shift+Enter new line · drop or paste photos';
     }
   };
 
@@ -936,7 +1234,8 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
   });
 
   // drag and drop: the whole chat (and the empty viewport around it) takes photos
-  const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  const hasFiles = (e: DragEvent) =>
+    !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
   let dragDepth = 0;
   for (const el of [home, root]) {
     el.addEventListener('dragenter', (e) => {
@@ -1014,7 +1313,8 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     if (c === 'scene') {
       const id = director.projectId;
       // the open scene's project is the thread, unless a new screenplay is being written
-      if (id && id !== selected && !(selected === null && (input.value.trim() || drafts.length))) select(id);
+      if (id && id !== selected && !(selected === null && (input.value.trim() || drafts.length)))
+        select(id);
       else renderThread();
     }
   });

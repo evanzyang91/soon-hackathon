@@ -14,9 +14,31 @@ type SceneJob = ProjectStatus['scenes'][number];
 export const REGEN_COST = '~5 min · 1,580 Marble credits';
 export const FALLBACK_REPLY =
   'I can change characters, lines and scenes, take reference photos, and start generation.';
-export const VOICE_IDS = ['nova', 'shimmer', 'coral', 'sage', 'onyx', 'ash', 'echo', 'ballad', 'alloy', 'fable'];
+export const VOICE_IDS = [
+  'nova',
+  'shimmer',
+  'coral',
+  'sage',
+  'onyx',
+  'ash',
+  'echo',
+  'ballad',
+  'alloy',
+  'fable',
+];
 
-const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+const ORDINALS = [
+  'first',
+  'second',
+  'third',
+  'fourth',
+  'fifth',
+  'sixth',
+  'seventh',
+  'eighth',
+  'ninth',
+  'tenth',
+];
 const QO = `["'“‘]`;
 const QC = `["'”’]`;
 const END = String.raw`\s*[.!]?\s*$`;
@@ -55,16 +77,34 @@ export function mockChatReply(input: RuleInput): RuleResult {
 
   const name = (id: string) => displayName(plan.characters.find((c) => c.id === id)?.name ?? id);
   const linesOf = (characterId: string) =>
-    plan.scenes.flatMap((s) => [...s.dialogue].sort((a, b) => a.order - b.order).filter((d) => d.characterId === characterId));
+    plan.scenes.flatMap((s) =>
+      [...s.dialogue]
+        .sort((a, b) => a.order - b.order)
+        .filter((d) => d.characterId === characterId),
+    );
   const sceneByWord = (word: string) => {
     const w = word.toLowerCase();
     return plan.scenes.find((s) => s.heading.toLowerCase().includes(w) || s.slug.includes(w));
   };
   const rebuild = (characterId: string, why: string) => {
-    if (live) actions.push({ type: 'rebuild-actor', id: newId(), characterId, summary: `Rebuilding ${name(characterId)} ${why}`, status: 'applied' });
+    if (live)
+      actions.push({
+        type: 'rebuild-actor',
+        id: newId(),
+        characterId,
+        summary: `Rebuilding ${name(characterId)} ${why}`,
+        status: 'applied',
+      });
   };
   const regen = (index: number, what: string) =>
-    actions.push({ type: 'regenerate-world', id: newId(), sceneIndex: index, summary: `Regenerate scene ${index + 1}'s world ${what}`, status: 'needs-confirm', cost: REGEN_COST });
+    actions.push({
+      type: 'regenerate-world',
+      id: newId(),
+      sceneIndex: index,
+      summary: `Regenerate scene ${index + 1}'s world ${what}`,
+      status: 'needs-confirm',
+      cost: REGEN_COST,
+    });
 
   // ---- attachments: whose photo, which set ------------------------------------------------------
   for (const a of input.attachments) {
@@ -103,15 +143,41 @@ export function mockChatReply(input: RuleInput): RuleResult {
         ...(live ? { note: 'Takes effect when the world is regenerated.' } : {}),
       });
       if (live) regen(scene.index, 'from the photo');
-    } else notes.push(`I couldn't tell who or what ${a.name ?? 'the photo'} shows: pick a target on its chip, or say “this is Maya” / “use this for scene 2”.`);
+    } else
+      notes.push(
+        `I couldn't tell who or what ${a.name ?? 'the photo'} shows: pick a target on its chip, or say “this is Maya” / “use this for scene 2”.`,
+      );
   }
 
   // ---- text ---------------------------------------------------------------------------------------
-  const patch = (target: string, field: string, before: unknown, after: unknown, summary: string, effect?: string) =>
-    actions.push({ type: 'plan-patch', id: newId(), target, field, before, after, summary, status: 'applied', ...(effect ? { effect } : {}) });
+  const patch = (
+    target: string,
+    field: string,
+    before: unknown,
+    after: unknown,
+    summary: string,
+    effect?: string,
+  ) =>
+    actions.push({
+      type: 'plan-patch',
+      id: newId(),
+      target,
+      field,
+      before,
+      after,
+      summary,
+      status: 'applied',
+      ...(effect ? { effect } : {}),
+    });
   const revoice = (lineIds: string[]) => {
     if (live && lineIds.length)
-      actions.push({ type: 'revoice', id: newId(), lineIds, summary: `Re-voicing ${lineIds.length} line${lineIds.length === 1 ? '' : 's'}`, status: 'applied' });
+      actions.push({
+        type: 'revoice',
+        id: newId(),
+        lineIds,
+        summary: `Re-voicing ${lineIds.length} line${lineIds.length === 1 ? '' : 's'}`,
+        status: 'applied',
+      });
   };
   const setLine = (lineId: string, words: string) => {
     for (const s of plan.scenes) {
@@ -119,7 +185,14 @@ export function mockChatReply(input: RuleInput): RuleResult {
       if (!line) continue;
       const before = line.text;
       line.text = words;
-      patch(`line:${lineId}`, 'text', before, words, `${name(line.characterId)}'s line in scene ${s.index + 1} now reads “${words}”`, live ? 're-voices 1 line' : undefined);
+      patch(
+        `line:${lineId}`,
+        'text',
+        before,
+        words,
+        `${name(line.characterId)}'s line in scene ${s.index + 1} now reads “${words}”`,
+        live ? 're-voices 1 line' : undefined,
+      );
       revoice([lineId]);
       return true;
     }
@@ -130,7 +203,10 @@ export function mockChatReply(input: RuleInput): RuleResult {
   const byName = [...plan.characters].sort((a, b) => b.name.length - a.name.length);
   // make <Name> taller / shorter / older / <adjectives>
   for (const c of byName) {
-    const m = new RegExp(`^make\\s+(?:${escapeRe(c.name)}|${escapeRe(c.id)})\\s+(.+?)${END}`, 'i').exec(text);
+    const m = new RegExp(
+      `^make\\s+(?:${escapeRe(c.name)}|${escapeRe(c.id)})\\s+(.+?)${END}`,
+      'i',
+    ).exec(text);
     if (!m) continue;
     matched = true;
     const parts = m[1]!.split(/\s*(?:,|\band\b)\s*/i).filter(Boolean);
@@ -139,15 +215,35 @@ export function mockChatReply(input: RuleInput): RuleResult {
       const hm = /^(?:a (?:bit|little) |much |slightly )?(taller|shorter)$/i.exec(part);
       if (hm) {
         const before = c.heightMeters ?? DEFAULT_HEIGHT_M;
-        const after = Math.round(Math.min(2.3, Math.max(0.9, before + (hm[1]!.toLowerCase() === 'taller' ? 0.1 : -0.1))) * 100) / 100;
+        const after =
+          Math.round(
+            Math.min(
+              2.3,
+              Math.max(0.9, before + (hm[1]!.toLowerCase() === 'taller' ? 0.1 : -0.1)),
+            ) * 100,
+          ) / 100;
         c.heightMeters = after;
-        patch(`character:${c.id}`, 'heightMeters', before, after, `${name(c.id)} is now ${after.toFixed(2)} m`, live ? `rebuilds ${name(c.id)}` : undefined);
+        patch(
+          `character:${c.id}`,
+          'heightMeters',
+          before,
+          after,
+          `${name(c.id)} is now ${after.toFixed(2)} m`,
+          live ? `rebuilds ${name(c.id)}` : undefined,
+        );
       } else adjectives.push(part);
     }
     if (adjectives.length) {
       const before = c.description;
       c.description = `${before.replace(/[\s.]+$/, '')}. ${cap(adjectives.join(', '))}.`;
-      patch(`character:${c.id}`, 'description', before, c.description, `${name(c.id)} is now ${adjectives.join(' and ')}`, live ? `rebuilds ${name(c.id)}` : undefined);
+      patch(
+        `character:${c.id}`,
+        'description',
+        before,
+        c.description,
+        `${name(c.id)} is now ${adjectives.join(' and ')}`,
+        live ? `rebuilds ${name(c.id)}` : undefined,
+      );
     }
     rebuild(c.id, `(${parts.join(', ')})`);
     break;
@@ -155,9 +251,15 @@ export function mockChatReply(input: RuleInput): RuleResult {
 
   if (!matched) {
     // line <id>: '…'
-    const byId = new RegExp(`^line\\s+([\\w-]+)\\s*(?::|is|should be|becomes|=)?\\s*${QO}(.+)${QC}${END}`, 'i').exec(text);
+    const byId = new RegExp(
+      `^line\\s+([\\w-]+)\\s*(?::|is|should be|becomes|=)?\\s*${QO}(.+)${QC}${END}`,
+      'i',
+    ).exec(text);
     // <Name>'s line N is '…' / <Name>'s second line is '…'
-    const nth = new RegExp(`^(.+?)['’]s\\s+(?:line\\s+(\\d+)|(${ORDINALS.join('|')}|last)\\s+line)\\s*(?:is|should be|becomes|=|:)\\s*${QO}(.+)${QC}${END}`, 'i').exec(text);
+    const nth = new RegExp(
+      `^(.+?)['’]s\\s+(?:line\\s+(\\d+)|(${ORDINALS.join('|')}|last)\\s+line)\\s*(?:is|should be|becomes|=|:)\\s*${QO}(.+)${QC}${END}`,
+      'i',
+    ).exec(text);
     // <Name> says '…'
     const says = new RegExp(`^(.+?)\\s+says\\s*:?\\s*${QO}(.+)${QC}${END}`, 'i').exec(text);
     const voice = /^(.+?)['’]s\s+voice\b(.*)$/i.exec(text);
@@ -169,10 +271,19 @@ export function mockChatReply(input: RuleInput): RuleResult {
     } else if (nth || says) {
       matched = true;
       const c = findCharacter(plan, (nth ?? says)![1]!);
-      if (!c) notes.push(`I don't know ${(nth ?? says)![1]}; the characters are ${plan.characters.map((x) => displayName(x.name)).join(', ')}.`);
+      if (!c)
+        notes.push(
+          `I don't know ${(nth ?? says)![1]}; the characters are ${plan.characters.map((x) => displayName(x.name)).join(', ')}.`,
+        );
       else {
         const lines = linesOf(c.id);
-        const k = nth ? (nth[2] ? Number(nth[2]) : nth[3]!.toLowerCase() === 'last' ? lines.length : ORDINALS.indexOf(nth[3]!.toLowerCase()) + 1) : 1;
+        const k = nth
+          ? nth[2]
+            ? Number(nth[2])
+            : nth[3]!.toLowerCase() === 'last'
+              ? lines.length
+              : ORDINALS.indexOf(nth[3]!.toLowerCase()) + 1
+          : 1;
         const line = lines[k - 1];
         if (line) setLine(line.id, (nth ? nth[4] : says![2])!);
         else notes.push(`${name(c.id)} has ${lines.length} line${lines.length === 1 ? '' : 's'}.`);
@@ -186,7 +297,14 @@ export function mockChatReply(input: RuleInput): RuleResult {
         else {
           const before = c.voice.id;
           c.voice = { ...c.voice, id };
-          patch(`character:${c.id}`, 'voice.id', before, id, `${name(c.id)} now speaks with the ${id} voice`, live ? `re-voices ${name(c.id)}'s lines` : undefined);
+          patch(
+            `character:${c.id}`,
+            'voice.id',
+            before,
+            id,
+            `${name(c.id)} now speaks with the ${id} voice`,
+            live ? `re-voices ${name(c.id)}'s lines` : undefined,
+          );
           revoice(linesOf(c.id).map((l) => l.id));
         }
       }
@@ -198,7 +316,14 @@ export function mockChatReply(input: RuleInput): RuleResult {
         const words = scene[2]!;
         const before = s.worldPrompt;
         s.worldPrompt = `${cap(words)}. ${before}`.slice(0, 600);
-        patch(`scene:${s.index + 1}`, 'worldPrompt', before, s.worldPrompt, `Scene ${s.index + 1} is now ${words}`, live ? 'needs a new world' : 'the world is generated from it');
+        patch(
+          `scene:${s.index + 1}`,
+          'worldPrompt',
+          before,
+          s.worldPrompt,
+          `Scene ${s.index + 1} is now ${words}`,
+          live ? 'needs a new world' : 'the world is generated from it',
+        );
         if (live) regen(s.index, `as ${words}`);
       }
     }
@@ -206,10 +331,18 @@ export function mockChatReply(input: RuleInput): RuleResult {
 
   if (!matched && !actions.length && /\b(generate|go ahead|build it|start)\b/i.test(text)) {
     matched = true;
-    if (live) notes.push('This project is already generated. Tell me what to change and I rebuild what it touches.');
+    if (live)
+      notes.push(
+        'This project is already generated. Tell me what to change and I rebuild what it touches.',
+      );
     else {
       generate = true;
-      actions.push({ type: 'generate', id: newId(), summary: `Generating ${plan.scenes.length} scenes: worlds, actors and voices`, status: 'applied' });
+      actions.push({
+        type: 'generate',
+        id: newId(),
+        summary: `Generating ${plan.scenes.length} scenes: worlds, actors and voices`,
+        status: 'applied',
+      });
     }
   }
 
@@ -235,7 +368,10 @@ export interface FakeOptions {
   /** The offline parser (server/pipeline/fountain.ts mockPlan in the browser; any plan in tests). */
   makePlan(screenplay: string, title?: string): ScreenplayPlan | Promise<ScreenplayPlan>;
   /** Image preparation before "upload" (default: chat-client's canvas PNG). */
-  prepare?(image: Blob, name?: string): Promise<{ blob: Blob; name: string; width?: number; height?: number }>;
+  prepare?(
+    image: Blob,
+    name?: string,
+  ): Promise<{ blob: Blob; name: string; width?: number; height?: number }>;
   /** A real server whose projects are listed and adopted when the chat opens one. */
   real?: Pick<ChatApi, 'listProjects' | 'getPlan' | 'fileUrl'> | null;
   /** "Thinking" time of POST chat, ms. */
@@ -268,7 +404,8 @@ export class FakeChatApi implements ChatApi {
   constructor(private opts: FakeOptions) {}
 
   private now = () => new Date().toISOString();
-  private id = (p: string) => `${p}${(++this.seq).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  private id = (p: string) =>
+    `${p}${(++this.seq).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   private get latency() {
     return this.opts.latencyMs ?? 700;
   }
@@ -293,7 +430,8 @@ export class FakeChatApi implements ChatApi {
     if (!p.regenerating.size) return p.status;
     const s = clone(p.status);
     for (const job of s.scenes)
-      if (p.regenerating.has(job.sceneIndex)) job.stages.world = { status: 'running', note: 'fake chat: regenerating' };
+      if (p.regenerating.has(job.sceneIndex))
+        job.stages.world = { status: 'running', note: 'fake chat: regenerating' };
     return s;
   }
 
@@ -301,7 +439,9 @@ export class FakeChatApi implements ChatApi {
     const p = this.projects.get(id);
     if (p) return p;
     const real = this.opts.real;
-    const status = real ? (await real.listProjects().catch(() => [])).find((x) => x.id === id) : undefined;
+    const status = real
+      ? (await real.listProjects().catch(() => [])).find((x) => x.id === id)
+      : undefined;
     if (!real || !status) throw new Error(`no such project (fake chat): ${id}`);
     // adopt: the real plan, a thread that starts with its plan card; the project is live
     const plan = status.parse.status === 'done' ? await real.getPlan(id).catch(() => null) : null;
@@ -315,7 +455,13 @@ export class FakeChatApi implements ChatApi {
       regenerating: new Set(),
     };
     this.projects.set(id, adopted);
-    if (plan) this.append(adopted, { role: 'assistant', text: planSummary(plan), planCard: true, source: 'mock' });
+    if (plan)
+      this.append(adopted, {
+        role: 'assistant',
+        text: planSummary(plan),
+        planCard: true,
+        source: 'mock',
+      });
     return adopted;
   }
 
@@ -362,7 +508,8 @@ export class FakeChatApi implements ChatApi {
       bytes: ready.blob.size,
     };
     p.uploads.set(att.id, att);
-    if (typeof URL.createObjectURL === 'function') p.urls.set(att.file, URL.createObjectURL(ready.blob));
+    if (typeof URL.createObjectURL === 'function')
+      p.urls.set(att.file, URL.createObjectURL(ready.blob));
     return clone(att);
   }
 
@@ -378,7 +525,15 @@ export class FakeChatApi implements ChatApi {
       draft,
       chatRevision: 0,
     };
-    const p: FakeProject = { status, plan: null, chat: { version: 1, revision: 0, messages: [] }, uploads: new Map(), urls: new Map(), adopted: false, regenerating: new Set() };
+    const p: FakeProject = {
+      status,
+      plan: null,
+      chat: { version: 1, revision: 0, messages: [] },
+      uploads: new Map(),
+      urls: new Map(),
+      adopted: false,
+      regenerating: new Set(),
+    };
     this.projects.set(id, p);
     this.append(p, { role: 'user', text: screenplay });
     void (async () => {
@@ -395,15 +550,27 @@ export class FakeChatApi implements ChatApi {
           stages: {
             parse: { status: 'done' },
             world: { status: 'pending' },
-            actors: s.characterIds.length ? { status: 'pending' } : { status: 'skipped', note: 'no characters' },
-            tts: s.dialogue.length ? { status: 'pending' } : { status: 'skipped', note: 'no dialogue' },
+            actors: s.characterIds.length
+              ? { status: 'pending' }
+              : { status: 'skipped', note: 'no characters' },
+            tts: s.dialogue.length
+              ? { status: 'pending' }
+              : { status: 'skipped', note: 'no dialogue' },
             manifest: { status: 'pending' },
           },
         }));
-        this.append(p, { role: 'assistant', text: planSummary(plan), planCard: true, source: 'mock' });
+        this.append(p, {
+          role: 'assistant',
+          text: planSummary(plan),
+          planCard: true,
+          source: 'mock',
+        });
         if (!draft) this.runGeneration(p);
       } catch (err) {
-        p.status.parse = { status: 'failed', note: err instanceof Error ? err.message : String(err) };
+        p.status.parse = {
+          status: 'failed',
+          note: err instanceof Error ? err.message : String(err),
+        };
       }
     })();
     return clone(status);
@@ -422,7 +589,12 @@ export class FakeChatApi implements ChatApi {
   /** world / actors / tts run, then the manifest; a fake project has nothing to open. */
   private runGeneration(p: FakeProject) {
     p.status.draft = false;
-    const set = (job: SceneJob, stage: keyof SceneJob['stages'], status: 'running' | 'done', note?: string) => {
+    const set = (
+      job: SceneJob,
+      stage: keyof SceneJob['stages'],
+      status: 'running' | 'done',
+      note?: string,
+    ) => {
       if (job.stages[stage].status === 'skipped') return;
       job.stages[stage] = { status, ...(note ? { note } : {}) };
     };
@@ -455,19 +627,37 @@ export class FakeChatApi implements ChatApi {
       if (!a) throw new Error(`unknown attachment ${r.id} (HTTP 400)`);
       return { ...a, ...(r.hint ? { hint: r.hint } : {}) };
     });
-    this.append(p, { role: 'user', text: req.text, ...(attachments.length ? { attachments } : {}) });
+    this.append(p, {
+      role: 'user',
+      text: req.text,
+      ...(attachments.length ? { attachments } : {}),
+    });
     await sleep(this.latency);
     const live = !p.status.draft;
-    const out = mockChatReply({ plan: p.plan, live, text: req.text, attachments, newId: () => this.id('a') });
+    const out = mockChatReply({
+      plan: p.plan,
+      live,
+      text: req.text,
+      attachments,
+      newId: () => this.id('a'),
+    });
     p.plan = out.plan;
     if (out.generate) this.runGeneration(p);
-    this.append(p, { role: 'assistant', text: out.reply, actions: out.actions, source: 'mock', costUsd: 0 });
+    this.append(p, {
+      role: 'assistant',
+      text: out.reply,
+      actions: out.actions,
+      source: 'mock',
+      costUsd: 0,
+    });
     return this.response(p);
   }
 
   async confirm(id: string, messageId: string, actionId: string): Promise<ChatResponse> {
     const p = await this.project(id);
-    const action = p.chat.messages.find((m) => m.id === messageId)?.actions?.find((a) => a.id === actionId);
+    const action = p.chat.messages
+      .find((m) => m.id === messageId)
+      ?.actions?.find((a) => a.id === actionId);
     if (!action) throw new Error('no such action (HTTP 404)');
     if (action.status !== 'needs-confirm') return this.response(p);
     action.status = 'running';
@@ -489,7 +679,8 @@ export class FakeChatApi implements ChatApi {
 export function createFakeChatApi(real: ChatApi): FakeChatApi {
   return new FakeChatApi({
     // the offline parser is plain TS; only the fake pulls it into the page
-    makePlan: async (text, title) => (await import('../../../server/pipeline/fountain.ts')).mockPlan(text, { title }),
+    makePlan: async (text, title) =>
+      (await import('../../../server/pipeline/fountain.ts')).mockPlan(text, { title }),
     real,
   });
 }

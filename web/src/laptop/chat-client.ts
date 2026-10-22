@@ -61,7 +61,10 @@ const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 /** Size that fits `max` on the long side, never upscaled. */
 export function fitWithin(width: number, height: number, max = MAX_IMAGE_SIDE) {
   const scale = Math.min(1, max / Math.max(width, height));
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 /** "Kitchen photo.jpeg" → "Kitchen photo.png" (the bytes are re-encoded as PNG). */
@@ -82,7 +85,9 @@ export async function prepareImage(file: Blob, name?: string): Promise<PreparedI
   const label = name || (file instanceof File ? file.name : '') || 'The image';
   if (file.type && !file.type.startsWith('image/')) throw new Error(`${label} is not an image.`);
   if (file.size > MAX_INPUT_BYTES)
-    throw new Error(`${label} is ${mb(file.size)}; images up to ${mb(MAX_INPUT_BYTES)} can be attached.`);
+    throw new Error(
+      `${label} is ${mb(file.size)}; images up to ${mb(MAX_INPUT_BYTES)} can be attached.`,
+    );
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
@@ -101,13 +106,23 @@ export async function prepareImage(file: Blob, name?: string): Promise<PreparedI
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error(`${label} could not be encoded as PNG.`);
   if (blob.size > MAX_UPLOAD_BYTES)
-    throw new Error(`${label} is ${mb(blob.size)} as a ${width}×${height} PNG; the upload limit is 12 MB.`);
+    throw new Error(
+      `${label} is ${mb(blob.size)} as a ${width}×${height} PNG; the upload limit is 12 MB.`,
+    );
   prepared.add(blob);
-  return { blob, name: pngName(name ?? (file instanceof File ? file.name : undefined)), width, height };
+  return {
+    blob,
+    name: pngName(name ?? (file instanceof File ? file.name : undefined)),
+    width,
+    height,
+  };
 }
 
 /** prepareImage, skipped for a blob it already produced. */
-export async function ensurePrepared(image: Blob, name?: string): Promise<PreparedImage | { blob: Blob; name: string }> {
+export async function ensurePrepared(
+  image: Blob,
+  name?: string,
+): Promise<PreparedImage | { blob: Blob; name: string }> {
   if (prepared.has(image)) return { blob: image, name: pngName(name) };
   return prepareImage(image, name);
 }
@@ -118,7 +133,8 @@ export class HttpChatApi implements ChatApi {
   readonly fake = false;
   listProjects = listProjects;
   getPlan = getPlan;
-  fileUrl = (id: string, file: string) => (/^(blob:|data:|\/|https?:)/.test(file) ? file : api.upload(id, file));
+  fileUrl = (id: string, file: string) =>
+    /^(blob:|data:|\/|https?:)/.test(file) ? file : api.upload(id, file);
   getChat = getChat;
   send = sendChat;
   confirm = confirmChatAction;
@@ -127,7 +143,10 @@ export class HttpChatApi implements ChatApi {
   createProject = createProject;
 
   async uploadImage(id: string, image: File | Blob, name?: string) {
-    const ready = await ensurePrepared(image, name ?? (image instanceof File ? image.name : undefined));
+    const ready = await ensurePrepared(
+      image,
+      name ?? (image instanceof File ? image.name : undefined),
+    );
     return uploadAttachment(id, ready.blob, ready.name);
   }
 }

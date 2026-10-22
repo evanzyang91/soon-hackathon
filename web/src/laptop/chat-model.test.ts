@@ -4,7 +4,10 @@ import { mockPlan } from '../../../server/pipeline/fountain.ts';
 import { fitWithin, pngName } from './chat-client';
 import { patchDiff, planSummary, scriptOutline, targetOptions } from './chat-model';
 
-const FIXTURE = readFileSync(new URL('../../../fixtures/screenplay.fountain', import.meta.url), 'utf8');
+const FIXTURE = readFileSync(
+  new URL('../../../fixtures/screenplay.fountain', import.meta.url),
+  'utf8',
+);
 
 describe('chat helpers', () => {
   it('offers every character and scene as an attachment target, before and after the plan', () => {
@@ -21,14 +24,28 @@ describe('chat helpers', () => {
       characters: ['THEO', 'MAYA'],
       headings: ['EXT. CITY STREET - NIGHT', 'INT. KITCHEN - MORNING', 'EXT. ROOFTOP - DUSK'],
     });
-    expect(targetOptions(null, FIXTURE)[1]).toEqual({ value: 'character:theo', label: 'Theo', group: 'character' });
+    expect(targetOptions(null, FIXTURE)[1]).toEqual({
+      value: 'character:theo',
+      label: 'Theo',
+      group: 'character',
+    });
   });
 
   it('summarises the plan and a patch', () => {
     expect(planSummary(mockPlan(FIXTURE))).toBe('Planned 3 scenes and 2 characters: Theo, Maya.');
-    const base = { type: 'plan-patch' as const, id: 'a', target: 'character:theo', summary: '', status: 'applied' as const };
-    expect(patchDiff({ ...base, field: 'heightMeters', before: 1.7, after: 1.8 })).toBe('1.70 m → 1.80 m');
-    expect(patchDiff({ ...base, field: 'description', before: 'x', after: 'y'.repeat(80) })).toBeNull();
+    const base = {
+      type: 'plan-patch' as const,
+      id: 'a',
+      target: 'character:theo',
+      summary: '',
+      status: 'applied' as const,
+    };
+    expect(patchDiff({ ...base, field: 'heightMeters', before: 1.7, after: 1.8 })).toBe(
+      '1.70 m → 1.80 m',
+    );
+    expect(
+      patchDiff({ ...base, field: 'description', before: 'x', after: 'y'.repeat(80) }),
+    ).toBeNull();
   });
 
   it('fits uploads within 1600 px on the long side and names them .png', () => {
