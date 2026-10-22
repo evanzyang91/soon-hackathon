@@ -154,6 +154,16 @@ describe('buildActor', () => {
     expect(calls).toEqual([]);
   });
 
+  it('every body kind stands at the character’s planned height (1.7 when the plan has none)', async () => {
+    const tall = { ...maya, heightMeters: 1.84 };
+    await writeSequence(join(projectDir, 'actors', 'maya', 'sequence'), 1.62);
+    const seq = await buildActor({ ...opts(), character: tall }, deps(async () => ({ ok: false, code: 1 })));
+    expect(seq).toMatchObject({ kind: 'splat-sequence', heightMeters: 1.84 });
+    const mannequin = await buildActor({ ...opts(true), character: tall }, deps(async () => ({ ok: true, code: 0 })));
+    expect(mannequin).toMatchObject({ kind: 'glb-humanoid', heightMeters: 1.84 });
+    expect(await buildActor(opts(true), deps(async () => ({ ok: true, code: 0 })))).toMatchObject({ heightMeters: 1.7 });
+  });
+
   it('real path: reference -> run_actor -> splat-sequence', async () => {
     const asset = await buildActor(
       opts(),
