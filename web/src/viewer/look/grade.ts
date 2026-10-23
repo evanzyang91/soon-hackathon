@@ -163,7 +163,7 @@ export const LUT_PRESETS: Record<LutName, LutParams> = {
     highlightTint: [0.05, 0.03, -0.04],
   }),
   // ---- genre LUTs (docs/PLAN-v3.md), tuned on the four real Marble worlds -------------------
-  // (scripts/genre-looks.ts --luts; grade.test.ts pins what each one does). Grey 0.5 → the
+  // (scripts/genre-looks.ts --luts renders them all at 100 %). Grey 0.5 → the
   // colour in brackets at 100 %.
   // aged print: nearly monochrome, brown not yellow (G halfway between R and B), soft brown
   // blacks, a little warmth in the highlights [0.58 0.48 0.32]
