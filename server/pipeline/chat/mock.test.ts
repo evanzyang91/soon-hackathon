@@ -111,11 +111,11 @@ describe('mock chat planner', () => {
     expect(a.value).not.toMatch(/kitchen/i);
     const b = plan('Can we do a diner instead of the kitchen?').actions[0]!;
     expect(b).toMatchObject({ target: 'scene:1', field: 'worldPrompt' });
-    expect(b.value).toMatch(/interior of a diner/);
+    expect(b.value).toMatch(/interior of a diner/i);
     // the heading's place ("ROOFTOP") is swapped where the prompt names it; the light stays
     const c = plan('scene 3 should be a rainy rooftop garden').actions[0]!;
     expect(c).toMatchObject({ target: 'scene:2', field: 'worldPrompt' });
-    expect(c.value).toMatch(/exterior rainy rooftop garden, .*dusk light/);
+    expect(c.value).toMatch(/exterior rainy rooftop garden, .*dusk light/i);
   });
 
   it("voices: a named voice id, or 'swap' picks the next free one", () => {

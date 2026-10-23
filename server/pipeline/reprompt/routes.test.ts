@@ -58,16 +58,19 @@ const reprompt = async (body: object, n = 0) => {
 
 describe('POST reprompt (mock planner)', () => {
   it('a look prompt is applied at once: edits.json gets the op, a history entry and a new revision', async () => {
+    // the manifest stage seeded the plan's look (revision 1, look-seed.ts) before any prompt
+    const seeded = SceneEdits.parse(JSON.parse(await readFile(join(store.projectDir(id), 'scene-0/edits.json'), 'utf8')));
+    expect(seeded.revision).toBe(1);
     const { status, body } = await reprompt({ prompt: 'warmer and more contrast' });
     expect(status).toBe(200);
     expect(body.plan.scope).toBe('look');
     expect(body.applied).toHaveLength(1);
     const saved = SceneEdits.parse(body.edits);
-    expect(saved.revision).toBe(1);
+    expect(saved.revision).toBe(2);
     expect(saved.edits.map((e) => e.kind)).toEqual(['look']);
-    expect(saved.history[0]).toMatchObject({ prompt: 'warmer and more contrast', appliedOpIds: body.applied });
+    expect(saved.history.at(-1)).toMatchObject({ prompt: 'warmer and more contrast', appliedOpIds: body.applied });
     const onDisk = SceneEdits.parse(JSON.parse(await readFile(join(store.projectDir(id), 'scene-0/edits.json'), 'utf8')));
-    expect(onDisk.revision).toBe(1);
+    expect(onDisk.revision).toBe(2);
   });
 
   it('transform of an actor from the screenplay', async () => {
