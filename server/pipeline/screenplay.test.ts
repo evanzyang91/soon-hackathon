@@ -218,15 +218,7 @@ function draft(overrides: { badSpeaker?: boolean } = {}) {
     look: {
       preset: 'night-street',
       mood: 'wet, sodium-lit, lonely',
-      exposure: null as number | null,
-      temperature: -0.3 as number | null,
-      saturation: null,
-      contrast: null,
-      bloom: null,
-      vignette: null,
-      fog: null as { color: string; density: number } | null,
-      skyTint: null as { color: string; strength: number } | null,
-      lut: null,
+      adjust: [{ name: 'temperature', value: -0.3, text: '' }],
     },
     characterIds: ['maya', 'theo'],
     dialogue: lines.map(([characterId, text]) => ({ characterId, text, parenthetical: null })),
@@ -399,11 +391,12 @@ describe('Claude path: style, looks and the new prop kinds', () => {
 
   it('clamps out-of-range adjustments, drops a fog without a hex colour, trims an over-long style', () => {
     const d = draft();
-    Object.assign(d.scenes[0]!.look, {
-      exposure: 5,
-      fog: { color: 'grey', density: 0.2 },
-      skyTint: { color: '#ABC', strength: 3 },
-    });
+    d.scenes[0]!.look.adjust.push(
+      { name: 'exposure', value: 5, text: '' },
+      { name: 'fog', value: 0.2, text: 'grey' },
+      { name: 'Sky tint', value: 3, text: '#ABC' },
+      { name: 'flare', value: 1, text: '' },
+    );
     d.style.worldStyle = `Photoreal ${'very '.repeat(60)}cinematic`;
     const r = checkDraft(JSON.stringify(d), FIXTURE);
     expect(r.problems).toEqual([]);
@@ -415,6 +408,7 @@ describe('Claude path: style, looks and the new prop kinds', () => {
     expect(r.notes).toEqual(
       expect.arrayContaining([
         'scenes[0].look.exposure 5 clamped to 3',
+        'scenes[0].look.flare: not an adjustment; dropped',
         expect.stringMatching(/scenes\[0\]\.look\.fog dropped/),
         expect.stringMatching(/^style\.worldStyle trimmed/),
       ]),
@@ -423,7 +417,8 @@ describe('Claude path: style, looks and the new prop kinds', () => {
 
   it('a slipped preset, LUT or prop kind is repaired with a note, never a failed plan', () => {
     const d = draft();
-    Object.assign(d.scenes[0]!.look, { preset: 'Golden Hour', lut: 'sepia-ish' });
+    d.scenes[0]!.look.preset = 'Golden Hour';
+    d.scenes[0]!.look.adjust.push({ name: 'lut', value: 0, text: 'sepia-ish' });
     Object.assign(d.scenes[1]!.look, { preset: 'sunset glow', mood: 'warm' });
     d.scenes[0]!.dynamics[0]!.kind = 'Stagecoach';
     const r = checkDraft(JSON.stringify(d), FIXTURE);
@@ -467,6 +462,11 @@ describe('Claude path: style, looks and the new prop kinds', () => {
     expect(kinds).toBe(`one of: ${DynamicElementKind.options.join(', ')}`);
     expect(presets).toBe(`one of: ${LookPresetName.options.join(', ')}`);
     for (const p of LookPresetName.options) expect(req!.system).toContain(`  ${p}: `);
+    // nullable fields compile into a large grammar: nine of them per scene made the API answer 400
+    // "compiled grammar is too large", so the look's adjustments are a list and parenthetical
+    // stays the only union in the schema
+    expect(Object.keys(scene.look!.properties!)).toEqual(['preset', 'mood', 'adjust']);
+    expect(JSON.stringify(req!.schema).match(/"null"/g)).toHaveLength(1);
     expect(req!.system).toMatch(/Dragon a closed loop of 10-14 points 15-30 m up/);
     expect(req!.system).toMatch(/open with the render style from worldStyle/);
   });
