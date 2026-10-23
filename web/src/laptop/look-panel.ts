@@ -13,13 +13,17 @@ import type { SceneState } from '@shared/protocol';
 import { LightGizmos } from '../viewer/look/gizmos';
 import { clampFocus, focalLengthMm, FOCUS_MAX_M, FOCUS_MIN_M, viewDepth } from '../viewer/look/lens';
 import { MAX_SPLAT_LIGHTS } from '../viewer/look/lights';
+import type { LookSeed } from '@shared/schema';
 import {
-  applyFullPreset,
   applyLutPreset,
-  FULL_PRESETS,
+  LOOK_PRESET_GROUPS,
+  LOOK_PRESET_LABELS,
   LUT_LABELS,
+  presetLook,
   resetGroup,
+  seedToLook,
   type LookGroup,
+  type LookPresetName,
 } from '../viewer/look/presets';
 import { LookSession } from '../viewer/look/session';
 import type { SceneRuntime } from '../viewer/world';
@@ -38,6 +42,8 @@ const HEARTBEAT_MS = 250;
 const LIVE_LOOK_SPACING_MS = HEARTBEAT_MS / 2;
 const HEARTBEAT_GRACE_MS = 60;
 const TAB_KEY = 'previz:rightTab';
+/** Look names run to "Preset label · mood words" (seedToLook caps them at 80). */
+const NAME_MAX = 80;
 
 // ---- slider specs ------------------------------------------------------------------------------
 
@@ -255,11 +261,13 @@ export function mountLookPanel(director: Director): LookPanel {
     gizmos.group.removeFromParent();
     runtime = rt;
     if (!rt || !director.projectId || director.sceneIndex == null) {
+      sceneSeed = null;
       session.close();
       build();
       return;
     }
     overrides = storageGet<Record<string, Dof>>(overridesKey()) ?? {};
+    sceneSeed = rt.manifest.plan.look ?? null;
     rt.scene.add(gizmos.group);
     // the phone's view (PiP, view-from-phone, stills from the phone) uses the active camera's lens
     rt.look.viewLook = (camera) =>
@@ -404,29 +412,89 @@ export function mountLookPanel(director: Director): LookPanel {
   }
 
   // header: name, presets, undo/redo, compare
-  const name = h('input', { class: 'look-name', placeholder: 'Look name', maxlength: 60, 'data-testid': 'look-name', spellcheck: 'false' });
+  // a one-line name that wraps to a second line instead of hiding the end of a long name
+  // ("Candlelit · cold, eerie, damp stone"); Enter commits, pasted newlines become spaces
+  const name = h('textarea', { class: 'look-name', rows: 1, placeholder: 'Look name', maxlength: NAME_MAX, 'data-testid': 'look-name', spellcheck: 'false' });
+  const fitName = () => {
+    // hidden (another tab is open): measured again when it is shown (the observer below)
+    if (!name.clientWidth) return;
+    name.style.height = 'auto';
+    name.style.height = `${name.scrollHeight + 2}px`;
+  };
+  let fitWidth = 0;
+  new ResizeObserver(() => {
+    if (!name.clientWidth || name.clientWidth === fitWidth) return;
+    fitWidth = name.clientWidth;
+    fitName();
+  }).observe(name);
+  name.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    name.blur();
+  });
   name.addEventListener('input', () => {
     const l = current();
-    if (l) change({ ...l, name: name.value.slice(0, 60) || 'Untitled look' }, 'name');
+    const v = name.value.replace(/\s*\n\s*/g, ' ');
+    if (v !== name.value) name.value = v;
+    fitName();
+    if (l) change({ ...l, name: v.slice(0, NAME_MAX) || 'Untitled look' }, 'name');
   });
   name.addEventListener('change', () => session.seal());
   syncers.push(() => {
     const l = current();
-    if (l && document.activeElement !== name) name.value = l.name;
+    if (l && document.activeElement !== name && name.value !== l.name) {
+      name.value = l.name;
+      fitName();
+    }
+    name.title = l?.name ?? '';
   });
+
+  // the planner's suggested look for the open scene (manifest.plan.look), one click away: the
+  // director can try presets and come back to it; lights and lens stay the director's
+  let sceneSeed: LookSeed | null = null;
+  const seedLook = (l: Look) => (sceneSeed ? seedToLook(sceneSeed, l) : null);
+  const applySceneLook = () => {
+    const l = current();
+    const next = l && seedLook(l);
+    if (!l || !next) return;
+    change(next, null);
+    session.seal();
+  };
+  const sceneBtn = h('button', { type: 'button', class: 'small look-scene', 'data-testid': 'look-scene', onclick: applySceneLook }, "Scene's look");
+  const sceneOpt = h('option', { value: 'scene', 'data-testid': 'look-preset-scene' }, "Scene's look");
+  const sceneGroup = h('optgroup', { label: 'Suggested by the plan' }, sceneOpt);
+  syncers.push(() => {
+    const l = current();
+    const seeded = l && seedLook(l);
+    sceneBtn.hidden = sceneGroup.hidden = !seeded;
+    sceneOpt.disabled = !seeded;
+    if (!seeded || !l) return;
+    sceneOpt.textContent = `Scene's look · ${seeded.name}`;
+    // lit when the look on screen is the plan's (nothing changed since it was applied)
+    const isScene = JSON.stringify(seeded) === JSON.stringify(l);
+    sceneBtn.classList.toggle('on', isScene);
+    sceneBtn.title = isScene
+      ? `This is the scene's suggested look: ${seeded.name}`
+      : `Back to the scene's suggested look: ${seeded.name} (keeps your lights and lens)`;
+  });
+
   const presets = h('select', { class: 'look-presets', 'data-testid': 'look-presets', title: 'Apply a preset' });
-  presets.append(h('option', { value: '' }, 'Presets…'));
-  const looksGroup = h('optgroup', { label: 'Looks' });
-  FULL_PRESETS.forEach((p, i) => looksGroup.append(h('option', { value: `look:${i}` }, p.name)));
-  const lutGroup = h('optgroup', { label: 'LUT' });
+  presets.append(h('option', { value: '' }, 'Presets…'), sceneGroup);
+  for (const g of LOOK_PRESET_GROUPS) {
+    const og = h('optgroup', { label: g.label });
+    for (const p of g.presets) og.append(h('option', { value: `look:${p}` }, LOOK_PRESET_LABELS[p]));
+    presets.append(og);
+  }
+  const lutGroup = h('optgroup', { label: 'LUT only' });
   for (const [k, label] of Object.entries(LUT_LABELS)) lutGroup.append(h('option', { value: `lut:${k}` }, label));
-  presets.append(looksGroup, lutGroup);
+  presets.append(lutGroup);
   presets.addEventListener('change', () => {
     const l = current();
     const v = presets.value;
     presets.value = '';
     if (!l || !v) return;
-    if (v.startsWith('look:')) change(applyFullPreset(l, FULL_PRESETS[Number(v.slice(5))]!), null);
+    if (v === 'scene') return applySceneLook();
+    if (v.startsWith('look:')) change(presetLook(v.slice(5) as LookPresetName, l), null);
     else change(applyLutPreset(l, v.slice(4) as Look['lut']), null);
     session.seal();
   });
@@ -442,7 +510,7 @@ export function mountLookPanel(director: Director): LookPanel {
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) compare.addEventListener(ev, () => setCompare(false));
   header.append(
     h('div', { class: 'row' }, name, undoBtn, redoBtn),
-    h('div', { class: 'row' }, presets, h('span', { class: 'spacer' }), compare),
+    h('div', { class: 'row' }, presets, sceneBtn, h('span', { class: 'spacer' }), compare),
     status,
   );
 
@@ -736,6 +804,7 @@ export function mountLookPanel(director: Director): LookPanel {
     redoBtn.disabled = !session.history?.canRedo;
     compare.disabled = !runtime;
     presets.disabled = !runtime;
+    sceneBtn.disabled = !runtime;
     name.disabled = !runtime;
   }
 

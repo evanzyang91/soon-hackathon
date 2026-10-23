@@ -666,10 +666,33 @@ button.line.speaking {
   gap: 6px;
 }
 .look-name {
+  /* a textarea (so a long name wraps): the panel's font, not the code font textareas get */
+  font: inherit;
   font-weight: 600;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.3;
+  /* seedToLook names run to 80 characters: wrap onto a second line, never clip mid-word */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.look-scene.on {
+  background: #17324f;
+}
+/* a planner-seeded look name runs to 80 characters: the top bar shows the start of it */
+#top-look {
+  max-width: min(48ch, 32vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .look-presets {
-  max-width: 60%;
+  /* shrinks so Scene's look and Compare always fit beside it */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.look-head .row > button {
+  flex: none;
 }
 .look-compare {
   user-select: none;
