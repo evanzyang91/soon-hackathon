@@ -1,7 +1,7 @@
 // (b) Laptop director: Generate → the first ready scene opens by itself and renders the splat
 // world; dynamics move on Play; a dropped camera and a clicked dialogue line give a caption and
 // real WebAudio playback. Also records the headless frame rate (software GL) as an annotation.
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { FIXTURE, laptopState, pixelStats, watchPage } from './helpers.ts';
 
 test('generate → auto-opened scene renders, dynamics move, a line plays with a caption', async ({
@@ -34,6 +34,18 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   // (this project's rows: specs that run earlier, e.g. chat.spec, leave projects in the list)
   await expect(page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`)).toHaveCount(3);
   await expect(page.locator('#hud-title')).toHaveText('EXT. CITY STREET - NIGHT');
+
+  // the default start camera opens on the Wide master: both actors head to toe in the viewport
+  const atStart = await framing(page);
+  expect(atStart.camera).not.toEqual([0, 1.6, 0]);
+  for (const id of ['theo', 'maya'])
+    for (const p of [atStart.actors[id]!.eye, atStart.actors[id]!.feet])
+      expect(Math.max(Math.abs(p[0]!), Math.abs(p[1]!))).toBeLessThan(1);
+  // suggested shots are framed on the actors where they stand (viewer/shots.ts)
+  await expect(page.getByTestId('shot-row')).toHaveCount(5);
+  expect(
+    await page.getByTestId('shot-row').evaluateAll((rows) => rows.map((r) => (r as HTMLElement).dataset.shot)),
+  ).toEqual(['Wide master', 'Two-shot', "Over Theo's shoulder on Maya", 'Close-up Theo', 'Close-up Maya']);
 
   // frames keep coming at 1280x720; report the software-GL frame rate
   const f0 = s.mainFrames;
@@ -85,5 +97,51 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   // Chromium's audio thread is starved under SwiftShader load and sometimes renders silence.
   test.info().annotations.push({ type: 'voice peak level', description: voice.peak.toFixed(3) });
 
+  // a close-up flies to the actor's face (eyes mid-frame); "+" keeps it as a drop camera
+  const close = page.locator('[data-testid=shot-row][data-shot="Close-up Maya"]');
+  await close.getByTestId('shot-fly').click();
+  await expect
+    .poll(async () => {
+      const eye = (await framing(page)).actors.maya!.eye;
+      return Math.max(Math.abs(eye[0]!), Math.abs(eye[1]!));
+    }, { timeout: 20_000 })
+    .toBeLessThan(0.15);
+  await close.getByTestId('shot-add').click();
+  await expect(page.getByTestId('camera-row')).toHaveCount(2);
+  await expect(page.getByTestId('camera-row').last()).toContainText('Close-up Maya');
+
   expect(problems).toEqual([]);
 });
+
+/** The laptop camera's position and where each actor's eyes and feet land in its frame (NDC). */
+async function framing(page: Page) {
+  return page.evaluate(() => {
+    type V = { x: number; y: number; z: number; project(c: unknown): V };
+    const d = (
+      window as unknown as {
+        __previz: {
+          director: {
+            camera: { position: V & { toArray(): number[] }; updateMatrixWorld(): void };
+            runtime: {
+              actors: Map<string, { object: { position: V; userData: { heightMeters?: number } } }>;
+            };
+          };
+        };
+      }
+    ).__previz.director;
+    const cam = d.camera;
+    cam.updateMatrixWorld();
+    const Vec = cam.position.constructor as new (x: number, y: number, z: number) => V;
+    const at = (x: number, y: number, z: number) => {
+      const v = new Vec(x, y, z).project(cam);
+      return [v.x, v.y];
+    };
+    const actors: Record<string, { eye: number[]; feet: number[] }> = {};
+    for (const [id, a] of d.runtime.actors) {
+      const p = a.object.position;
+      const tall = a.object.userData.heightMeters ?? 1.7;
+      actors[id] = { eye: at(p.x, p.y + 0.93 * tall, p.z), feet: at(p.x, p.y, p.z) };
+    }
+    return { camera: cam.position.toArray().map((v) => Math.round(v * 1000) / 1000), actors };
+  });
+}

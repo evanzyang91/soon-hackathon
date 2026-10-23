@@ -46,12 +46,22 @@ const CHAT_KEY = 'previz:chat-project';
 const MAX_ATTACHMENTS = 12;
 const PAPERCLIP =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.2-8 8a5.2 5.2 0 0 1-7.4-7.4l8.4-8.4a3.4 3.4 0 0 1 4.9 4.9l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7"/></svg>';
-const EXAMPLES = [
-  'make Theo older and taller',
-  "Maya's second line is 'I let it go.'",
-  'scene 2 is a diner',
-  'a photo + “this is Maya”',
-];
+
+/**
+ * Example requests for THIS project, from its plan (its first characters, a real scene number):
+ * the composer's placeholder shows them once the plan exists. A new chat shows no examples, so
+ * nothing from the project open before it (or from the sample's cast) reads as a suggestion.
+ */
+export function planExamples(plan: ScreenplayPlan): string[] {
+  const [first, second] = plan.characters.map((c) => displayName(c.name));
+  const scene = plan.scenes[1] ?? plan.scenes[0];
+  const out: string[] = [];
+  if (first) out.push(`make ${first} older and taller`);
+  if (scene)
+    out.push(`scene ${scene.index + 1} is ${scene.timeOfDay === 'night' ? 'at dawn' : 'at night'}`);
+  if (second ?? first) out.push(`a photo + “this is ${second ?? first}”`);
+  return out;
+}
 
 /** An image in the composer: prepared (≤ 1600 px PNG) as soon as it is attached. */
 interface Draft {
@@ -226,6 +236,14 @@ export function mountChatPanel(
   const generating = new Set<string>();
   const confirming = new Set<string>();
   const expanded = new Set<string>();
+  /**
+   * Each thread's half-typed message, title and photos (with their targets) while another thread
+   * is shown; key: project id, '' = the new chat. Nothing typed for one project shows up in
+   * another project's thread or in a new chat.
+   */
+  const composers = new Map<string, { text: string; title: string; drafts: Draft[] }>();
+  /** The scene runtime the last 'scene' event was about (a different one: a scene opened). */
+  let shownScene: unknown = null;
 
   const thr = (id: string): Thread => {
     let t = threads.get(id);
@@ -320,9 +338,22 @@ export function mountChatPanel(
   // ---- actions ------------------------------------------------------------------------------------
   const select = (id: string | null) => {
     if (selected === id) return;
+    const was = selected ?? '';
+    if (input.value || titleInput.value || drafts.length)
+      composers.set(was, { text: input.value, title: titleInput.value, drafts });
+    else composers.delete(was);
     selected = id;
+    const kept = composers.get(id ?? '');
+    composers.delete(id ?? '');
+    input.value = kept?.text ?? '';
+    titleInput.value = kept?.title ?? '';
+    drafts = kept?.drafts ?? [];
+    grow();
     menuFor = null;
     newError = null;
+    // a warning flashed for the thread left behind goes with it
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = null;
     storageSet(CHAT_KEY, id);
     projects.setChatProject(id);
     sync();
@@ -433,7 +464,8 @@ export function mountChatPanel(
     if (!ok && selected === id && !drafts.length) {
       drafts = queued;
       renderComposer();
-    }
+    } else if (!ok && selected !== id && !composers.has(id))
+      composers.set(id, { text: '', title: '', drafts: queued });
     flushing.delete(id);
   };
 
@@ -456,10 +488,13 @@ export function mountChatPanel(
         ? await chat.createDraft(screenplay, title)
         : await chat.createProject(screenplay, title);
       screenplays.set(st.id, screenplay);
-      input.value = '';
-      titleInput.value = '';
-      drafts = [];
-      grow();
+      // sent: the new chat's composer is empty again (kept aside, if another thread is shown now)
+      if (selected === null) {
+        input.value = '';
+        titleInput.value = '';
+        drafts = [];
+        grow();
+      } else composers.delete('');
       if (images.length) {
         firstAttach.set(st.id, images);
         if (mode === 'generate') generateAfterFirst.add(st.id);
@@ -493,12 +528,13 @@ export function mountChatPanel(
       drafts = drafts.filter((d) => !d.image);
       grow();
       const ok = await sendMessage(p.id, text, images);
-      if (!ok && !input.value.trim()) {
-        // give the message back so it can be sent again
+      // give the message back so it can be sent again (to its own thread, if another is shown)
+      if (!ok && selected === p.id && !input.value.trim()) {
         input.value = keep.text;
         drafts = keep.drafts;
         grow();
-      }
+      } else if (!ok && selected !== p.id && !composers.has(p.id))
+        composers.set(p.id, { text: keep.text, title: '', drafts: keep.drafts });
       if (!ok) return renderAll();
     } else if (mode === 'send') return;
     const now = project();
@@ -956,11 +992,6 @@ export function mountChatPanel(
         {},
         'Paste a screenplay to start a project. I plan the scenes and the cast; change anything in words, attach photos of the people and places, then Generate.',
       ),
-      h(
-        'div',
-        { class: 'chat-examples' },
-        ...EXAMPLES.map((x) => h('span', { class: 'chat-example' }, x)),
-      ),
     );
 
   let lastKey = '';
@@ -1090,7 +1121,7 @@ export function mountChatPanel(
         ? h(
             'div',
             { class: 'muted small att-empty' },
-            'Characters and scenes show up once the plan exists; you can also say “this is Maya”.',
+            'Characters and scenes show up once the plan exists; you can also say who it is in the message.',
           )
         : null,
     );
@@ -1159,13 +1190,19 @@ export function mountChatPanel(
     newRow.hidden = !isNew;
     chipsRow.replaceChildren(...drafts.map(chipEl));
     chipsRow.hidden = !drafts.length;
+    // examples only from this project's own plan (its cast, its scene numbers)
+    const plan = p ? thr(p.id).plan : null;
+    const examples = plan
+      ? `: ${planExamples(plan)
+          .slice(0, 2)
+          .map((x) => `“${x}”`)
+          .join(', ')}…`
+      : '';
     input.placeholder = isNew
       ? 'Paste a screenplay (Fountain or plain text)…'
       : docked
         ? 'Ask for a change, or attach a photo…'
-        : p.draft || parsing(p)
-          ? 'Change the plan in words: “make Theo taller”, “scene 2 is a diner”… or attach a photo'
-          : 'Ask for a change: “Maya’s second line is ‘I let it go.’”, “scene 2 is a diner”… or attach a photo';
+        : `${p.draft || parsing(p) ? 'Change the plan in words' : 'Ask for a change'}${examples} or attach a photo`;
     // read-only, not disabled: a disabled field drops focus (and the widened drawer with it)
     input.readOnly = busy;
     input.classList.toggle('busy', busy);
@@ -1329,9 +1366,13 @@ export function mountChatPanel(
     if (c === 'scene' || c === 'loading') place();
     if (c === 'scene') {
       const id = director.projectId;
-      // the open scene's project is the thread, unless a new screenplay is being written
-      if (id && id !== selected && !(selected === null && (input.value.trim() || drafts.length)))
-        select(id);
+      const opened = director.runtime !== shownScene;
+      shownScene = director.runtime;
+      // a scene that just opened makes its project the thread, unless a new screenplay is being
+      // written; the same scene's later events (the collider landing, an actor swap) leave the
+      // thread the director picked alone, a "+ New" chat included
+      const writing = selected === null && (!!input.value.trim() || drafts.length > 0);
+      if (opened && id && id !== selected && !writing) select(id);
       else renderThread();
     }
   });

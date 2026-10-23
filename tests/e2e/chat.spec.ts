@@ -104,5 +104,37 @@ test('chat: plan → "make Theo taller" → photo for Maya → Generate → the 
   await expect(regen).toHaveAttribute('data-status', 'skipped');
   await expect(regen.getByTestId('action-confirm')).toHaveCount(0);
 
+  // "+ New" over the open scene: nothing of this project follows into the new chat (a half-typed
+  // change, a photo with its target, example pills naming its cast, the list's highlight)
+  await page.getByTestId('screenplay').fill('make Theo older');
+  await page
+    .getByTestId('chat-file')
+    .setInputFiles({ name: 'maya.png', mimeType: 'image/png', buffer: await portrait(page) });
+  await expect(page.getByTestId('attachment-chip')).toHaveCount(1);
+  await page.getByTestId('chat-new').click();
+  const blank = async () => {
+    await expect(page.getByTestId('chat-title')).toHaveText('New project');
+    await expect(page.getByTestId('screenplay')).toHaveValue('');
+    await expect(page.getByTestId('attachment-chip')).toHaveCount(0);
+    await expect(page.getByTestId('chat-hero')).toBeVisible();
+    await expect(page.getByTestId('chat')).not.toContainText(/Theo|Maya|diner/);
+    await expect(page.locator('[data-testid=project].chatting')).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem('previz:chat-project'))).toBe('null');
+  };
+  await blank();
+  // the open scene's later 'scene' events (what the collider landing or an actor swap sends)
+  // leave the new chat alone
+  await page.evaluate(() => {
+    const d = (window as unknown as { __previz: { director: { emit(c: string): void } } }).__previz.director;
+    d.emit('scene');
+  });
+  await page.waitForTimeout(300);
+  await blank();
+  // back to the project: its half-typed change and photo come back with it
+  await page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=project-head]`).click();
+  await expect(page.getByTestId('chat-title')).toHaveText('The Last Bus');
+  await expect(page.getByTestId('screenplay')).toHaveValue('make Theo older');
+  await expect(page.getByTestId('attachment-chip')).toHaveCount(1);
+
   expect(problems).toEqual([]);
 });
