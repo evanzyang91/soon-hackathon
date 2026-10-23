@@ -23,7 +23,7 @@ import { env } from '../../env.ts';
 import { EditsNotFound, type EditsStore } from '../edits.ts';
 import { exists, readJson, safeEndpoint, writeJsonAtomic } from '../fsutil.ts';
 import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions, type MarbleReceipt } from '../marble.ts';
-import { MOCK_WORLD_DIR } from '../mock-world.ts';
+import { mockSetDir } from '../mock-world.ts';
 import { IMAGE_EDIT_MODELS, openaiImageEdit, type ImageEdit } from '../openai-image.ts';
 import { compositeMasked, decodePng, EDIT_CANVAS, editMask, encodePng, isPng, resize, toRgb } from './png.ts';
 
@@ -131,7 +131,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
       const editedPath = join(jobDir, 'pano-edited.png');
       if (!(await exists(panoPath))) {
         if (o.mock) {
-          await copyFile(join(MOCK_WORLD_DIR, 'thumbnail.png'), panoPath);
+          await copyFile(join(mockSetDir(), 'thumbnail.png'), panoPath);
           await step('pano', 'mock: the mock world thumbnail stands in for the panorama', { panoSource: 'mock' });
         } else {
           const world = await readJson<{ assets?: { imagery?: { pano_url?: string } } }>(join(o.sceneDir, 'world', 'marble-world.json'));
