@@ -5,15 +5,16 @@
 //
 //   pnpm tsx scripts/genre-looks.ts <worldDir> --name city-street-night [--title "City street, night"]
 //     [--out docs/images] [--panels <dir>] [--only candlelit,moonlit] [--luts]
-//     [--cam "x,y,z,yawDeg,pitchDeg,hfovDeg"] [--marks "x,z;x,z"] [--size 512x288]
+//     [--cam "x,y,z,yawDeg,pitchDeg,hfovDeg"] [--marks "x,z;x,z"] [--size 448x252] [--no-grain]
 //   pnpm tsx scripts/genre-looks.ts --check     (no browser: the preset table's rules, below)
 //
 // Writes <out>/genre-presets-<name>.png (with --luts: <out>/genre-luts-<name>.png, every LUT at
 // full strength instead) and prints per panel: mean luma, share of pixels crushed to black / blown
 // to white, mean saturation, colour cast (R − B, G − (R + B) / 2), the mannequins' skin colour
 // (hue°, saturation, luma) and the nearest other panel (mean abs difference). --panels keeps each
-// panel as its own PNG. Read-only on the world dir; a directory with only world.spz is read as a
-// MOCK set (server/pipeline/marble.ts mockWorld).
+// panel as its own PNG; --no-grain leaves the film grain out (it animates in the viewer and is not
+// what tells two looks apart). Read-only on the world dir; a directory with only world.spz is read
+// as a MOCK set (server/pipeline/marble.ts mockWorld).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { feetY } from '../shared/ground.ts';
@@ -324,7 +325,7 @@ async function main() {
   const off = floorOffset(asset);
   const frame = { factor: f, floorOffset: off };
   const field = await storedGroundField(worldDir, asset);
-  const [W, H] = (o.size ?? '512x288').split('x').map(Number) as [number, number];
+  const [W, H] = (o.size ?? '448x252').split('x').map(Number) as [number, number];
 
   // marks: explicit, else the scene's blocking (a project world), else two spots in front of the
   // source camera where the floor probes stand (a library world)
@@ -392,7 +393,7 @@ async function main() {
           key: p,
           title: LOOK_PRESET_LABELS[p],
           subtitle: g.label,
-          look: presetLook(p),
+          look: o['no-grain'] ? { ...presetLook(p), grain: 0 } : presetLook(p),
         });
       }
   }
@@ -457,7 +458,7 @@ async function main() {
         o.luts
           ? `Every LUT at 100 % on ${title} (web/src/viewer/look/grade.ts LUT_PRESETS), nothing else graded.`
           : `Every full-look preset on ${title} (shared/look-presets.ts), graded as the laptop grades it: splat fog / sky tint and mesh fog (SceneLook), then the post pass (grade, LUT, vignette, grain, bloom).`,
-        `Same camera and frozen pose in every panel; two 1.70 m mannequins on the ground field; Marble k500 splats in GPU Chromium (Metal).`,
+        `Same camera and frozen pose in every panel${o['no-grain'] ? ' (film grain off)' : ''}; two 1.70 m mannequins on the ground field; k500 splats in GPU Chromium (Metal).`,
       ],
       { columns: o.luts ? 4 : 5, heading: o.luts ? `LUTs · ${title}` : `Genre looks · ${title}` },
     );
