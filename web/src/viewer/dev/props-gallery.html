@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Props gallery</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #14171c;
+        color: #e8ebf0;
+        font:
+          12px/1.35 system-ui,
+          sans-serif;
+      }
+      #sheet {
+        position: relative;
+        width: 1600px;
+        height: 960px;
+      }
+      canvas {
+        display: block;
+      }
+      .cell {
+        position: absolute;
+        box-sizing: border-box;
+        border: 1px solid #2a2f37;
+        pointer-events: none;
+        padding: 6px 8px;
+      }
+      .cell b {
+        font-size: 13px;
+        letter-spacing: 0.02em;
+      }
+      .cell .label {
+        color: #b9c0cb;
+      }
+      .cell .stats {
+        position: absolute;
+        left: 8px;
+        bottom: 6px;
+        color: #8f98a5;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Every procedural prop of web/src/viewer/props.ts, animated in place. Not part of the app. -->
+    <div id="sheet"></div>
+    <script type="module" src="./props-gallery.ts"></script>
+  </body>
+</html>
