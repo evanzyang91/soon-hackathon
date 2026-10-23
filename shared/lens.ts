@@ -18,7 +18,7 @@ export function fovDegForLens(mm: number): number {
   return (2 * Math.atan(SENSOR_HEIGHT_MM / 2 / Math.max(1, mm)) * 180) / Math.PI;
 }
 
-/** The nearest common prime to a FOV, e.g. 50° → 24 mm... actually 50° → 26 mm → "24 mm". */
+/** The nearest common prime (by ratio) to a FOV: 50° is 25.7 mm, shown as 24 mm; 30° is 44.8 mm, shown as 50 mm. */
 export function nearestLensMm(fovDeg: number): number {
   const mm = lensMm(fovDeg);
   let best: number = LENS_STOPS_MM[0];
