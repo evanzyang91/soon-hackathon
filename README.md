@@ -192,6 +192,138 @@ meshes. Depth of field is Spark's own (aperture from f-stop and the camera's foc
 
 ![A light 2 m from the actor](docs/images/look-light.png)
 
+## Genres: style, looks, sets and props
+
+A fantasy, science-fiction, horror, western or period screenplay comes out looking like one
+without the director touching a slider. The planner names the film's style, every scene opens
+graded with a look chosen for it, MOCK mode shows a set that fits the heading, and action lines can
+bring a dragon, a stagecoach or a drone. Five fixture screenplays (`fixtures/genres/*.fountain`)
+exercise it; `tests/e2e/genres.spec.ts` runs the fantasy one end to end.
+
+![Fantasy in MOCK, before and after: street set ungraded vs forest set, Enchanted look and a dragon](docs/images/genre-fantasy-before-after.png)
+
+**Style and look seed.** The plan carries `style` (`genre`, `era`, `worldStyle`, `palette`: a few
+words each, once per screenplay) and every scene a `look` seed: one of the eighteen presets, optional
+adjustments in Look units (exposure, contrast, saturation, temperature, tint, LUT, vignette, grain,
+bloom, fog, sky tint) and mood words for the name. The Claude planner picks the style first, writes
+every world prompt in that register ("Lush, painterly-realistic … fantasy still of …"), and chooses
+each scene's look from its time of day, interior, weather and mood. The offline planner uses
+keywords: two hits decide the genre (dragon, sword, crown → high fantasy; station, orbit, airlock →
+science fiction; cellar, scream, blood → horror; saloon, sheriff, wagon → western; ballroom,
+carriage, a decade such as "1890s" → period drama; else contemporary). Then rules pick the look:
+snow or storm outside first; an interior at night is candlelit in fantasy, western and period,
+warm interior otherwise; night outside is a night street (contemporary) or moonlit; a fantasy forest
+is enchanted; dusk is golden hour; a western day is western dust; horror and science fiction have
+their own. Mood words come from the action ("misty", "firelit", "sodium-lit"). Actor reference
+prompts add one sentence with the genre and era, so the cast's wardrobe agrees. A plan made before
+looks existed gets one derived the same way from the heading, time of day, interior and action
+(`lookSeedFor` in `server/pipeline/look-seed.ts`). The live bus stop gets "Night street · damp,
+sodium-lit" this way.
+
+What the Claude planner wrote for scene 0 of two fixtures (`cli parse`, about $0.05 each):
+
+| Fixture | Genre · era | Look seed | World prompt (first 120 characters) |
+| --- | --- | --- | --- |
+| fantasy | high fantasy · medieval-inspired kingdom | `enchanted` "misty, hushed, pale gold dawn", temperature +0.2, fog `#d8dccb` 0.2 | Lush, painterly-realistic cinematic fantasy still of an ancient forest clearing at dawn: colossal moss-covered tree trunks |
+| sci-fi | hard science fiction · 2090s Earth-orbit station and lunar outpost | `cold-steel` "cold, sterile, uneasy hush", vignette 0.35 | Photoreal cinematic film still of a long orbital station cargo deck: brushed steel floor plates with grip grating, cold whi |
+
+Scene 1 of the sci-fi fixture (EXT. LUNAR LANDING FIELD - DAY) shows the adjustments at work:
+`daylight-neutral` with contrast 1.3, saturation 0.7 and a black sky tint at full strength for an
+airless sky.
+
+**The first open is graded.** When the manifest stage writes a scene and `scene-<n>/edits.json`
+does not exist yet, it writes one with the seeded look, `revision 1`, and the history entry
+"suggested look from the plan". An existing edits.json is never touched: the director's grade
+always wins. The laptop's top bar shows the name (`look: Enchanted · misty, vast, soft`), and the
+phone shows it as a toast. In the Look tab, the eighteen looks are grouped Daylight / Night &
+interiors / Genre. **Scene's look** (a button, and the first entry of the presets list) goes back to
+the plan's suggestion and keeps the director's lights and lens. It is lit while the look on screen
+is the plan's.
+
+![Look panel with the scene's look](docs/images/genre-look-panel.png)
+
+**Chat.** "make the style a western" (also "genre: fantasy", "the whole film as a horror") sets
+`style.*` to that genre's style. That is a plan change only and costs nothing; worlds that are
+already generated stay as they are. "scene 2 look candlelit" (or "scene 1 look: golden hour")
+sets that scene's `look.preset`. On a generated scene with an edits.json the grade changes at once
+(the same path as `cli look --write`); otherwise the manifest stage seeds the new look. The plan
+card shows the style line and each scene's look.
+
+**`cli look`.** Prints the scene's look seed and the name it gives. `--write` puts it into an
+existing project: it replaces edits.json's look and keeps the edits, the history (one entry added)
+and the director's lights and lens; the revision goes up by one. `--preset <name>` swaps the preset
+and keeps the mood words. There is no network call.
+
+```sh
+pnpm tsx server/pipeline/cli.ts look data/projects/the-last-bus-abcb17 0 --write
+# EXT. CITY BUS STOP - NIGHT: derived from the heading (plan.json has no look)
+# look name: Night street · damp, sodium-lit   → scene-0/edits.json revision 2
+```
+
+![The live bus stop: ungraded vs its seeded look](docs/images/live-bus-stop-look-before-after.png)
+
+The whole laptop on that project, with the look badge in the top bar:
+[live-bus-stop-look-after.png](docs/images/live-bus-stop-look-after.png).
+
+**Mock sets.** MOCK mode, a missing `WLT_API_KEY` and `MARBLE_DRY_RUN=1` (plus the dry-run and
+Edit-tab regenerations) use one of ten small procedural sets instead of one street for everything:
+`street`, `forest`, `hall`, `cave`, `desert`, `station`, `shore`, `village`, `room`, `field`
+(`fixtures/mock-world/README.md`). `pickMockSet(scene, style)` reads the heading first. Its keywords
+are tried in a fixed order and the first rule that fits the interior flag wins: "THRONE HALL" is the
+hall, "FARMHOUSE CELLAR" the cave, "LUNAR LANDING FIELD" the desert, "ORBITAL STATION - CARGO DECK"
+the station, and "SALOON" is the village outside and a room inside. A heading without a keyword
+falls back to the world prompt, where a set needs two hits. With nothing matched, an interior is a
+room (a station in science fiction) and an exterior is the street (a village lane in fantasy,
+western and period). The chosen set is in the world caption (`mock set: forest`) and the stage note.
+`pnpm tsx server/pipeline/cli.ts make-mock-world [set|all]` rebuilds them.
+
+![The ten mock sets](docs/images/genre-mock-sets.png)
+
+**Props for any era.** Besides car, bus, bicycle, bird and pedestrian, the planners can now ask for
+`truck`, `motorcycle`, `dog`, `horse`, `wagon`, `boat`, `dragon`, `drone` and `spacecraft`. Each is
+built from primitives in the label's colour (`web/src/viewer/props.ts`, under about 3k triangles).
+Some label words change the model:
+
+| Kind | Label words | Variant |
+| --- | --- | --- |
+| horse | rider, rides, horseback, mounted, cavalry, knight, cowboy … | a seated rider |
+| horse | gallop, charge, race, stampede … | gallop instead of walk |
+| wagon | stagecoach, coach, carriage, landau, hansom … | closed stagecoach cabin |
+| wagon | covered, canvas, conestoga, prairie schooner | canvas cover (else an open bed) |
+| boat | sail, yacht, schooner, sloop, galleon … | sails (else a cabin) |
+
+The wagon is drawn by two harnessed horses with a driver. The motorcycle leans into turns and the
+boat bobs and rolls at its waterline. The dragon's wings flap, its neck and tail wave, and its
+wingspan is about 11.8 m. Flyers (bird, dragon, drone, spacecraft) keep their path's height and
+pitch and bank with their own motion. `web/src/viewer/dev/props-gallery.html` shows every kind and
+variant.
+
+![Props gallery](docs/images/genre-props.png)
+
+![Props in a MOCK western scene](docs/images/genre-props-scene.png)
+
+**Evidence.** Each genre in MOCK, the pipeline before this work (the street set for every heading,
+neutral look) against master. Same scene, same camera, laptop viewer in GPU Chromium:
+
+| Genre · scene | After |
+| --- | --- |
+| [Fantasy · forest clearing, dawn](docs/images/genre-fantasy-before-after.png) | forest set · Enchanted · misty, vast, soft · a dragon overhead |
+| [Fantasy · throne hall, night](docs/images/genre-fantasy-hall-before-after.png) | hall set · Candlelit · vast, firelit, weathered |
+| [Science fiction · cargo deck, night](docs/images/genre-scifi-before-after.png) | station set · Cold steel · a drone on the ceiling rail |
+| [Horror · farmhouse cellar, night](docs/images/genre-horror-before-after.png) | cave set · Horror · decaying, damp, dark |
+| [Western · frontier main street, day](docs/images/genre-western-before-after.png) | village set · Western dust · weathered, hot · a wagon |
+| [Period · grand ballroom, night](docs/images/genre-period-before-after.png) | hall set · Period warm · opulent, lonely |
+
+![Western in MOCK, before and after](docs/images/genre-western-before-after.png)
+
+On the four real Marble worlds, the look the pipeline seeds for each heading: night street for
+the city street and the bus stop, warm interior for the kitchen, golden hour for the rooftop.
+`docs/images/genre-presets-*.png` shows every preset on each world.
+
+![Real worlds: ungraded vs the seeded look](docs/images/genre-real-worlds-before-after.png)
+
+![Every preset on the bus stop](docs/images/genre-presets-bus-stop.png)
+
 ## Laptop layout and direct manipulation
 
 The director page has a slim projects drawer on the left (new project + every project and its
@@ -616,8 +748,10 @@ second browser context as the phone (`/phone.html?sim=1`, synthetic `deviceorien
 checks that manifests validate and every asset is served, the splat world renders with real
 colour, props move, a clicked line shows a caption and plays WebAudio, the phone's pose turns the
 laptop's frustum gizmo and feeds the PiP, the phone captions the line the laptop plays, recenter /
-shutter / next-camera cross the relay both ways, the phone renders WebGL on its own, and the
-certificate / health / room endpoints work. Headless Chromium has no GPU: SwiftShader draws the
+shutter / next-camera cross the relay both ways, the phone renders WebGL on its own, the
+certificate / health / room endpoints work, and the fantasy fixture comes out as a fantasy: its
+style, a look per scene, the forest and hall sets, a seeded edits.json, a dragon, and a laptop
+frame that opens graded (about 10 % mean difference from the same frame with a neutral look). Headless Chromium has no GPU: SwiftShader draws the
 33k-splat mock world at about 1 fps at 1280x720 once it is fully loaded (the e2e specs are written
 for that). A real Marble world (500k splats) needs a GPU; full Chromium with
 `--use-angle=metal --enable-gpu` renders it at 60 fps.
@@ -653,6 +787,13 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
 - High-detail actors carry front-view texture: seen from far to the side (≳60° off the reference
   view) the face and trousers show pale streaks. The back is unchanged.
 - Moving props are simple procedural shapes on straight looped paths, composited over the splats.
+- Genres: **Scene's look** is offered only when the scene's manifest carries `plan.look`. A plan
+  made before looks (the live bus stop) still opens with its derived look, written by the manifest
+  stage or `cli look --write`, but the button stays hidden until the manifest is rewritten. Mood
+  words name what the action says, not what the grade does: the bus stop's "Night street · damp,
+  sodium-lit" cools the sodium-orange street toward blue. Ten mock sets cover every heading, so one
+  `village` (timber storefronts) serves a western main street and a Viennese palace courtyard, and
+  one `hall` (throne, banners) serves a throne hall and a ballroom.
 - Takes record the laptop canvas (WebM), not the phone's own render.
 - Look lights recolour baked splats; they cast no new shadows and do not reveal what the capture
   never saw. Only four lights reach the splats. Fog and sky tint are applied per splat, so the
