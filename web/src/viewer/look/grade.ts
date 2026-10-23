@@ -162,52 +162,57 @@ export const LUT_PRESETS: Record<LutName, LutParams> = {
     gain: [1.08, 1, 0.82],
     highlightTint: [0.05, 0.03, -0.04],
   }),
-  // ---- genre LUTs (docs/PLAN-v3.md): first values, tuned by the look work package ----
-  // aged print: low saturation, warm brown mids, soft blacks
+  // ---- genre LUTs (docs/PLAN-v3.md), tuned on the four real Marble worlds -------------------
+  // (scripts/genre-looks.ts --luts; grade.test.ts pins what each one does). Grey 0.5 → the
+  // colour in brackets at 100 %.
+  // aged print: nearly monochrome, brown not yellow (G halfway between R and B), soft brown
+  // blacks, a little warmth in the highlights [0.58 0.48 0.32]
   sepia: lut({
-    sat: 0.25,
-    contrast: 1.08,
-    lift: [0.04, 0.03, 0.015],
-    gamma: [1, 0.96, 0.9],
-    gain: [1.05, 0.98, 0.84],
-    highlightTint: [0.05, 0.03, -0.02],
+    sat: 0.14,
+    contrast: 1.06,
+    lift: [0.05, 0.035, 0.02],
+    gamma: [1.02, 0.96, 0.86],
+    gain: [1.08, 0.95, 0.76],
+    highlightTint: [0.03, 0.015, -0.02],
   }),
-  // deep forest: green-leaning mids, cool shadows, rich saturation
+  // deep forest: green-teal mids, teal shadows, green (never yellow) highlights, rich but not
+  // neon [0.45 0.53 0.51]
   verdant: lut({
     sat: 1.12,
-    contrast: 1.08,
-    gamma: [0.98, 1.02, 0.98],
-    gain: [0.95, 1.04, 0.95],
-    shadowTint: [-0.03, 0.01, 0.04],
-    highlightTint: [0.02, 0.04, -0.02],
+    contrast: 1.06,
+    gamma: [0.99, 1.02, 1.0],
+    gain: [0.95, 1.02, 0.99],
+    shadowTint: [-0.05, 0.025, 0.04],
+    highlightTint: [-0.03, 0.035, 0.015],
   }),
-  // neon city: magenta shadows, cyan highlights, hard contrast
+  // neon city: magenta shadows, cyan highlights (the split is the look), hard contrast
+  // [grey 0.2 → 0.25 0.13 0.27 magenta, grey 0.8 → 0.76 0.83 0.88 cyan]
   cyber: lut({
-    sat: 1.25,
-    contrast: 1.2,
-    lift: [0.02, 0, 0.04],
-    gain: [1.02, 0.97, 1.08],
-    shadowTint: [0.06, -0.02, 0.08],
-    highlightTint: [-0.06, 0.04, 0.08],
+    sat: 1.22,
+    contrast: 1.18,
+    lift: [0.02, 0, 0.035],
+    gain: [1.0, 0.95, 1.02],
+    shadowTint: [0.1, -0.04, 0.1],
+    highlightTint: [-0.12, 0.07, 0.03],
   }),
-  // cold steel: desaturated, blue-grey, lifted shadows
+  // cold steel / ice: desaturated cyan-blue, cold lifted blacks, icy highlights [0.45 0.50 0.58]
   ice: lut({
-    sat: 0.7,
-    contrast: 1.1,
-    lift: [0.01, 0.02, 0.04],
-    gain: [0.9, 0.96, 1.06],
-    shadowTint: [-0.02, 0, 0.04],
-    highlightTint: [0, 0.01, 0.03],
+    sat: 0.62,
+    contrast: 1.08,
+    lift: [0.015, 0.03, 0.05],
+    gain: [0.9, 0.97, 1.06],
+    shadowTint: [-0.02, 0.005, 0.035],
+    highlightTint: [-0.02, 0.01, 0.04],
   }),
-  // firelight: orange-red mids and highlights, deep warm blacks
+  // firelight: orange mids and highlights, deep warm (not red) blacks [0.58 0.48 0.30]
   ember: lut({
-    sat: 1.1,
+    sat: 1.08,
     contrast: 1.15,
-    lift: [0.02, 0.005, 0],
-    gamma: [1.02, 0.96, 0.9],
-    gain: [1.1, 0.96, 0.78],
-    shadowTint: [0.03, -0.01, -0.03],
-    highlightTint: [0.08, 0.03, -0.06],
+    lift: [0.02, 0.008, 0],
+    gamma: [1.03, 0.97, 0.88],
+    gain: [1.07, 0.96, 0.76],
+    shadowTint: [0.025, 0, -0.025],
+    highlightTint: [0.05, 0.03, -0.05],
   }),
 };
 
