@@ -7,21 +7,36 @@
 //   target "scene:<index>"   fields heading · action · worldPrompt · timeOfDay · interior ·
 //                                   worldReference ("" clears it) · blocking.<characterId>.position |
 //                                   .pose | .facing
+//                                   look.preset · look.mood · look.<exposure|contrast|saturation|
+//                                   temperature|tint|lut|lutStrength|vignette|grain|bloom> ·
+//                                   look.fog.color|density · look.skyTint.color|strength
 //   target "line:<lineId>"   fields text · parenthetical ("" clears it)
 //   target "project"         field  title
+//   target "style"           fields genre · era · worldStyle · palette (the whole screenplay's style)
+//
+// A look field edits the scene's LookSeed (a plan made before looks were planned starts from the
+// derived one, look-seed.ts); a new preset keeps the mood words and drops the adjustments tuned to
+// the old one. Style and look changes are free: on a generated scene apply.ts re-grades
+// edits.json, nothing is regenerated.
 //
 // Scene targets use ScenePlan.index (0-based, like scene-<n>/ and every sceneIndex in the API);
 // the director's "scene 2" is index 1.
+import { LOOK_PRESET_LABELS, LOOK_PRESETS, seedToLook } from '../../../shared/look-presets.ts';
 import {
+  LookPresetName,
+  LutPreset,
   ScreenplayPlan,
   type Blocking,
   type Character,
   type DialogueLine,
+  type LookSeed,
   type ScenePlan,
   type Vec3,
+  type VisualStyle,
 } from '../../../shared/schema.ts';
 import { VOICE_IDS } from '../fountain.ts';
 import { round3, yawFacing } from '../geometry.ts';
+import { lookSeedFor, styleForPlan } from '../look-seed.ts';
 import { OPENAI_VOICES } from '../tts.ts';
 
 export const VOICE_CHOICES = [...new Set<string>([...VOICE_IDS, ...OPENAI_VOICES])];
@@ -31,10 +46,11 @@ export type Target =
   | { kind: 'character'; id: string }
   | { kind: 'scene'; index: number }
   | { kind: 'line'; id: string; sceneIndex: number }
-  | { kind: 'project' };
+  | { kind: 'project' }
+  | { kind: 'style' };
 
 /** What a changed field invalidates on a generated project (apply.ts turns it into follow-ups). */
-export type Effect = 'actor' | 'voice' | 'world' | 'manifest' | 'none';
+export type Effect = 'actor' | 'voice' | 'world' | 'manifest' | 'look' | 'none';
 
 export interface Patch {
   target: Target;
@@ -45,7 +61,11 @@ export interface Patch {
 }
 
 export const targetKey = (t: Target) =>
-  t.kind === 'project' ? 'project' : t.kind === 'scene' ? `scene:${t.index}` : `${t.kind}:${t.id}`;
+  t.kind === 'project' || t.kind === 'style'
+    ? t.kind
+    : t.kind === 'scene'
+      ? `scene:${t.index}`
+      : `${t.kind}:${t.id}`;
 
 /** Finds a character by id or by name (any case; "Leo", "LEO", "leo"). */
 export function findCharacter(plan: ScreenplayPlan, ref: string): Character | undefined {
@@ -64,10 +84,11 @@ export function findLine(
   return undefined;
 }
 
-/** "character:theo" | "scene:1" | "line:s2-l3" | "project" → a target that exists in the plan. */
+/** "character:theo" | "scene:1" | "line:s2-l3" | "project" | "style" → a target that exists in the plan. */
 export function parseTarget(plan: ScreenplayPlan, raw: string): Target | { error: string } {
   const t = raw.trim();
   if (t === 'project') return { kind: 'project' };
+  if (t === 'style') return { kind: 'style' };
   const m = /^(character|scene|line):(.+)$/i.exec(t);
   if (!m) return { error: `unknown target "${t}"` };
   const kind = m[1]!.toLowerCase();
@@ -117,6 +138,79 @@ function parseBool(s: string): boolean | undefined {
 
 const BLOCKING_FIELD = /^blocking\.([^.]+)\.(position|pose|facing)$/;
 
+/** Scene look fields (LookSeed paths) and the numeric ranges of shared/schema.ts LookSeed. */
+const LOOK_NUMBERS = {
+  exposure: [-3, 3],
+  contrast: [0.5, 2],
+  saturation: [0, 2],
+  temperature: [-1, 1],
+  tint: [-1, 1],
+  lutStrength: [0, 1],
+  vignette: [0, 1],
+  grain: [0, 1],
+  bloom: [0, 1],
+  'fog.density': [0, 1],
+  'skyTint.strength': [0, 1],
+} as const;
+type LookNumber = keyof typeof LOOK_NUMBERS;
+export const LOOK_FIELDS = [
+  'look.preset',
+  'look.mood',
+  'look.lut',
+  ...Object.keys(LOOK_NUMBERS).map((k) => `look.${k}`),
+  'look.fog.color',
+  'look.skyTint.color',
+] as const;
+const isLookField = (f: string) => (LOOK_FIELDS as readonly string[]).includes(f);
+const STYLE_MAX: Record<keyof VisualStyle, number> = {
+  genre: 80,
+  era: 120,
+  worldStyle: 200,
+  palette: 120,
+};
+
+/** "Golden hour" / "golden_hour" / "golden-hour" → "golden-hour". */
+const presetName = (s: string) =>
+  s
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-');
+
+/** "#abc" / "AABBCC" → "#aabbcc"; anything else → undefined. */
+function hexColor(s: string): string | undefined {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s.trim());
+  if (!m) return undefined;
+  const h = m[1]!.toLowerCase();
+  return `#${h.length === 3 ? [...h].map((c) => c + c).join('') : h}`;
+}
+
+/** The scene's look as the plan will hold it (a derived one for plans made before looks). */
+const sceneSeed = (plan: ScreenplayPlan, scene: ScenePlan): LookSeed =>
+  structuredClone(lookSeedFor(scene, styleForPlan(plan)));
+
+/** A look field's value: the seed's own, else what its preset gives (so "colder" has a number to move). */
+function lookValue(seed: LookSeed, field: string): unknown {
+  const path = field.slice('look.'.length);
+  if (path === 'preset') return seed.preset;
+  if (path === 'mood') return seed.mood;
+  const [group, key] = path.split('.') as [string, string | undefined];
+  const look = seedToLook(seed) as unknown as Record<string, unknown>;
+  const v = look[group];
+  return key ? (v as Record<string, unknown>)[key] : v;
+}
+
+function setLookField(seed: LookSeed, field: string, v: unknown): LookSeed {
+  const path = field.slice('look.'.length);
+  // the old preset's adjustments do not carry over to a new one; the scene's mood words do
+  if (path === 'preset') return { preset: v as LookSeed['preset'], mood: seed.mood };
+  const [group, key] = path.split('.') as [string, string | undefined];
+  if (group === 'fog' || group === 'skyTint') {
+    const base = seed[group] ?? LOOK_PRESETS[seed.preset][group];
+    return { ...seed, [group]: { ...base, [key!]: v } };
+  }
+  return { ...seed, [group]: v };
+}
+
 /** Fields a target accepts (blocking fields are per character: blocking.<id>.position …). */
 export const FIELDS = {
   character: ['name', 'description', 'heightMeters', 'voice.id', 'voice.gender', 'referenceImage'],
@@ -130,9 +224,11 @@ export const FIELDS = {
     'blocking.<characterId>.position',
     'blocking.<characterId>.pose',
     'blocking.<characterId>.facing',
+    ...LOOK_FIELDS,
   ],
   line: ['text', 'parenthetical'],
   project: ['title'],
+  style: ['genre', 'era', 'worldStyle', 'palette'],
 } as const;
 
 /** Text value → typed value for the field, or an error the planner's reply can quote. */
@@ -148,6 +244,10 @@ export function parseValue(
   switch (target.kind) {
     case 'project':
       return field === 'title' ? text(200) : { error: `project has no field ${field}` };
+    case 'style':
+      return field in STYLE_MAX
+        ? text(STYLE_MAX[field as keyof VisualStyle])
+        : { error: `the style has no field ${field} (${FIELDS.style.join(', ')})` };
     case 'line':
       if (field === 'text') return text(1000);
       if (field === 'parenthetical')
@@ -210,6 +310,7 @@ export function parseValue(
         const p = parsePoint(s);
         return p ? { value: p } : { error: `"${s}" is not a point (x, y, z in metres)` };
       }
+      if (isLookField(field)) return parseLookValue(field, s);
       switch (field) {
         case 'heading':
           return s
@@ -239,10 +340,41 @@ export function parseValue(
   }
 }
 
+function parseLookValue(field: string, s: string): { value: unknown } | { error: string } {
+  const path = field.slice('look.'.length);
+  if (path === 'preset') {
+    const want = presetName(s);
+    const hit = LookPresetName.options.find(
+      (p) => p === want || presetName(LOOK_PRESET_LABELS[p]) === want,
+    );
+    return hit
+      ? { value: hit }
+      : { error: `unknown look preset "${s}" (${LookPresetName.options.join(', ')})` };
+  }
+  if (path === 'mood') return { value: s.slice(0, 60).trim() };
+  if (path === 'lut') {
+    const lut = LutPreset.safeParse(presetName(s));
+    return lut.success
+      ? { value: lut.data }
+      : { error: `unknown LUT "${s}" (${LutPreset.options.join(', ')})` };
+  }
+  if (path.endsWith('.color')) {
+    const c = hexColor(s);
+    return c ? { value: c } : { error: `"${s}" is not a colour (#rrggbb)` };
+  }
+  const range = LOOK_NUMBERS[path as LookNumber];
+  const v = num(s);
+  if (!range || !Number.isFinite(v)) return { error: `${field} needs a number` };
+  return v < range[0] || v > range[1]
+    ? { error: `${field} ${v} is outside ${range[0]}…${range[1]}` }
+    : { value: round3(v) };
+}
+
 /** The field's current value (blocking fields read the character's mark). */
 export function getValue(plan: ScreenplayPlan, p: Pick<Patch, 'target' | 'field'>): unknown {
   const t = p.target;
   if (t.kind === 'project') return plan.title;
+  if (t.kind === 'style') return plan.style?.[p.field as keyof VisualStyle];
   if (t.kind === 'line') {
     const l = findLine(plan, t.id)!.line;
     return p.field === 'text' ? l.text : l.parenthetical;
@@ -254,6 +386,7 @@ export function getValue(plan: ScreenplayPlan, p: Pick<Patch, 'target' | 'field'
     return c[p.field as 'name' | 'description' | 'heightMeters' | 'referenceImage'];
   }
   const scene = plan.scenes[t.index]!;
+  if (isLookField(p.field)) return lookValue(sceneSeed(plan, scene), p.field);
   const b = BLOCKING_FIELD.exec(p.field);
   if (b) {
     const mark = scene.blocking.find((x) => x.characterId === findCharacter(plan, b[1]!)?.id)!;
@@ -273,6 +406,7 @@ export function applyPatch(plan: ScreenplayPlan, p: Patch): { before: unknown; a
   const t = p.target;
   const v = p.value;
   if (t.kind === 'project') plan.title = v as string;
+  else if (t.kind === 'style') plan.style = { ...styleForPlan(plan), [p.field]: v as string };
   else if (t.kind === 'line') {
     const l = findLine(plan, t.id)!.line;
     if (p.field === 'text') l.text = v as string;
@@ -288,7 +422,8 @@ export function applyPatch(plan: ScreenplayPlan, p: Patch): { before: unknown; a
   } else {
     const scene = plan.scenes[t.index]!;
     const b = BLOCKING_FIELD.exec(p.field);
-    if (b) {
+    if (isLookField(p.field)) scene.look = setLookField(sceneSeed(plan, scene), p.field, v);
+    else if (b) {
       const mark: Blocking = scene.blocking.find(
         (x) => x.characterId === findCharacter(plan, b[1]!)?.id,
       )!;
@@ -305,12 +440,14 @@ export function applyPatch(plan: ScreenplayPlan, p: Patch): { before: unknown; a
 /** What the change means for a project whose assets exist. */
 export function effectOf(p: Pick<Patch, 'target' | 'field'>): Effect {
   const t = p.target;
-  if (t.kind === 'project') return 'none';
+  if (t.kind === 'project' || t.kind === 'style') return 'none';
   if (t.kind === 'line') return 'voice';
   if (t.kind === 'character') {
     if (p.field.startsWith('voice.')) return 'voice';
     return p.field === 'name' ? 'manifest' : 'actor';
   }
+  // a grade is applied at render time: free, never a new world
+  if (isLookField(p.field)) return 'look';
   if (['worldPrompt', 'timeOfDay', 'interior', 'worldReference'].includes(p.field)) return 'world';
   return 'manifest';
 }

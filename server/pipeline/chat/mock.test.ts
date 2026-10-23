@@ -166,6 +166,27 @@ describe('mock chat planner', () => {
     expect(unknown).toEqual({ reply: MOCK_ASK_PHOTO, actions: [] });
   });
 
+  it('genre / style … western → the four style fields; scene N look <preset> → look.preset', () => {
+    const western = plan('make the whole film look like a western');
+    expect(western.actions.map((a) => [a.target, a.field])).toEqual([
+      ['style', 'genre'],
+      ['style', 'era'],
+      ['style', 'worldStyle'],
+      ['style', 'palette'],
+    ]);
+    expect(western.actions[0]!.value).toBe('western');
+    expect(western.reply).toMatch(/style is now western, 1880s American frontier/);
+    expect(plan('change the genre to sci-fi').actions[0]!.value).toBe('science fiction');
+    const look = plan('scene 2 look candlelit, and scene 3 look: golden hour please');
+    expect(look.actions).toEqual([
+      expect.objectContaining({ target: 'scene:1', field: 'look.preset', value: 'candlelit' }),
+      expect.objectContaining({ target: 'scene:2', field: 'look.preset', value: 'golden-hour' }),
+    ]);
+    expect(plan('scene 2 look sparkly').reply).toMatch(/^Looks are daylight-neutral, /);
+    // the world rule ("scene N is <place>") does not see a look
+    expect(plan('scene 2 look moonlit').actions.map((a) => a.field)).toEqual(['look.preset']);
+  });
+
   it('generate on a draft; a generated project says so; anything else gets the help line', () => {
     expect(plan('looks good, go ahead').actions.map((x) => x.type)).toEqual(['generate']);
     expect(plan('generate', { draft: false })).toEqual({

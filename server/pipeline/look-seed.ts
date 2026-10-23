@@ -24,7 +24,11 @@ export function lookSeedFor(scene: ScenePlan, style?: VisualStyle): LookSeed {
   if (scene.look) return scene.look;
   // time of day and interior from the plan (the chat may have amended them), the place from the heading
   return heuristicLookSeed(
-    { interior: scene.interior, timeOfDay: scene.timeOfDay, location: parseHeading(scene.heading).location },
+    {
+      interior: scene.interior,
+      timeOfDay: scene.timeOfDay,
+      location: parseHeading(scene.heading).location,
+    },
     style,
     scene.action,
   );
@@ -37,7 +41,10 @@ export function styleForPlan(plan: ScreenplayPlan): VisualStyle {
     plan.title,
     ...plan.scenes.flatMap((s) => [s.action, ...s.dialogue.map((d) => d.text)]),
   ].join('\n');
-  return heuristicStyle(text, plan.scenes.map((s) => s.heading));
+  return heuristicStyle(
+    text,
+    plan.scenes.map((s) => s.heading),
+  );
 }
 
 function historyEntry(prompt: string, look: Look): SceneEdits['history'][number] {

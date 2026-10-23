@@ -1,8 +1,8 @@
 // The chat planner: one director message (+ photos) → a short reply and typed actions.
 //
 // Real path: Claude (claude-opus-5-5, adaptive thinking at low effort, ≤ 3k output tokens) with
-// structured output against ChatDraft (draft.ts). It reads a compact plan (characters, scenes with
-// line ids and marks), the screenplay text, the last ~20 messages, the new message and the photos
+// structured output against ChatDraft (draft.ts). It reads a compact plan (style, characters, scenes
+// with line ids, marks and the full values of each scene's look), the screenplay text, the last ~20 messages, the new message and the photos
 // as image blocks, each labelled with its id, name and hint. Photos sent earlier that nobody uses
 // yet ride along (up to 4 images in all) so "the photo I sent is Maya" can be answered.
 // Mock path (MOCK=1, no ANTHROPIC_API_KEY, or a MOCK project): mock.ts, the same draft.
@@ -11,9 +11,17 @@ import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type { Attachment, ChatMessage } from '../../../shared/chat.ts';
-import type { ProjectStatus, ScreenplayPlan } from '../../../shared/schema.ts';
+import { seedToLook } from '../../../shared/look-presets.ts';
+import {
+  LookPresetName,
+  LutPreset,
+  type LookSeed,
+  type ProjectStatus,
+  type ScreenplayPlan,
+} from '../../../shared/schema.ts';
 import { env } from '../../env.ts';
 import { costOf } from '../calibrate-vision.ts';
+import { lookSeedFor, styleForPlan } from '../look-seed.ts';
 import { decodePng, encodePng, isPng, resize } from '../reprompt/png.ts';
 import { ChatDraft, type ChatContext } from './draft.ts';
 import { mockChatDraft } from './mock.ts';
@@ -33,7 +41,7 @@ export const CHAT_SYSTEM = `You are the assistant of a previsualization tool for
 
 What changes cost
 - While the project is a draft nothing is generated yet: plan patches and reference photos are free and are all used when generation starts.
-- On a generated project the app derives the follow-ups itself: a new description, height or reference photo rebuilds that actor (cheap); a new line text or voice re-voices only those lines (cheap); a new world prompt, time of day, interior flag or place photo needs a new world (about 5 minutes and 1,580 Marble credits) and waits for the director's confirmation; a moved or re-posed mark is free.
+- On a generated project the app derives the follow-ups itself: a new description, height or reference photo rebuilds that actor (cheap); a new line text or voice re-voices only those lines (cheap); a new world prompt, time of day, interior flag or place photo needs a new world (about 5 minutes and 1,580 Marble credits) and waits for the director's confirmation; a moved or re-posed mark is free; a scene's look (its colour grade, fog and sky) is free and re-grades the scene at once; the style is free and only changes the plan.
 - replan re-runs the screenplay planner on the amended screenplay. It is for structural changes only: a new or removed scene, a new or removed character, scenes reordered or merged. On a generated project it waits for confirmation.
 
 Rules
@@ -43,6 +51,8 @@ Rules
 - A line edit is a plan-patch of the line's text with target "line:<id>" using the ids in the plan (the id stays). "Her second line" counts that character's lines in the scene being discussed, else in the first scene they speak in.
 - A description change rewrites the whole description with the change worked in, keeping everything the director did not change (physical appearance and wardrobe only, 40-80 words). Height goes in heightMeters (a tall man about 1.88, a child about 1.3); "taller" or "shorter" without a number is about 0.10 m from the current height (1.70 when unset). "Older" changes the apparent age in the description.
 - A world prompt change rewrites the complete environment description with the change worked in (no people, no animals, no vehicles, no action; at most 600 characters); keep the rest of the place. A different place for a scene is a worldPrompt patch (and a heading patch when the heading names the place), not a replan.
+- Grade, colour, mood, fog, darkness or "make it look like ..." for one scene is a scene look patch, never a world change: "colder" lowers look.temperature by about 0.3 from the current value, "warmer" raises it, "foggier" raises look.fog.density by about 0.15, "darker" or "brighter" moves look.exposure by about 0.4, "moodier" raises look.vignette and look.contrast; a different kind of light is a new look.preset. Change look.mood when the feel changes. Values are absolute: start from the current values in the plan.
+- The whole film's genre or register ("make it a western", "more like a fairy tale") is a style patch rewriting genre, era, worldStyle and palette together. It regrades and regenerates nothing by itself: also patch each scene's look.preset when the director wants the look to follow, and change world prompts only when asked.
 - "start", "go ahead", "generate", "build it" mean generate. Only a draft can be generated; on a generated project say that it already is and return no action.
 - A structural change is a replan whose edits change the screenplay text: each edit finds an exact, unique passage of the current screenplay and replaces it (to add a scene, find the text it follows and replace it with that text plus the new scene: heading, action, character cues and dialogue in screenplay format). Also carry over line changes made earlier in this conversation where the screenplay still has the old wording.
 - Do the whole request in one answer (several actions are fine) and never change what the director did not ask for.
@@ -51,8 +61,10 @@ Rules
 Targets and fields (plan-patch)
 - "character:<id>": ${FIELDS.character.filter((f) => f !== 'referenceImage').join(', ')} (voice.id is one of ${VOICE_CHOICES.join(', ')}; voice.gender is female, male or neutral).
 - "scene:<index>": ${FIELDS.scene.filter((f) => f !== 'worldReference').join(', ')}. The index is 0-based: the director's "scene 2" is index 1. Positions are "x, y, z" in metres with y = 0 on the floor; the world's camera stands at the origin looking down -Z, +X to its right; actors usually stand 1.5-4 m in front of it. pose is standing, sitting or walking; facing is a character id, "camera", or a point.
+  Scene look fields: look.preset is one of ${LookPresetName.options.join(', ')}; look.lut is one of ${LutPreset.options.join(', ')}; colours are "#rrggbb"; exposure is in stops (-3 to 3), contrast (0.5 to 2) and saturation (0 to 2) are 1 when neutral, temperature and tint run from -1 to 1, every other look number from 0 to 1.
 - "line:<lineId>": text, parenthetical.
 - "project": title.
+- "style": ${FIELDS.style.join(', ')} (the whole screenplay's genre, era, the render style world prompts open with, and palette).
 - character-reference: target "character:<id>" and the photo's attachmentId. world-reference: target "scene:<index>", attachmentId, isPano.
 Values are text: numbers as digits ("1.85"), booleans "true" or "false".`;
 
@@ -79,6 +91,10 @@ export function describePlan(plan: ScreenplayPlan, st: ProjectStatus): string {
   const lines: string[] = [];
   lines.push(`Title: ${plan.title}`);
   lines.push(`Status: ${stageSummary(st)}`);
+  const style = styleForPlan(plan);
+  lines.push(
+    `Style${plan.style ? '' : ' (not planned yet; read from the script)'}: genre "${style.genre}" · era "${style.era}" · worldStyle "${style.worldStyle}" · palette "${style.palette}"`,
+  );
   lines.push('Characters (id, name, height, voice, reference photo, description):');
   for (const c of plan.characters)
     lines.push(
@@ -90,6 +106,7 @@ export function describePlan(plan: ScreenplayPlan, st: ProjectStatus): string {
       `[index ${s.index} = scene ${s.index + 1}] ${s.heading} · ${s.interior ? 'interior' : 'exterior'} · ${s.timeOfDay}${s.worldReference ? ` · place photo ${s.worldReference.file}${s.worldReference.isPano ? ' (360)' : ''}` : ''}`,
     );
     lines.push(`  world prompt: ${s.worldPrompt}`);
+    lines.push(`  look: ${describeLook(lookSeedFor(s, style))}${s.look ? '' : ' (derived)'}`);
     if (s.blocking.length)
       lines.push(
         `  marks: ${s.blocking.map((b) => `${b.characterId} ${b.pose} at (${b.position.map(r2).join(', ')}) yaw ${Math.round((b.yaw * 180) / Math.PI)}°`).join('; ')}`,
@@ -100,6 +117,33 @@ export function describePlan(plan: ScreenplayPlan, st: ProjectStatus): string {
       );
   }
   return lines.join('\n');
+}
+
+const LOOK_NUMBERS = [
+  'exposure',
+  'contrast',
+  'saturation',
+  'temperature',
+  'tint',
+  'bloom',
+  'vignette',
+  'grain',
+] as const;
+
+/**
+ * A scene's look with every value it opens with (the preset's where the seed sets nothing), so the
+ * planner can move "colder" or "foggier" from a number: 'candlelit "Candlelit · cold" · exposure
+ * -0.35 · … · fog #3a2414 0.1 · skyTint #ffffff 0 · lut ember 0.7'.
+ */
+export function describeLook(seed: LookSeed): string {
+  const l = seedToLook(seed);
+  return [
+    `${seed.preset} "${l.name}"`,
+    ...LOOK_NUMBERS.map((k) => `${k} ${r2(l[k])}`),
+    `fog ${l.fog.color} ${r2(l.fog.density)}`,
+    `skyTint ${l.skyTint.color} ${r2(l.skyTint.strength)}`,
+    `lut ${l.lut} ${r2(l.lutStrength)}`,
+  ].join(' · ');
 }
 
 /** The thread before the new message, compact: who said what and what each answer did. */
