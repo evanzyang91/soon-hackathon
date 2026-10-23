@@ -2,7 +2,7 @@
 // A Look and a list of SceneEdits live in `scene-<n>/edits.json` and are applied at render time
 // on both laptop and phone — nothing here re-renders or re-generates anything by itself.
 import { z } from 'zod';
-import { DynamicElement, Vec3 } from './schema';
+import { DynamicElement, LutPreset, Vec3 } from './schema';
 
 const unit = z.number().min(0).max(1);
 
@@ -24,7 +24,8 @@ export const Light = z.object({
 });
 export type Light = z.infer<typeof Light>;
 
-export const LutPreset = z.enum(['neutral', 'teal-orange', 'noir', 'kodak', 'bleach', 'cool-night', 'golden']);
+/** LUT presets live in shared/schema.ts (the planner's LookSeed names them too); re-exported here. */
+export { LutPreset } from './schema';
 
 export const Look = z.object({
   name: z.string().default('Default'),

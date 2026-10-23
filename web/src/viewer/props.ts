@@ -241,15 +241,44 @@ function generic(color: string): Prop {
 const DEFAULT_COLOR: Record<DynamicElement['kind'], string> = {
   car: '#c0392b',
   bus: '#e8c33a',
+  truck: '#4f6d8f',
+  motorcycle: '#2b2b2b',
   bicycle: '#2e6bd6',
-  bird: '#4a4a4a',
   pedestrian: '#5c7d5a',
+  bird: '#4a4a4a',
+  dog: '#3b2a1a',
+  horse: '#5a3a22',
+  wagon: '#7a5a3a',
+  boat: '#a0522d',
+  dragon: '#3a4a3a',
+  drone: '#8a8f99',
+  spacecraft: '#c8ccd4',
   generic: '#9b59b6',
+};
+
+// Builders per kind. The genre kinds (truck … spacecraft) start as the generic marker until the
+// props work package (docs/PLAN-v3.md) gives each its own procedural body.
+const BUILDERS: Record<DynamicElement['kind'], (color: string) => Prop> = {
+  car,
+  bus,
+  truck: generic,
+  motorcycle: generic,
+  bicycle,
+  pedestrian,
+  bird,
+  dog: generic,
+  horse: generic,
+  wagon: generic,
+  boat: generic,
+  dragon: generic,
+  drone: generic,
+  spacecraft: generic,
+  generic,
 };
 
 export function createProp(kind: DynamicElement['kind'], label = ''): Prop {
   const color = propColor(label, DEFAULT_COLOR[kind]);
-  const prop = { car, bus, bicycle, bird, pedestrian, generic }[kind](color);
+  const prop = BUILDERS[kind](color);
   prop.object.name = `prop:${kind}`;
   return prop;
 }

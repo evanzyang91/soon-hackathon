@@ -230,9 +230,18 @@ const v3 = (p: Point): Vec3 => [round3(p.x), round3(p.y), round3(p.z)];
 const DEFAULT_SPEED: Record<DynamicElement['kind'], number> = {
   car: 8,
   bus: 6,
+  truck: 7,
+  motorcycle: 9,
   bicycle: 5,
-  bird: 6,
   pedestrian: 1.4,
+  bird: 6,
+  dog: 2.5,
+  horse: 4,
+  wagon: 2.5,
+  boat: 3,
+  dragon: 10,
+  drone: 4,
+  spacecraft: 15,
   generic: 3,
 };
 
