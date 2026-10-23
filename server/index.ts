@@ -20,7 +20,7 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.png': 'image/png',
-  '.jpg': 'image/jpeg', // also chat uploads (uploads/<id>.jpg)
+  '.jpg': 'image/jpeg', // also chat uploads (uploads/<id>.jpg), shot frames (scene-<n>/shots/<id>.jpg)
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', // Marble thumbnails, chat uploads
   '.gltf': 'model/gltf+json',
