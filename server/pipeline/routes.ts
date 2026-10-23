@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
+import { handleShotsRequest, shotsRoute, shotsStoreFor } from './shots.ts';
 import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
 import { chatRoute, handleChatRequest, type ChatRouteOptions } from './chat/routes.ts';
 
@@ -100,6 +101,8 @@ export function createPipelineHandler(
     if (parts[0] !== 'api' || parts[1] !== 'projects') return false;
     // GET / PUT /api/projects/:id/scenes/:n/edits (look + scene edits, server/pipeline/edits.ts)
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
+    // GET / PUT …/scenes/:n/shots, PUT …/shots/:shotId/frame, GET …/shotlist.csv (server/pipeline/shots.ts)
+    if (shotsRoute(parts)) return handleShotsRequest(req, res, parts, shotsStoreFor(getStore()));
     // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
     if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
     // uploads, chat, chat/confirm, generate (project chat, server/pipeline/chat/)
