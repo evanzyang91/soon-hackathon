@@ -104,6 +104,16 @@ export class PhoneView {
     this.resize();
   }
 
+  /** The last scene load failed (the viewfinder shows instead). */
+  get loadFailed(): boolean {
+    return this.mode !== 'webgl' && this.status.startsWith('scene failed');
+  }
+
+  /** False once WebGL is missing or has failed for good (the viewfinder is all there is). */
+  get canRender3d(): boolean {
+    return !!this.viewport && !this.glFailed;
+  }
+
   get manifestUrl(): string | null {
     return this.runtime?.manifestUrl ?? this.loadingUrl;
   }

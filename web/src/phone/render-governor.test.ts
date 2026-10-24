@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEVELS, RenderGovernor } from './render-governor.ts';
+import { LEVELS, perfLabel, RenderGovernor } from './render-governor.ts';
 
 /** Simulate `seconds` of a 20 ms timer whose gaps are `gap(t)` ms. */
 function feed(g: RenderGovernor, startMs: number, seconds: number, gap: (t: number) => number) {
@@ -65,5 +65,17 @@ describe('RenderGovernor', () => {
     feed(g, 0, 10, () => 800);
     expect(g.level).toBe(0);
     expect(g.shouldRender(5)).toBe(true);
+  });
+});
+
+describe('perfLabel', () => {
+  it('shows fps and the governor level while 3D renders, and why when it does not', () => {
+    expect(perfLabel({ view: 'webgl', level: 0, fps: 47.6 })).toBe('48 fps · full');
+    expect(perfLabel({ view: 'webgl', level: 2, fps: 9.8 })).toBe('10 fps · low');
+    expect(perfLabel({ view: 'webgl', level: LEVELS.length - 1, fps: 0 })).toBe('3D paused');
+    expect(perfLabel({ view: 'loading', level: 0, fps: 0 })).toBe('loading 3D…');
+    expect(perfLabel({ view: 'waiting', level: 0, fps: 0 })).toBe('no scene yet');
+    expect(perfLabel({ view: 'off', level: 0, fps: 0 })).toBe('2D viewfinder');
+    expect(perfLabel({ view: 'unavailable', level: 0, fps: 0 })).toBe('3D unavailable');
   });
 });

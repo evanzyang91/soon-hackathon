@@ -13,6 +13,9 @@ export interface RenderLevel {
   render3d: boolean;
 }
 
+/** Short names for the HUD's perf label, one per level. */
+export const LEVEL_NAMES = ['full', 'reduced', 'low', 'minimal', 'paused'] as const;
+
 export const LEVELS: readonly RenderLevel[] = [
   { minIntervalMs: 0, pixelRatio: 1.5, render3d: true },
   { minIntervalMs: 50, pixelRatio: 1, render3d: true },
@@ -114,4 +117,34 @@ export class RenderGovernor {
     this.clean = 0;
     this.onChange?.(level, reason);
   }
+}
+
+/** What the phone's view is doing, for the HUD's perf label. */
+export interface PerfState {
+  /**
+   * off = 2D only by choice (?3d=0); unavailable = no WebGL / 3D failed; waiting = no scene from
+   * the laptop yet; loading = scene loading; webgl = 3D on screen (subject to the governor).
+   */
+  view: 'off' | 'unavailable' | 'waiting' | 'loading' | 'webgl';
+  level: number;
+  /** 3D frames drawn per second, measured. */
+  fps: number;
+}
+
+/** Tiny bottom-right HUD label, e.g. "48 fps · full", "3D paused", so a frozen view is explained. */
+export function perfLabel(p: PerfState): string {
+  switch (p.view) {
+    case 'off':
+      return '2D viewfinder';
+    case 'unavailable':
+      return '3D unavailable';
+    case 'waiting':
+      return 'no scene yet';
+    case 'loading':
+      return 'loading 3D…';
+  }
+  const lvl = LEVELS[p.level];
+  if (!lvl?.render3d) return '3D paused';
+  const fps = Number.isFinite(p.fps) ? Math.round(p.fps) : 0;
+  return `${fps} fps · ${LEVEL_NAMES[p.level]}`;
 }

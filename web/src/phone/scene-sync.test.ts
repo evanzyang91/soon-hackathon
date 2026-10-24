@@ -2,7 +2,13 @@ import { Euler, Quaternion } from 'three';
 import { describe, expect, it } from 'vitest';
 import type { SceneState } from '@shared/protocol';
 import type { SceneManifest } from '@shared/schema';
-import { anchorFor, captionFor, DialogueActivity, SceneClockTracker } from './scene-sync.ts';
+import {
+  anchorFor,
+  captionFor,
+  clockLabel,
+  DialogueActivity,
+  SceneClockTracker,
+} from './scene-sync.ts';
 import { attitudeOf } from './viewfinder.ts';
 
 const q = (yaw: number, pitch = 0) => {
@@ -105,5 +111,14 @@ describe('DialogueActivity (ACTION / CUT)', () => {
     expect(d.running(null, 100)).toBe(false);
     d.reset();
     expect(d.running(state({ speakingLineId: null }), 100)).toBe(false);
+  });
+});
+
+describe('clockLabel', () => {
+  it('shows play / pause and m:ss', () => {
+    expect(clockLabel(4.7, true)).toBe('▶ 0:04');
+    expect(clockLabel(62, false)).toBe('⏸ 1:02');
+    expect(clockLabel(-3, false)).toBe('⏸ 0:00');
+    expect(clockLabel(NaN, true)).toBe('▶ 0:00');
   });
 });

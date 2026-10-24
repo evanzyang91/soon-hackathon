@@ -14,12 +14,13 @@ import { RelayClient, relayUrl, type ConnState } from './relay-client.ts';
 import {
   anchorFor,
   captionFor,
+  clockLabel,
   DialogueActivity,
   SceneClockTracker,
   type Anchor,
 } from './scene-sync.ts';
 import { OrientationTracker, screenAngle, toQuat } from './sensors.ts';
-import { LEVELS, RenderGovernor } from './render-governor.ts';
+import { LEVELS, perfLabel, RenderGovernor, type PerfState } from './render-governor.ts';
 import { PoseThrottle, poseKey } from './throttle.ts';
 import { unlockAudio } from './audio.ts';
 import { bindUi } from './ui.ts';
@@ -66,6 +67,10 @@ let lastMotionAt = -Infinity;
 let lastMotionTs = 0;
 let lastPumpAt = performance.now();
 let gestures: Gestures | null = null;
+/** The 3D module failed to load: only the viewfinder can show. */
+let viewUnavailable = false;
+/** Manifest URL the "press Play" hint was last shown for. */
+let hintedScene: string | null = null;
 let stick: TouchStick | null = null;
 let heightSlider: TouchStick | null = null;
 let keys: KeyboardWalk | null = null;
@@ -88,6 +93,8 @@ const debug = {
   viewMode: 'viewfinder' as 'viewfinder' | 'webgl',
   /** Smoothed main-thread cost of one 3D frame (ms). */
   renderMs: 0,
+  /** 3D frames drawn per second (measured each second; what the HUD's perf label shows). */
+  fps: 0,
   /** RenderGovernor level: 0 = full quality … 4 = 3D paused (see render-governor.ts). */
   renderLevel: 0,
   framesRendered: 0,
@@ -282,6 +289,7 @@ async function initView() {
     if (scene) void loadScene(scene.manifestUrl);
   } catch (err) {
     console.warn('[phone] 3D view unavailable', err);
+    viewUnavailable = true;
     ui.setViewMode('viewfinder');
   }
 }
@@ -425,6 +433,8 @@ async function fetchManifest(url: string) {
     if (url !== manifestUrlLoaded) return;
     manifest = parsed.data;
     refreshAnchor();
+    // no 3D load to wait for: the scene is as loaded as it gets
+    if (NO_3D || viewUnavailable || (view && !view.canRender3d)) sceneReady(url);
     if (scene) {
       const cap = captionFor(manifest, scene.speakingLineId);
       ui.setCaption(cap ? `${cap.speaker}: ${cap.text}` : '');
@@ -437,6 +447,14 @@ async function fetchManifest(url: string) {
 async function loadScene(url: string) {
   if (!view) return;
   await view.load(url);
+  if (view.sceneRuntime?.manifestUrl === url || view.loadFailed || !view.canRender3d) sceneReady(url);
+}
+
+/** A newly loaded scene that is not playing gets a hint about who starts it. */
+function sceneReady(url: string) {
+  if (url !== manifestUrlLoaded || hintedScene === url) return;
+  hintedScene = url;
+  if (!clock.isPlaying) ui.toast('Laptop: press Play or tap ACTION to start the scene', 2000);
 }
 
 // -- loops -------------------------------------------------------------------------------------
@@ -479,6 +497,18 @@ function pump(now: number) {
     debug.posesSent++;
     debug.lastPose = pose;
   }
+}
+
+let fpsAt = performance.now();
+let fpsFrames = 0;
+
+function perfState(): PerfState {
+  const s = { level: debug.renderLevel, fps: debug.fps };
+  if (NO_3D) return { ...s, view: 'off' };
+  if (viewUnavailable || (view && (!view.canRender3d || view.loadFailed)))
+    return { ...s, view: 'unavailable' };
+  if (view?.mode === 'webgl') return { ...s, view: 'webgl' };
+  return { ...s, view: scene ? 'loading' : 'waiting' };
 }
 
 let lastFrameAt = performance.now();
@@ -529,6 +559,13 @@ function frame(now: number) {
   if (recording) ui.setRecordTime((now - recordStartedAt) / 1000);
   debug.sceneRunning = dialogue.running(scene, now);
   ui.setAction(debug.sceneRunning);
+  ui.setClock(scene ? clockLabel(clock.time(now), clock.isPlaying) : '', clock.isPlaying);
+  if (now - fpsAt >= 1000) {
+    debug.fps = Math.round(((debug.framesRendered - fpsFrames) * 10000) / (now - fpsAt)) / 10;
+    fpsAt = now;
+    fpsFrames = debug.framesRendered;
+    ui.setPerf(perfLabel(perfState()));
+  }
   if (view && now - lastVoiceCheck > 100) {
     lastVoiceCheck = now;
     const v = view.voiceState();

@@ -210,6 +210,27 @@
           monospace;
         color: var(--accent);
       }
+      #clock {
+        font:
+          600 12px ui-monospace,
+          Menlo,
+          monospace;
+        color: var(--dim);
+      }
+      #clock[data-playing='true'] {
+        color: var(--ok);
+      }
+      #perf {
+        position: absolute;
+        right: var(--gutter-r);
+        bottom: max(6px, env(safe-area-inset-bottom));
+        font:
+          10px ui-monospace,
+          Menlo,
+          monospace;
+        color: var(--dim);
+        text-shadow: 0 1px 2px #000;
+      }
       #rec-badge {
         color: var(--rec);
         font:
@@ -528,7 +549,10 @@
         >
       </div>
       <div id="top-center">
-        <span class="pill"><span id="cam-name">No camera</span><span id="lens">--mm</span></span>
+        <span class="pill"
+          ><span id="cam-name">No camera</span><span id="lens">--mm</span
+          ><span id="clock" hidden title="Scene clock (the laptop plays / pauses it)">⏸ 0:00</span></span
+        >
         <span class="pill" id="rec-badge" hidden><span id="rec-time">00:00</span></span>
       </div>
       <div id="top-right">
@@ -554,6 +578,7 @@
         <div id="height-knob"></div>
       </div>
       <div id="caption" hidden></div>
+      <div id="perf" title="3D frames per second · render quality (the governor lowers it when the phone is too slow)"></div>
       <div id="toast" hidden></div>
       <div id="rotate">Rotate to landscape for the widest frame</div>
     </div>
