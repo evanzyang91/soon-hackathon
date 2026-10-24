@@ -21,6 +21,15 @@
 //       `calibrate <project>/scene-<n>/world --reuse --no-vision --write` refreshes an existing
 //       scene's ground (ground.json + its manifest) offline.
 //   generate-world / run also calibrate the new world unless --no-calibrate (or CALIBRATE=0).
+//   pnpm tsx server/pipeline/cli.ts stage <projectDir> <sceneIndex> [--write] [--reuse]
+//                                  [--before-after out.png] [--views dir] [--report out.json]
+//       Stages the scene's actors on its world (staging.ts: Claude picks each character's mark on
+//       free ground seen from the start camera; ~$0.05-0.15 per scene) and prints old → new marks
+//       with Claude's notes and reasoning. Nothing is written without --write, which stores
+//       scene-<n>/staging.json and rewrites plan.blocking in scene-<n>/manifest.json (plan.json
+//       keeps the planner's). --reuse takes a current staging.json instead of asking again.
+//       --before-after renders the planner's vs the staged marks from the start camera (+ a second
+//       angle); --views keeps the two images Claude saw.
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { env } from '../env.ts';
@@ -36,6 +45,19 @@ import {
 } from './calibrate.ts';
 import { describeField, groundField } from './calibrate-ground.ts';
 import { readJson } from './fsutil.ts';
+import { ScreenplayPlan } from '../../shared/schema.ts';
+import {
+  applyStagingToManifest,
+  formatStaging,
+  groundMarks,
+  measureGroundAtMarks,
+  readStaging,
+  renderStagingBeforeAfter,
+  stagedBlocking,
+  stageScene,
+  stagingCurrent,
+  writeStaging,
+} from './staging.ts';
 import { generateWorld, marbleModel } from './marble.ts';
 import { MOCK_WORLD_DIR, writeMockWorld } from './mock-world.ts';
 import { defaultStore } from './project.ts';
@@ -184,6 +206,47 @@ async function main() {
       }
       return;
     }
+    case 'stage': {
+      const [dir, n] = pos;
+      if (!dir || n === undefined || !/^\d+$/.test(n))
+        throw new Error(
+          'usage: stage <projectDir> <sceneIndex> [--write] [--reuse] [--before-after out.png] [--views dir] [--report out.json]',
+        );
+      const projectDir = resolve(dir);
+      const plan = ScreenplayPlan.parse(await readJson(join(projectDir, 'plan.json')));
+      const scene = plan.scenes[Number(n)];
+      if (!scene) throw new Error(`no scene ${n} in ${dir}/plan.json`);
+      const sceneDir = join(projectDir, `scene-${n}`);
+      const worldDir = join(sceneDir, 'world');
+      const asset = await readWorldAsset(worldDir);
+      const inputs = { worldId: asset.worldId, scene, characters: plan.characters, factor: asset.scaleCalibration?.factor ?? 1 };
+      const prev = flags.reuse === true ? await readStaging(sceneDir) : undefined;
+      let report = prev && stagingCurrent(prev, inputs) ? prev : undefined;
+      if (flags.reuse === true) log(report ? 'reusing scene staging.json (no Claude call)' : 'no current staging.json for this scene; staging');
+      if (!report) {
+        if (!env.keys.anthropic) throw new Error('ANTHROPIC_API_KEY is not set (.env.local / .env)');
+        report = await stageScene({ worldDir, asset, scene, characters: plan.characters, log, saveViewsTo: views0(flags) });
+      }
+      console.log(formatStaging(report, `${scene.heading} (${dir})`));
+      const out = str(flags.report);
+      if (out) await writeFile(resolve(out), `${JSON.stringify(report, null, 2)}\n`);
+      if (flags.write === true) {
+        await writeStaging(sceneDir, report);
+        const m = await applyStagingToManifest(sceneDir, report, log);
+        log(`wrote ${sceneDir}/staging.json${m ? ' and plan.blocking in manifest.json' : ' (manifest.json not changed: missing, another world, or nothing staged)'}`);
+        const staged = stagedBlocking(report, { asset, scene, characters: plan.characters });
+        if (staged) {
+          const next = await measureGroundAtMarks(worldDir, asset, groundMarks(staged, scene.blocking), { log, manifest: true });
+          log(`floor offset ${next.floorOffsetMeters ?? '—'} and the ground field re-measured at the staged marks (world-asset.json, ground.json, manifest.json)`);
+        }
+      }
+      const ba = str(flags['before-after']);
+      if (ba) {
+        await renderStagingBeforeAfter(worldDir, report, resolve(ba), { log, characters: plan.characters });
+        log(`before/after image: ${ba}`);
+      }
+      return;
+    }
     case 'make-mock-world': {
       const r = await writeMockWorld();
       log(
@@ -193,7 +256,7 @@ async function main() {
     }
     default:
       console.log(
-        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | make-mock-world  (see header of server/pipeline/cli.ts)',
+        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | stage <projectDir> <sceneIndex> | make-mock-world  (see header of server/pipeline/cli.ts)',
       );
       process.exitCode = cmd ? 1 : 0;
   }
