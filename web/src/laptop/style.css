@@ -215,6 +215,10 @@ button.icon {
 .badge.scale {
   letter-spacing: 0.02em;
   cursor: help;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .badge.scale.high {
   color: var(--ok);
@@ -360,12 +364,14 @@ button.icon {
   backdrop-filter: blur(4px);
 }
 #hud-title {
+  white-space: nowrap;
   font-weight: 600;
   text-shadow: 0 1px 3px #000;
 }
 #hud-badges {
   display: flex;
   gap: 4px;
+  min-width: 0;
 }
 .hud-center {
   position: absolute;
