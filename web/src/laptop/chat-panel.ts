@@ -166,6 +166,7 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     else left.insertBefore(root, projectsCard);
     home.hidden = !homeMode;
     document.body.classList.toggle('chat-docked', docked);
+    if (!docked) document.body.classList.remove('chat-wide');
     grow();
     renderAll(true);
   };
@@ -316,6 +317,11 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     firstAttach.delete(id);
     const ok = await sendMessage(id, '', queued);
     if (ok && generateAfterFirst.delete(id)) await startGenerate(id);
+    // not sent: the photos go back into the composer (with their targets) to try again
+    if (!ok && selected === id && !drafts.length) {
+      drafts = queued;
+      renderComposer();
+    }
     flushing.delete(id);
   };
 
@@ -849,7 +855,8 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
         : p.draft || parsing(p)
         ? 'Change the plan in words: “make Theo taller”, “scene 2 is a diner”… or attach a photo'
         : 'Ask for a change: “Maya’s second line is ‘I let it go.’”, “scene 2 is a diner”… or attach a photo';
-    input.disabled = busy;
+    // read-only, not disabled: a disabled field drops focus (and the widened drawer with it)
+    input.readOnly = busy;
     input.classList.toggle('busy', busy);
     sendBtn.disabled = busy || preparing();
     sendBtn.title = isNew ? 'Plan the scenes and the cast first; nothing is generated yet (⌘Enter)' : 'Send (Enter)';
@@ -967,6 +974,22 @@ export function mountChatPanel(director: Director, projects: ProjectsPanel, chat
     window.addEventListener(ev, (e) => {
       if (hasFiles(e)) e.preventDefault();
     });
+
+  // the docked chat widens over the viewport while it is in use, until something outside the
+  // drawer is used (focus alone would collapse it whenever a pressed button turns disabled)
+  const setWide = (on: boolean) => document.body.classList.toggle('chat-wide', on && !!docked);
+  root.addEventListener('focusin', () => setWide(true));
+  root.addEventListener('pointerdown', () => setWide(true));
+  for (const ev of ['pointerdown', 'focusin'] as const)
+    document.addEventListener(ev, (e) => {
+      if (!left.contains(e.target as Node | null)) setWide(false);
+    });
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menuFor && docked) {
+      setWide(false);
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+  });
 
   // ---- wiring -------------------------------------------------------------------------------------
   projects.onPick((id) => select(id));
