@@ -18,7 +18,7 @@
 //   fps       laptop 1600×900 (+PiP) and phone 844×390 @ DPR 3 with the full post pass, bloom,
 //             DOF, fog and a light (--uncapped: no vsync, to see the headroom above 60)
 //   all       every check above
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import * as THREE from 'three';
@@ -518,7 +518,6 @@ async function main() {
   }
   console.log(JSON.stringify(results, null, 2));
   await writeFile(join(out, `${check}.json`), JSON.stringify(results, null, 2));
-  void rm;
 }
 
 main().catch((e) => {
