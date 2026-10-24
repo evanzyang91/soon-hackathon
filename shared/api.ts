@@ -13,7 +13,16 @@
 // GET    /api/rooms/new              → { room: string, phoneUrl: string }   (relay)
 // WS     /ws                         shared/protocol.ts
 //
+// GET    /api/projects/:id/scenes/:n/edits            → SceneEdits (shared/look.ts); 200 with defaults when absent
+// PUT    /api/projects/:id/scenes/:n/edits            body SceneEdits (revision must match current, else 409) → SceneEdits
+// POST   /api/projects/:id/scenes/:n/reprompt         body { prompt: string, selection?: { point?: Vec3, region?: {center, size, shape} },
+//                                                     view?: { image: string (jpeg base64 ≤ 300 KB), position, quaternion, fovDeg, aspect } }
+//                                                     → { plan: EditPlan, edits: SceneEdits }  (cheap scopes are applied and saved;
+//                                                       world-regen and clarify are returned unapplied)
+// POST   /api/projects/:id/scenes/:n/regen            body { plan: EditPlan['regen'] } → ProjectStatus (202; runs the world stage again)
+//
 // Manifest URL shape: /projects/<id>/scene-<index>/manifest.json
+// Edits file:         /projects/<id>/scene-<index>/edits.json
 export const api = {
   projects: '/api/projects',
   project: (id: string) => `/api/projects/${id}`,
@@ -24,4 +33,8 @@ export const api = {
   newRoom: '/api/rooms/new',
   ws: '/ws',
   manifest: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/manifest.json`,
+  editsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/edits.json`,
+  edits: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/edits`,
+  reprompt: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/reprompt`,
+  regen: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/regen`,
 } as const;
