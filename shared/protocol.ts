@@ -22,7 +22,10 @@ export const PhonePose = z.object({
   q: Quat,
   /** Handheld translation nudge in meters, world frame, relative to the attached camera. */
   nudge: Vec3,
+  /** Vertical field of view in degrees (three.js PerspectiveCamera convention). */
   fovDeg: z.number(),
+  /** Viewport width / height of the phone's render; 16:9 is assumed when absent. */
+  aspect: z.number().positive().optional(),
   recording: z.boolean().default(false),
 });
 export type PhonePose = z.infer<typeof PhonePose>;
