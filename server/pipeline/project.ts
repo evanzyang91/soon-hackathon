@@ -59,6 +59,7 @@ import {
   type CalibrateOptions,
   type CalibrationReport,
 } from './calibrate.ts';
+import { storedGroundField, writeGroundField } from './calibrate-ground.ts';
 import { parseFountain } from './fountain.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
@@ -747,12 +748,44 @@ export class ProjectStore {
     }
   }
 
+  /** The scale step, then the ground field step, of a world just made, copied or regenerated. */
+  private async calibrateStep(
+    st: ProjectStatus,
+    scene: ScenePlan,
+    outDir: string,
+    asset: WorldAsset,
+    log: (m: string) => void,
+  ): Promise<{ asset: WorldAsset; note: string }> {
+    const scaled = await this.scaleStep(st, scene, outDir, asset, log);
+    return { ...scaled, asset: await this.groundStep(scene, outDir, scaled.asset, log) };
+  }
+
+  /**
+   * Every world, mock included (local, ~1 s for a 2M-splat Marble world, instant for the mock):
+   * makes sure world-asset.json names a current ground height field (calibrate-ground.ts), the
+   * ground each actor's feet are put on. Never throws; without a field actors stand on the median
+   * floor as before.
+   */
+  private async groundStep(scene: ScenePlan, outDir: string, asset: WorldAsset, log: (m: string) => void): Promise<WorldAsset> {
+    try {
+      if (await storedGroundField(outDir, asset)) return asset;
+      const marks = scene.blocking.map((b) => [b.position[0], b.position[2]] as const);
+      // the mock floor is a sparse 0.14 m lattice: 2 splats make a layer there
+      const next = await writeGroundField(outDir, asset, { marks, log, minLayer: asset.provider === 'mock' ? 2 : undefined });
+      await writeJsonAtomic(join(outDir, ASSET_FILE), next);
+      return next;
+    } catch (e) {
+      log(`ground field not measured: ${errMsg(e)}; actors stand on the median floor`);
+      return asset;
+    }
+  }
+
   /**
    * Live Marble worlds only: measures the scale once (an existing scaleCalibration, e.g. carried
    * by a library copy, or a previous scale-calibration.json for the same world id is reused) and
    * writes it into world-asset.json and the library copy. Never throws.
    */
-  private async calibrateStep(
+  private async scaleStep(
     st: ProjectStatus,
     scene: ScenePlan,
     outDir: string,
@@ -770,7 +803,7 @@ export class ProjectStore {
         const report = await withGround(redecide(prev), outDir, marks);
         if (asset.scaleCalibration.headline && asset.floorOffsetMeters === report.floorOffsetMeters)
           return { asset, note: '' };
-        return { asset: await writeCalibration(outDir, report, { log }), note: '' };
+        return { asset: await writeCalibration(outDir, report, { log, marks }), note: '' };
       } catch (e) {
         log(`floor offset not measured: ${errMsg(e)}`);
         return { asset, note: '' };
@@ -795,7 +828,7 @@ export class ProjectStore {
           return { asset, note: '' };
         }
       }
-      const next = await writeCalibration(outDir, report, { libraryDir: this.libraryDir, log });
+      const next = await writeCalibration(outDir, report, { libraryDir: this.libraryDir, log, marks });
       const c = report.calibration;
       log(`scale calibration: ×${c.factor} (${c.confidence}, ${c.method}): ${c.evidence}`);
       return { asset: next, note: `; scale ×${c.factor.toFixed(2)} (${c.confidence})` };
@@ -1128,6 +1161,7 @@ export class ProjectStore {
         ) as WorldAsset['spz'],
         ...(rawWorld.colliderGlb ? { colliderGlb: prefix + rawWorld.colliderGlb } : {}),
         ...(rawWorld.thumbnail ? { thumbnail: prefix + rawWorld.thumbnail } : {}),
+        ...(rawWorld.ground ? { ground: { ...rawWorld.ground, file: prefix + rawWorld.ground.file } } : {}),
       };
       const actorAssets: ActorAsset[] = [];
       for (const cid of scene.characterIds) {
