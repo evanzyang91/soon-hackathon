@@ -12,8 +12,8 @@
 //   1. reference image: OpenAI `gpt-image-1` (then gpt-image-1.5 / gpt-image-2 when the account
 //      no longer serves it), full-body front-facing studio shot of
 //      character.description, 1024x1536 -> <projectDir>/actors/<id>/reference.png (kept/reused)
-//   2. `python3 worker/run_actor.py --image reference.png --out actors/<id>` (Orbis LHM port on
-//      Modal L4; receipt-first, so a crashed/timed-out call is recovered, never paid twice)
+//   2. `python3 worker/run_actor.py --image reference.png --out actors/<id>` (LHM on a Modal
+//      L4; receipt-first, so a crashed/timed-out call is recovered, never paid twice)
 //   3. -> { kind: 'splat-sequence', sequenceDir: 'actors/<id>/sequence', fps, nativeHeight
 //      (measured from frame_000.ply), heightMeters: 1.7 }. The worker also writes the runtime rig
 //      (sequence.json `rig` -> rig.json, rig-splats.bin, motion-library.json, motion-clips.bin)

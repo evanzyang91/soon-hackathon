@@ -1,4 +1,4 @@
-// World Labs Marble text → world client (port of OrbisEngine scripts/marble_world.py ideas).
+// World Labs Marble text → world client with durable receipts.
 //
 // Every remote step is bracketed by a durable receipt in <outDir>/marble-receipt.json so a crash
 // or restart never pays for a second generation:
