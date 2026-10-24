@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { Vec3 } from '@shared/schema';
-import { applyWorldTransform, rawFloorY, worldTransform } from './transform';
+import { applyWorldTransform, calibrationFactor, rawFloorY, worldTransform } from './transform';
 
 const close = (a: Vec3, b: Vec3) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i]!, 6));
 
@@ -65,5 +65,27 @@ describe('worldTransform', () => {
     const p: Vec3 = [0.3, 1.2, -5];
     const v = new THREE.Vector3(...p).applyMatrix4(o.matrixWorld);
     close([v.x, v.y, v.z], applyWorldTransform(t, p));
+  });
+
+  it('applies a scale calibration on top of the metric scale with the floor still at y = 0', () => {
+    const w = { metricScaleFactor: 0.8, groundPlaneOffset: 1.4, opencvFrame: true };
+    const t = worldTransform({ ...w, scaleCalibration: { factor: 0.9 } });
+    expect(t.scale).toBeCloseTo(0.72);
+    // raw floor point stays on the floor; everything else is 0.9× as far from the origin column
+    close(applyWorldTransform(t, [2, 1.4 / 0.8, -3]), [1.6 * 0.9, 0, 2.4 * 0.9]);
+    // the source camera is now 0.9 × gpo above the floor
+    close(applyWorldTransform(t, [0, 0, 0]), [0, 1.4 * 0.9, 0]);
+    // a 2 m tall thing at Marble scale becomes 1.8 m
+    const base = applyWorldTransform(t, [1, 1.4 / 0.8, -2]);
+    const top = applyWorldTransform(t, [1, 1.4 / 0.8 - 2 / 0.8, -2]);
+    expect(top[1] - base[1]).toBeCloseTo(1.8, 6);
+  });
+
+  it('ignores a missing or invalid calibration', () => {
+    expect(calibrationFactor({})).toBe(1);
+    expect(calibrationFactor({ scaleCalibration: null })).toBe(1);
+    expect(calibrationFactor({ scaleCalibration: { factor: 0 } })).toBe(1);
+    expect(calibrationFactor({ scaleCalibration: { factor: Number.NaN } })).toBe(1);
+    expect(calibrationFactor({ scaleCalibration: { factor: 1.25 } })).toBe(1.25);
   });
 });
