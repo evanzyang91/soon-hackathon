@@ -4,7 +4,7 @@ Paste a short-film screenplay and get one walkable 3D scene per screenplay scene
 Marble gaussian-splat world, the characters standing in it as LHM gaussian avatars (or a tinted
 mannequin), their dialogue voiced with TTS, and moving props for the action lines ("a red sedan
 drives past"). Fly around the scene on the laptop, drop virtual cameras, then pair a phone in its
-browser (no app) and use it as the handheld camera: its orientation sensors pan, tilt and roll
+browser and use it as the handheld camera: its orientation sensors pan, tilt and roll
 the shot, its accelerometer adds handheld sway, and its frustum and live view appear on the
 laptop while the actors speak their lines.
 
