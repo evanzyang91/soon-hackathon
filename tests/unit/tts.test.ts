@@ -78,7 +78,7 @@ describe('mp3DurationSeconds', () => {
 
 describe('provider and voice selection', () => {
   const keys = (o: Partial<{ openai: string; elevenlabs: string }>) =>
-    ({ marble: '', anthropic: '', openai: '', elevenlabs: '', modalTokenId: '', modalTokenSecret: '', ...o }) as const;
+    ({ marble: '', anthropic: '', openai: '', elevenlabs: '', modalTokenId: '', modalTokenSecret: '', higgsfield: '', ...o }) as const;
   it('prefers ElevenLabs, then OpenAI, and is offline under MOCK or without keys', () => {
     expect(chooseProvider(true, keys({ openai: 'k', elevenlabs: 'k' }))).toBe('mock');
     expect(chooseProvider(false, keys({ openai: 'k', elevenlabs: 'k' }))).toBe('elevenlabs');
@@ -120,7 +120,7 @@ describe('synthesizeLine (MOCK)', () => {
 describe('synthesizeLine fallback flag', () => {
   let dir = '';
   afterEach(() => rm(dir, { recursive: true, force: true }));
-  const noKeys = { marble: '', anthropic: '', openai: '', elevenlabs: '', modalTokenId: '', modalTokenSecret: '' };
+  const noKeys = { marble: '', anthropic: '', openai: '', elevenlabs: '', modalTokenId: '', modalTokenSecret: '', higgsfield: '' };
 
   it('marks beeps produced outside MOCK as fallback (also on a cache hit), never under MOCK', async () => {
     dir = await mkdtemp(join(tmpdir(), 'tts-'));

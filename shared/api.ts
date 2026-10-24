@@ -9,7 +9,7 @@
 //        succeeds, rewrites every scene manifest to reference the new build; the previous build
 //        stays in place until then.
 // GET    /projects/:id/**            static built assets (manifests, spz, ply, mp3, glb)
-// GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts } }
+// GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts, higgsfield } }
 // GET    /api/rooms/new              → { room: string, phoneUrl: string }   (relay)
 // WS     /ws                         shared/protocol.ts
 //

@@ -24,6 +24,7 @@ export const env = {
     elevenlabs: process.env.ELEVENLABS_API_KEY ?? '',
     modalTokenId: process.env.MODAL_TOKEN_ID ?? '',
     modalTokenSecret: process.env.MODAL_TOKEN_SECRET ?? '',
+    higgsfield: process.env.HIGGSFIELD_API_KEY ?? '',
   },
   /** Project outputs; served at /projects/<id>/ . */
   dataDir: process.env.DATA_DIR ?? fileURLToPath(new URL('../data/projects/', import.meta.url)),
@@ -41,4 +42,5 @@ export const keyPresence = () => ({
   modal: !!env.keys.modalTokenId || !!process.env.MODAL_PROFILE,
   anthropic: !!env.keys.anthropic,
   tts: !!env.keys.openai || !!env.keys.elevenlabs,
+  higgsfield: !!env.keys.higgsfield,
 });
