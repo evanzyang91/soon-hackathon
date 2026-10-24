@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WorldAsset } from '../../shared/schema.ts';
-import { DRY_RUN_FILE, generateWorld, RECEIPT_FILE, type MarbleReceipt } from './marble.ts';
+import { DRY_RUN_FILE, generateWorld, promptKey, RECEIPT_FILE, type MarbleReceipt } from './marble.ts';
 import { encodeSpz } from './spz.ts';
 
 const KEY = 'wlt-test-key-123';
@@ -273,11 +274,30 @@ describe('marble client', () => {
         },
         permission: { public: false },
       },
+      // what a receipt would key the world by (a text prompt: its sha256, as before image prompts)
+      promptSha256: createHash('sha256').update('A rain-slick city street at night. No people.').digest('hex'),
     });
     expect(logs.some((l) => l.includes('DRY RUN') && l.includes(JSON.stringify(dry.body)))).toBe(
       true,
     );
     expect(logs.join('\n')).not.toContain(KEY);
+  });
+
+  it("keys a world by its prompt + photo: the same photo is never new, another photo (or is_pano) is", async () => {
+    const [a, b] = [join(outDir, 'a.png'), join(outDir, 'b.png')];
+    await writeFile(a, 'photo-a');
+    await writeFile(b, 'photo-b');
+    const prompt = 'A small diner at night, neon sign, empty booths. No people.';
+    const img = (file: string, isPano = false) => ({ prompt, imagePrompt: { file, isPano, textPrompt: prompt } });
+    // text prompts keep the plain sha256, so receipts written before image prompts still match
+    expect(await promptKey({ prompt })).toBe(createHash('sha256').update(prompt).digest('hex'));
+    const ka = await promptKey(img(a));
+    expect(ka).not.toBe(await promptKey({ prompt }));
+    expect(await promptKey(img(a))).toBe(ka);
+    await writeFile(join(outDir, 'a-copy.png'), 'photo-a'); // same bytes under another name
+    expect(await promptKey(img(join(outDir, 'a-copy.png')))).toBe(ka);
+    expect(await promptKey(img(b))).not.toBe(ka);
+    expect(await promptKey(img(a, true))).not.toBe(ka);
   });
 
   it('mock mode copies the fixture world without any network', async () => {

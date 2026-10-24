@@ -111,6 +111,57 @@ through. The cost is pale streaks when the face is seen from far to the side.
 
 Method, the artefacts that shaped it, and the numbers are in `worker/README.md` ("High detail").
 
+## Reference photos: build the actor, generate the world from the director's picture
+
+A photo attached in the project chat becomes `Character.referenceImage` (a person) or
+`ScenePlan.worldReference` (a place); the pipeline then uses it instead of the text alone:
+
+- **Actor** (`server/pipeline/actors.ts`): the upload is copied to `actors/<id>/reference-source.<ext>`
+  and normalised into the LHM-ready `reference.png` with OpenAI `images/edits` (gpt-image-1.5,
+  `input_fidelity: high`, 1024×1536: the same person standing full-body and front-facing on a plain
+  background), then built with LHM as usual. Without an OpenAI key, or in MOCK, the photo itself
+  stands in (a JPEG / WebP converted with `sips` or Pillow, letterboxed to a portrait). A photo
+  character never takes the actors-library avatar of the same id, and the library is never
+  refreshed from it. `reference.json` (which photo `reference.png` came from), `build-source.json`
+  (which reference a sequence / Modal receipt belongs to) and `referenceSha` in `actor.json` keep a
+  new photo from reusing or recovering the previous person's build; a High detail rebuild reuses
+  the normalised reference.
+- **World** (`project.ts` world stage, `marble.ts`): the photo is Marble's image prompt with the
+  scene's world prompt as its text, never a library world. Marble takes PNG only, so a JPEG / WebP
+  is converted once into `scene-<n>/world-reference/<sha>.png` (else the text prompt is used, with
+  a note). The receipt's `promptSha256` hashes the photo too: a new photo is a new world, the same
+  photo + prompt is never generated twice.
+- **After a change on a live project** the chat calls `ProjectStore.regenerateWorld(id, n)` (the
+  re-prompt regen machinery: the new world is built in `scene-<n>/regen/<key>/world/`, the old one
+  kept as `world.prev-<k>/`, calibrated and ground-measured like any world; look / actors / props
+  stay, region edits are dropped with a note; a world already generated from that photo is swapped
+  back in for free) and `ProjectStore.rebuildActorFromPlan(id, characterId)` (the build moves
+  into `actors/<id>/prev-<k>/`, the manifests show it until the new build lands; a height-only
+  change just rescales the same person, no GPU). Both show progress on the world stage / the
+  cast's rebuild chip, are idempotent while running and resume after a restart.
+
+The laptop shows the photo next to the character in the Scene tab's cast and next to the Marble
+thumbnail in the projects drawer. One live run on `fixtures/real-samples/reference-512.jpg` (a
+generated person standing in for the director's photo): about $0.10 for the image edit and $0.036
+of L4 (87 s), 330 s wall clock.
+
+![The director's photo, the normalised reference, the LHM avatar](docs/images/reference-photo-actor.png)
+
+![The photo-built avatar in the scene; the photos in the cast row and the scene row](docs/images/reference-photo-laptop.png)
+
+Under `MARBLE_DRY_RUN=1` the world from a photo logs the exact requests and gets the mock world:
+
+```text
+[scene 0] world: your photo uploads/16d81435102e39f1.webp: WEBP → PNG via sips for the Marble upload
+[scene 0] world: marble: DRY RUN (MARBLE_DRY_RUN=1), not uploaded: POST …/marble/v1/media-assets:prepare_upload
+  {"file_name":"16d81435102e39f1.png","kind":"image","extension":"png"} + PUT 260293 bytes
+[scene 0] world: marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST …/marble/v1/worlds:generate
+  {"display_name":"Photo Day · EXT. CITY STREET - NIGHT","model":"marble-1.1","world_prompt":{"type":"image",
+   "image_prompt":{"source":"media_asset","media_asset_id":"<dry-run: not uploaded>"},"is_pano":false,
+   "text_prompt":"Photorealistic exterior city street, … No people, no vehicles.","disable_recaption":true},
+   "permission":{"public":false}}
+```
+
 ## Look development
 
 The right panel's **Look** tab grades the open scene, and the paired phone renders the same frame.

@@ -11,6 +11,9 @@
 // MARBLE_DRY_RUN=1 (or opts.dryRun) stops before the POST: it logs the exact request body, writes
 // it to <outDir>/marble-dry-run.json, and returns the mock world (provider 'mock') so the rest of
 // a live pipeline continues without spending credits.
+// The receipt's promptSha256 is promptKey(): the text prompt's sha256, or for an image prompt a
+// hash over the prompt, the image bytes' sha256 and is_pano, so a new photo is a new world and the
+// same photo + prompt is recognised as already generated (reprompt/regen.ts findGeneratedWorld).
 // Downloads are atomic (tmp + rename), SPZs must be gzip with an NGSP header, and URLs in the
 // returned WorldAsset are filenames relative to outDir.
 import { createHash } from 'node:crypto';
@@ -72,6 +75,18 @@ export interface ImagePrompt {
   isPano: boolean;
   /** Optional text alongside the image (omitted: Marble captions the image itself). */
   textPrompt?: string;
+}
+
+/**
+ * What a world was generated from, as stored in the receipt's promptSha256: sha256(prompt) for a
+ * text prompt (unchanged, so receipts written before image prompts existed still match), else a
+ * hash over the prompt, the image file's sha256, is_pano and the image's text prompt.
+ */
+export async function promptKey(o: Pick<GenerateWorldOptions, 'prompt' | 'imagePrompt'>): Promise<string> {
+  const img = o.imagePrompt;
+  if (!img) return sha256(o.prompt);
+  const image = sha256(await readFile(img.file));
+  return sha256(`${o.prompt}\nimage:${image}\npano:${img.isPano}\ntext:${img.textPrompt ?? ''}`);
 }
 
 /** `POST /marble/v1/media-assets:prepare_upload` body for a PNG. */
@@ -162,13 +177,14 @@ export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAs
       await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), {
         upload: { ...upload, then: `PUT <upload_url> image/png ${bytes} bytes (${img.file})` },
         generate: { method: 'POST', url, body },
+        promptSha256: await promptKey(opts),
       });
       opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not uploaded: POST ${upload.url} ${JSON.stringify(upload.body)} + PUT ${bytes} bytes`);
       opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
       return mockWorld(opts.outDir, opts.log);
     }
     const body = generateRequestBody(opts);
-    await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), { method: 'POST', url, body });
+    await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), { method: 'POST', url, body, promptSha256: await promptKey(opts) });
     opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
     return mockWorld(opts.outDir, opts.log);
   }
@@ -226,7 +242,7 @@ class MarbleRun {
 
   async run(): Promise<WorldAsset> {
     let r = await readJson<MarbleReceipt>(this.receiptPath);
-    if (r && r.promptSha256 !== sha256(this.o.prompt)) {
+    if (r && r.promptSha256 !== (await promptKey(this.o))) {
       this.log(
         'receipt was made for a different prompt; reusing that world (delete the receipt to regenerate)',
       );
@@ -329,7 +345,7 @@ class MarbleRun {
       status: 'submitting',
       name: this.o.name,
       model: this.model,
-      promptSha256: sha256(this.o.prompt),
+      promptSha256: await promptKey(this.o),
       history: prev
         ? [
             ...(prev.history ?? []),

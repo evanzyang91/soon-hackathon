@@ -6,6 +6,7 @@ import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schem
 import { createProject, getHealth, listProjects, rebuildActor, retryStage } from './api';
 import type { Director } from './director';
 import { byId, h } from './dom';
+import { projectPlan, sceneThumbs } from './references';
 import { SAMPLE_SCREENPLAY, SAMPLE_TITLE } from './sample';
 
 type SceneJob = ProjectStatus['scenes'][number];
@@ -230,6 +231,7 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
     }
     for (const p of projects) {
       const scenes = h('div', { class: 'scenes' });
+      const plan = projectPlan(p, render);
       for (const job of p.scenes) {
         const ready = sceneReady(job);
         const current = director.projectId === p.id && director.sceneIndex === job.sceneIndex;
@@ -246,9 +248,7 @@ export function mountProjectsPanel(director: Director): ProjectsPanel {
             },
             h('span', { class: 'scene-idx' }, job.sceneIndex + 1),
             h('span', { class: 'scene-slug', title: job.slug }, job.heading ?? job.slug),
-            job.thumbnailUrl
-              ? h('img', { class: 'scene-thumb', src: job.thumbnailUrl, alt: '', loading: 'lazy' })
-              : null,
+            sceneThumbs(p.id, job.thumbnailUrl, plan?.scenes[job.sceneIndex]?.worldReference),
             h('span', { class: 'chips' }, ...STAGES.map((s) => chip(p, job, s))),
           ),
         );
