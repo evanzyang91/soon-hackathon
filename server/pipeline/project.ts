@@ -54,6 +54,7 @@ import {
   calibrateWorld,
   previousCalibration,
   redecide,
+  withGround,
   writeCalibration,
   type CalibrateOptions,
   type CalibrationReport,
@@ -712,16 +713,25 @@ export class ProjectStore {
     log: (m: string) => void,
   ): Promise<{ asset: WorldAsset; note: string }> {
     if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
+    const marks = scene.blocking.map((b) => [b.position[0], b.position[2]] as const);
     if (asset.scaleCalibration) {
-      // carried by a library copy; one written before headline / floorOffsetMeters existed is
-      // re-decided from its stored report (no measuring, no Claude call)
-      if (asset.scaleCalibration.headline) return { asset, note: '' };
-      const prev = await previousCalibration(outDir, asset.worldId).catch(() => null);
-      if (!prev) return { asset, note: '' };
-      return { asset: await writeCalibration(outDir, redecide(prev), { log }), note: '' };
+      // carried by a library copy: re-decided from its stored report (no Claude call), with the
+      // visible ground measured where this scene's actors stand (local, ~2 s)
+      try {
+        const prev = await previousCalibration(outDir, asset.worldId);
+        if (!prev) return { asset, note: '' };
+        const report = await withGround(redecide(prev), outDir, marks);
+        if (asset.scaleCalibration.headline && asset.floorOffsetMeters === report.floorOffsetMeters)
+          return { asset, note: '' };
+        return { asset: await writeCalibration(outDir, report, { log }), note: '' };
+      } catch (e) {
+        log(`floor offset not measured: ${errMsg(e)}`);
+        return { asset, note: '' };
+      }
     }
     try {
       let report = await previousCalibration(outDir, asset.worldId);
+      if (report) report = await withGround(report, outDir, marks);
       if (!report) {
         await this.setStage(st.id, scene.index, 'world', {
           status: 'running',
@@ -731,6 +741,7 @@ export class ProjectStore {
           interior: scene.interior,
           vision: this.calibrateVision && this.keys.anthropic,
           log,
+          marks,
         });
         if (!report.geometry && !report.vision && report.decision.method === 'none') {
           log(`scale calibration: nothing to measure (${report.visionSkipped ?? 'no collider'}); Marble scale kept`);

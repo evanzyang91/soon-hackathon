@@ -6,6 +6,7 @@ import { EXPECTED, type Measurement, type MeasurementKind } from './calibrate-ge
 import {
   calibrated,
   floorOffsetOf,
+  withGround,
   calibrateWorld,
   decide,
   evidenceText,
@@ -18,6 +19,20 @@ import {
   type CalibrationReport,
 } from './calibrate.ts';
 import { encodeGlb } from './glb.ts';
+import { encodeSpz, type Splat } from './spz.ts';
+
+/** A Y-up test world's splats: a ground layer at raw y over the blocking area, clutter above. */
+function groundSpz(y: number): Buffer {
+  const splats: Splat[] = [];
+  for (let i = 0; i < 120; i++)
+    for (let k = 0; k < 80; k++) {
+      const [x, z] = [-3 + i * 0.05, -5 + k * 0.05];
+      splats.push({ position: [x, y + (((i * 7 + k * 13) % 10) - 5) / 1000, z], scale: [0.02, 0.002, 0.02], rgb: [0.5, 0.5, 0.5], opacity: 0.9 });
+      if ((i + k) % 4 === 0) // shins, bags, kerbs: above the ground, never the densest layer
+        splats.push({ position: [x, y + 0.2 + ((i * k) % 20) / 100, z], scale: [0.01, 0.01, 0.01], rgb: [0.3, 0.3, 0.3], opacity: 0.9 });
+    }
+  return encodeSpz(splats);
+}
 
 const m = (kind: MeasurementKind, measured: number, weight = 0.8): Measurement => {
   const e = EXPECTED[kind];
@@ -134,9 +149,11 @@ describe('writing and running', () => {
     await mkdir(join(lib, 'kitchen'), { recursive: true });
     await mkdir(join(lib, 'other'), { recursive: true });
     // collider: an open floor (Y up, opencvFrame false) 0.1 m below Marble's ground plane (raw
-    // y = -gpo / msf = -1.5) — only the camera band is measurable
+    // y = -gpo / msf = -1.5) — only the camera band is measurable; the splats' visible ground is
+    // 0.06 m below the plane where the actors stand (the collider is not the floor offset)
     const y = -1.6;
     const floor = Float32Array.from([-9, y, -9, -9, y, 9, 9, y, 9, -9, y, -9, 9, y, 9, 9, y, -9]);
+    await writeFile(join(world, 'world_500k.spz'), groundSpz(-1.5 - 0.06));
     await writeFile(join(world, 'collider.glb'), encodeGlb(floor));
     await writeFile(join(world, 'world-asset.json'), JSON.stringify(asset('w1', { colliderGlb: 'collider.glb' })));
     await writeFile(join(lib, 'kitchen', 'world-asset.json'), JSON.stringify(asset('w1')));
@@ -149,8 +166,9 @@ describe('writing and running', () => {
     expect(report.decision).toMatchObject({ applied: false, factor: 1, confidence: 'low', method: 'none' });
     expect(report.calibration.evidence.split(' · ')[0]).toBe('unverified');
     expect(report.calibration.headline).toBe('unverified');
-    expect(report.floorOffsetMeters).toBe(0.1);
-    expect(formatReport(report, 'test')).toMatch(/floorOffsetMeters 0\.100/);
+    expect(report.ground?.probes).toHaveLength(3);
+    expect(report.floorOffsetMeters).toBeCloseTo(0.06, 2);
+    expect(formatReport(report, 'test')).toMatch(/floorOffsetMeters 0\.06\d/);
     // a stored report read back from JSON (NaN → null) re-decides to the same result
     const again = redecide(JSON.parse(JSON.stringify(report)));
     expect(again.calibration).toEqual(report.calibration);
@@ -158,7 +176,7 @@ describe('writing and running', () => {
 
     const written = await writeCalibration(world, report, { libraryDir: lib, manifest: true });
     expect(written.scaleCalibration).toEqual(report.calibration);
-    expect(written.floorOffsetMeters).toBe(0.1);
+    expect(written.floorOffsetMeters).toBeCloseTo(0.06, 2);
     const read = async (p: string) => JSON.parse(await readFile(p, 'utf8'));
     expect((await read(join(world, 'world-asset.json'))).scaleCalibration.factor).toBe(1);
     expect((await read(join(lib, 'kitchen', 'world-asset.json'))).scaleCalibration).toEqual(report.calibration);
@@ -166,28 +184,33 @@ describe('writing and running', () => {
     expect((await read(join(lib, 'kitchen', 'scale-calibration.json'))).worldId).toBe('w1');
     expect((await read(join(scene, 'manifest.json'))).world.scaleCalibration).toEqual(report.calibration);
     for (const f of [join(world, 'world-asset.json'), join(lib, 'kitchen', 'world-asset.json')])
-      expect((await read(f)).floorOffsetMeters).toBe(0.1);
-    expect((await read(join(scene, 'manifest.json'))).world.floorOffsetMeters).toBe(0.1);
+      expect((await read(f)).floorOffsetMeters).toBeCloseTo(0.06, 2);
+    expect((await read(join(scene, 'manifest.json'))).world.floorOffsetMeters).toBeCloseTo(0.06, 2);
     expect((await read(join(lib, 'other', 'world-asset.json'))).floorOffsetMeters).toBeUndefined();
 
-    // measured again with the offset stored, the collider is still read in Marble's frame
+    // measured again with the offset stored, the splats are still read in Marble's frame
     const twice = await calibrateWorld(world, { vision: false });
-    expect(twice.floorOffsetMeters).toBe(0.1);
+    expect(twice.floorOffsetMeters).toBeCloseTo(0.06, 2);
+    // --reuse: a stored report gets its ground measured again, at the scene's marks
+    const reused = await withGround(redecide(JSON.parse(JSON.stringify(report))), world, [[0.5, -2.8]]);
+    expect(reused.ground?.probes.map((p) => [p.x, p.z, p.r])).toEqual([[0.5, -2.8, 0.6]]);
+    expect(reused.floorOffsetMeters).toBeCloseTo(0.06, 2);
 
     expect((await previousCalibration(world, 'w1'))?.calibration).toEqual(report.calibration);
     expect(await previousCalibration(world, 'w9')).toBeNull();
   });
 
-  it('floor offsets: millimetres, nothing implausible, reports from before it existed upgrade', () => {
-    const geo = (floorOffset: number) => ({ geometry: { floorOffset } }) as unknown as CalibrationReport;
-    expect(floorOffsetOf(geo(0.090189))).toBe(0.09);
-    expect(floorOffsetOf(geo(-0.0004))).toBe(0);
-    expect(floorOffsetOf(geo(0.7))).toBeUndefined();
-    expect(floorOffsetOf({ geometry: null })).toBeUndefined();
+  it('floor offsets: from the splat ground, millimetres, nothing implausible', () => {
+    const at = (height: number | null) => ({ ground: { method: 'm', probes: [], height } }) as unknown as CalibrationReport;
+    expect(floorOffsetOf(at(-0.189511))).toBe(0.19);
+    expect(floorOffsetOf(at(0.0004))).toBe(0);
+    expect(floorOffsetOf(at(-0.7))).toBeUndefined();
+    expect(floorOffsetOf(at(null))).toBeUndefined();
+    expect(floorOffsetOf({ ground: null })).toBeUndefined();
     const base = asset('w5', { scaleCalibration: { factor: 1, method: 'none', confidence: 'low', evidence: 'x' }, floorOffsetMeters: 0.3 });
-    const report = { ...geo(0.142565), calibration: { factor: 1, method: 'none', confidence: 'low', evidence: 'unverified · …', headline: 'unverified' } } as CalibrationReport;
+    const report = { ...at(-0.142565), calibration: { factor: 1, method: 'none', confidence: 'low', evidence: 'unverified · …', headline: 'unverified' } } as CalibrationReport;
     expect(calibrated(base as never, report)).toMatchObject({ floorOffsetMeters: 0.143, scaleCalibration: { headline: 'unverified' } });
-    expect('floorOffsetMeters' in calibrated(base as never, { ...report, geometry: null })).toBe(false);
+    expect('floorOffsetMeters' in calibrated(base as never, { ...report, ground: null })).toBe(false);
   });
 
   it('a world without a collider skips both measurements', async () => {

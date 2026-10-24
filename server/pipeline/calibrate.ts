@@ -24,10 +24,10 @@
 // the laptop HUD shows next to the factor; `evidence` starts with the same text, then " · " and
 // the details (the tooltip).
 //
-// Floor offset: the collider's floor near the source camera, measured in Marble's declared frame,
-// says how far the visible ground sits below Marble's ground plane (0.09–0.14 m outdoors on our
-// worlds). It is written as WorldAsset.floorOffsetMeters (transform.ts raises the world by it) for
-// any world with a collider floor, whatever the scale decision; nothing beyond ±0.5 m is written.
+// Floor offset: how far the visible ground sits below Marble's declared plane where the actors
+// stand, measured from the splats themselves (calibrate-ground.ts; the collider sits ~0.1 m below
+// the splats outdoors and is not used for this). Written as WorldAsset.floorOffsetMeters
+// (transform.ts raises the world by it) whatever the scale decision; nothing beyond ±0.5 m.
 import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { WorldAsset } from '../../shared/schema.ts';
@@ -53,6 +53,7 @@ import {
   type VisionCall,
   type VisionEstimate,
 } from './calibrate-vision.ts';
+import { splatGround, type GroundMeasurement } from './calibrate-ground.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { glbTriangles } from './glb.ts';
 import { ASSET_FILE } from './marble.ts';
@@ -216,20 +217,35 @@ export interface CalibrationReport {
   visionSkipped?: string;
   decision: Decision;
   calibration: ScaleCalibration;
-  /** WorldAsset.floorOffsetMeters this report writes (absent: no collider floor / implausible). */
+  /** The visible splat ground where actors stand (calibrate-ground.ts); null without an SPZ. */
+  ground?: GroundMeasurement | null;
+  /** WorldAsset.floorOffsetMeters this report writes (absent: no splat ground / implausible). */
   floorOffsetMeters?: number;
   costUsd: number;
 }
 
 /**
- * The floor offset a report supports: Marble's ground plane minus the collider floor near the
- * camera (m at Marble's scale, + = the visible ground is lower), to the millimetre; undefined
- * without a collider measurement or beyond ±MAX_FLOOR_OFFSET.
+ * The floor offset a report supports: how far the measured splat ground sits below Marble's plane
+ * (m at Marble's scale, + = the visible ground is lower), to the millimetre; undefined without a
+ * ground measurement or beyond ±MAX_FLOOR_OFFSET.
  */
-export function floorOffsetOf(report: Pick<CalibrationReport, 'geometry'>): number | undefined {
-  const f = report.geometry?.floorOffset;
-  if (typeof f !== 'number' || !Number.isFinite(f) || Math.abs(f) > MAX_FLOOR_OFFSET) return undefined;
-  return Math.round(f * 1000) / 1000 || 0;
+export function floorOffsetOf(report: Pick<CalibrationReport, 'ground'>): number | undefined {
+  const h = report.ground?.height;
+  if (typeof h !== 'number' || !Number.isFinite(h) || Math.abs(h) > MAX_FLOOR_OFFSET) return undefined;
+  return Math.round(-h * 1000) / 1000 || 0;
+}
+
+/** `report` with the splat ground measured (again) at `marks` (xz, scene metres) and its offset. */
+export async function withGround(
+  report: CalibrationReport,
+  worldDir: string,
+  marks?: readonly (readonly [number, number])[],
+): Promise<CalibrationReport> {
+  const ground = await splatGround(worldDir, await readWorldAsset(worldDir), marks).catch(() => null);
+  const { floorOffsetMeters: _old, ...rest } = report;
+  const next: CalibrationReport = { ...rest, ground };
+  const off = floorOffsetOf(next);
+  return off === undefined ? next : { ...next, floorOffsetMeters: off };
 }
 
 export interface CalibrateOptions {
@@ -242,6 +258,8 @@ export interface CalibrateOptions {
   openRenderer?: (dir: string, asset: WorldAsset) => Promise<WorldRenderer>;
   /** Keep the vision renders here (debugging / docs). */
   saveViewsTo?: string;
+  /** Where the scene's actors stand (blocking xz, m): the floor offset is measured there. */
+  marks?: readonly (readonly [number, number])[];
 }
 
 export async function readWorldAsset(worldDir: string): Promise<WorldAsset> {
@@ -384,7 +402,12 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     evidence: evidenceText(geo, geometry?.measurements ?? [], vision, decision),
     headline: headline(geo, vision, decision.factor, decision.method),
   };
-  const floorOffsetMeters = floorOffsetOf({ geometry });
+  const ground = await splatGround(worldDir, asset, o.marks).catch((e) => {
+    log(`calibrate: splat ground not measured (${(e as Error).message.slice(0, 120)})`);
+    return null;
+  });
+  if (ground) log(`calibrate: splat ground ${ground.height === null ? 'unmeasurable' : `${ground.height.toFixed(3)} m`} (${ground.probes.map((p) => `(${p.x}, ${p.z}) ${p.height ?? '—'}`).join(', ')})`);
+  const floorOffsetMeters = floorOffsetOf({ ground });
   return {
     schema: 'previz.scale-calibration/1',
     worldId: asset.worldId,
@@ -399,6 +422,7 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     visionSkipped,
     decision,
     calibration,
+    ground,
     ...(floorOffsetMeters !== undefined ? { floorOffsetMeters } : {}),
     costUsd: vision?.costUsd ?? 0,
   };
@@ -445,12 +469,23 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
     L.push(
       `  floor near the camera ${g.floorAtCamera >= 0 ? '+' : ''}${g.floorAtCamera.toFixed(2)} m vs Marble's ground plane; camera ${g.cameraHeight.toFixed(2)} m above it`,
     );
+    L.push("    (the collider is coarse: outdoors it sits ~0.1 m below the splats, so it is not the floor offset)");
+  } else L.push('  collider: none');
+  {
+    const gr = r.ground;
+    if (gr)
+      L.push(
+        `  splat ground: ${gr.probes.map((p) => `(${p.x}, ${p.z}) ${p.height === null ? '—' : `${p.height >= 0 ? '+' : ''}${p.height.toFixed(3)} m`} [${p.splats}]`).join(', ')} → ${gr.height === null ? 'unmeasurable' : `${gr.height.toFixed(3)} m`}`,
+      );
     const off = floorOffsetOf(r);
     L.push(
       off === undefined
-        ? '  floor offset: not written (implausible measurement)'
+        ? `  floor offset: not written (${gr ? 'implausible or unmeasurable ground' : 'no splat ground measured'})`
         : `  floor offset: floorOffsetMeters ${off.toFixed(3)} (the world is raised by that much so the visible ground is y = 0)`,
     );
+  }
+  if (r.geometry) {
+    const g = r.geometry;
     L.push('  collider (Marble scale)   measured   expected (range)        implied   weight');
     for (const m of g.measurements) {
       const e = m.expected;
@@ -459,7 +494,7 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
       );
     }
     L.push(`    → ${g.estimate.available ? `×${g.estimate.factor.toFixed(3)}, ` : 'unavailable: '}${g.estimate.note}`);
-  } else L.push('  collider: none');
+  }
   if (r.vision) {
     L.push(`  vision (claude-opus-5-5, ${r.vision.runs.length} runs, $${r.vision.costUsd.toFixed(3)}):`);
     r.vision.runs.forEach((run, i) => {

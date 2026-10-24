@@ -12,12 +12,14 @@
 //   pnpm tsx server/pipeline/cli.ts calibrate <worldDir> [--write] [--no-vision] [--interior|--exterior]
 //                                  [--before-after out.png] [--views dir] [--reuse]
 //       Measures the world's real scale (collider references + Claude vision with 1.70 m
-//       mannequins, see calibrate.ts) and prints the report. --write stores scaleCalibration in
-//       world-asset.json, the world-library copy with the same world id and ../manifest.json.
-//       --reuse takes the last scale-calibration.json instead of measuring (no Claude call).
+//       mannequins, see calibrate.ts) and the visible splat ground (floorOffsetMeters, at the
+//       blocking marks of ../manifest.json when there is one) and prints the report. --write
+//       stores both in world-asset.json, the world-library copy with the same world id and
+//       ../manifest.json. --reuse takes the last scale-calibration.json instead of measuring the
+//       scale (no Claude call); the splat ground is always measured again (local, ~2 s).
 //   generate-world / run also calibrate the new world unless --no-calibrate (or CALIBRATE=0).
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { env } from '../env.ts';
 import {
   calibrateWorld,
@@ -26,8 +28,10 @@ import {
   readWorldAsset,
   redecide,
   renderBeforeAfter,
+  withGround,
   writeCalibration,
 } from './calibrate.ts';
+import { readJson } from './fsutil.ts';
 import { generateWorld, marbleModel } from './marble.ts';
 import { MOCK_WORLD_DIR, writeMockWorld } from './mock-world.ts';
 import { defaultStore } from './project.ts';
@@ -132,8 +136,17 @@ async function main() {
         );
       const worldDir = resolve(dir);
       const asset = await readWorldAsset(worldDir);
+      // a project world: measure the floor where that scene's actors stand
+      const scene = await readJson<{ world?: { worldId?: string }; plan?: { blocking?: { position: number[] }[] } }>(
+        join(dirname(worldDir), 'manifest.json'),
+      ).catch(() => undefined);
+      const marks =
+        scene?.world?.worldId === asset.worldId
+          ? scene?.plan?.blocking?.map((b) => [b.position[0]!, b.position[2]!] as const)
+          : undefined;
+      if (marks?.length) log(`floor measured at the scene's blocking marks: ${marks.map((m) => `(${m.join(', ')})`).join(' ')}`);
       const prev = flags.reuse === true ? await previousCalibration(worldDir, asset.worldId) : null;
-      let report = prev && redecide(prev);
+      let report = prev && (await withGround(redecide(prev), worldDir, marks));
       if (flags.reuse === true && !report) log('no previous scale-calibration.json for this world; measuring');
       if (!report) {
         const vision = flags['no-vision'] !== true && env.calibrateVision;
@@ -143,6 +156,7 @@ async function main() {
           vision: vision && !!env.keys.anthropic,
           log,
           saveViewsTo: views0(flags),
+          marks,
         });
       }
       console.log(formatReport(report, dir));
@@ -150,7 +164,7 @@ async function main() {
       if (views) await writeFile(resolve(views, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
       if (flags.write === true) {
         await writeCalibration(worldDir, report, { libraryDir: env.worldLibraryDir, manifest: true, log });
-        log(`wrote scaleCalibration ×${report.calibration.factor} (${report.calibration.confidence}) to ${dir}`);
+        log(`wrote scaleCalibration ×${report.calibration.factor} (${report.calibration.confidence}), floorOffsetMeters ${report.floorOffsetMeters ?? '—'} to ${dir}`);
       }
       const ba = str(flags['before-after']);
       if (ba) {
