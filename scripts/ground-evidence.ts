@@ -134,7 +134,7 @@ async function main() {
     const g = median + c.d;
     const t = Math.atan2(-c.x, -c.z);
     if (clutter(c.x, c.z, g) > 10 || clutter(c.x + 0.7 * Math.sin(t), c.z + 0.7 * Math.cos(t), g) > 10) continue;
-    spots.push({ label: `Δ ${cm(c.d)}`, kind: 'spot', x: Math.round(c.x * 100) / 100, z: Math.round(c.z * 100) / 100 });
+    spots.push({ label: `Δ ${cm(c.d * f)}`, kind: 'spot', x: Math.round(c.x * 100) / 100, z: Math.round(c.z * 100) / 100 });
   }
   const figures: Figure[] = [...marks.map(([x, z], i) => ({ label: labels[i] ?? `mark ${i + 1}`, kind: 'mark' as const, x, z })), ...spots];
 
