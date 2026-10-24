@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { generateWorld } from '../marble.ts';
-import { decodePng, editMask, encodePng, resize, type Image } from './png.ts';
-import { imageEditPrompt, maskFor, PANO_SIZE, produceRegenWorld, regenKey, type ImageEdit } from './regen.ts';
+import { compositeMasked, decodePng, editMask, encodePng, resize, type Image } from './png.ts';
+import { imageEditPrompt, maskFor, produceRegenWorld, regenKey, type ImageEdit } from './regen.ts';
 
 const solid = (w: number, h: number, rgb: [number, number, number]): Image => {
   const data = new Uint8Array(w * h * 3);
@@ -28,6 +28,16 @@ describe('png codec', () => {
     const r = resize(solid(4, 2, [100, 100, 100]), 8, 4);
     expect(r.width).toBe(8);
     expect(r.data.every((v) => v === 100)).toBe(true);
+  });
+});
+
+describe('panorama edit canvas', () => {
+  it('sky edits keep every ground pixel of the original', () => {
+    const pano = solid(200, 100, [10, 20, 30]);
+    const edited = solid(200, 100, [250, 250, 250]);
+    const out = compositeMasked(pano, edited, editMask(200, 100, 'sky'));
+    expect([...out.data.subarray(0, 3)]).toEqual([250, 250, 250]); // sky from the edit
+    expect([...out.data.subarray((99 * 200) * 3, (99 * 200) * 3 + 3)]).toEqual([10, 20, 30]); // ground from the original
   });
 });
 
@@ -77,8 +87,10 @@ describe('pano-inpaint under MARBLE_DRY_RUN', () => {
     expect(edits).toBe(1);
     expect(seen!.prompt).toMatch(/^Make it snow/);
     const input = decodePng(seen!.image);
-    expect([input.width, input.height]).toEqual([PANO_SIZE.width, PANO_SIZE.height]);
-    expect(decodePng(seen!.mask).channels).toBe(4);
+    expect([input.width, input.height]).toEqual([1536, 1024]); // the model's 3:2 size
+    const sentMask = decodePng(seen!.mask);
+    expect(sentMask.channels).toBe(4);
+    expect(sentMask.data[3]).toBe(0); // whole-image change: everything free
     const edited = decodePng(await readFile(join(sceneDir, 'regen', regenKey(regen), 'pano-edited.png')));
     expect([edited.width, edited.height]).toEqual([2048, 1024]);
     const dry = JSON.parse(await readFile(join(r.dir, 'marble-dry-run.json'), 'utf8'));
