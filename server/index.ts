@@ -70,7 +70,10 @@ async function main() {
         return res.end(JSON.stringify({ ok: true, mock: env.mock, keys: keyPresence() }));
       }
       if (p === '/api/rooms/new') {
-        const room = newRoom();
+        // ?room=ABCD re-issues the LAN phone URL for a code the laptop kept across a reload
+        // (the relay recreates rooms on hello, so the code itself needs no server state).
+        const kept = url.searchParams.get('room') ?? '';
+        const room = /^[A-Z0-9]{4,6}$/.test(kept) ? kept : newRoom();
         // A phone cannot reach "localhost"; prefer the first LAN address when the laptop is local.
         const reqHost = req.headers.host ?? `localhost:${env.port}`;
         const [name, port = String(env.port)] = reqHost.split(':');
