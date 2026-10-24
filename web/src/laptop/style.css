@@ -21,7 +21,7 @@
      Sections  .card (or .section) — a label and content, no box; .card.grow fills the panel
      Tabs      .tabs > button.tab[.on] — text with a 2 px accent underline (the right panel)
      Segmented .seg > button[.on] (+ .seg-sep, button.seg-icon) — one quiet control;
-               .seg.overlay floats over the viewport (Grid / Collider / PiP / Reload)
+               .seg.overlay floats over the viewport (frame guide 16:9 / 2.39, PiP)
      Rows      .list-row[.current|.selected|.active] — a 28 px row, hover tint, the current one on
                --surface-2; .thumb — a 16:9 frame (scene / shot thumbnails)
      Tags      .tag — quiet uppercase label in a hairline ring (a scope, a lens) · .badge / .chip —
@@ -30,10 +30,13 @@
                [.done|.running|.failed|.fallback] + .stage-label — a five-segment progress bar
                that names a stage only while it runs or after it failed
      Ruled     .ruled[.warn|.run|.bad] — a block with a thin left rule and plain text (the chat's
-               action cards, the Edit tab's confirm card, errors)
+               action cards, Re-prompt's confirm card, errors)
      Overlays  .menu > button (+ kbd, .menu-sep) — a popover menu · .sheet-backdrop > .sheet — a
                dialog · .toast — a one-line message over the viewport · .vp-label — a small label
-               on the viewport (the PiP's name) · .coach / .coach-ring — the tour
+               on the viewport (the PiP's name, the shot's) · .frame-guide — the selected shot's
+               frame with its matte · .coach / .coach-ring — the tour
+     Drawers   #left — the script drawer · #tools.tools-drawer > details.tool — the Tools drawer
+               over the right panel, one collapsible section per tool
    Every surface over the 3D view uses --scrim + an 8 px backdrop blur. */
 :root {
   /* surfaces: the canvas, the panels, raised things (inputs, hover, menus) */
@@ -463,7 +466,7 @@ input[type='range']::-moz-range-thumb {
   background: var(--accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
-/* a quiet uppercase tag in a hairline ring (the Edit tab's scope; a lens) */
+/* a quiet uppercase tag in a hairline ring (Re-prompt's scope; a lens) */
 .tag,
 .chip[class*='scope-'] {
   display: inline-flex;
@@ -567,22 +570,92 @@ button.badge:hover:not(:disabled) {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.top-sep:has(+ #hud-title:empty) {
-  display: none;
-}
 .top-sep {
   width: 1px;
   height: 16px;
   margin: 0 var(--s1);
   background: var(--hairline);
 }
+/* `Project · Sc 1 · HEADING`: the separators are drawn, so each part's text is just itself */
+.crumbs {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44vw;
+  padding-left: var(--s2);
+  margin-left: var(--s1);
+  box-shadow: inset 1px 0 0 var(--hairline);
+  white-space: nowrap;
+}
+.crumb {
+  flex: none;
+}
+.crumb[hidden] + .crumb::before {
+  content: none;
+}
+.crumb + .crumb::before {
+  content: '·';
+  margin: 0 var(--s2);
+  color: var(--muted);
+}
 #hud-title {
   flex: 0 1 auto;
-  max-width: 34vw;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   font-weight: 500;
+}
+#hud-project {
+  max-width: 16vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 600;
+}
+/* text buttons in the top bar (Export, Tools) */
+.top-btn {
+  height: var(--ctl);
+  padding: 0 var(--s2);
+  gap: 6px;
+  color: var(--muted);
+  box-shadow: none;
+}
+.top-btn:hover:not(:disabled),
+.top-btn.on {
+  color: var(--text);
+}
+.top-btn.on {
+  background: var(--accent-soft);
+}
+.top-pop {
+  position: relative;
+}
+.menu .menu-link {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--ctl);
+  padding: 0 var(--s2);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+}
+.menu .menu-link:hover {
+  background: var(--hover);
+}
+.menu .menu-link .ico {
+  color: var(--muted);
+}
+.menu .menu-link[aria-disabled='true'] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+@media (max-width: 1180px) {
+  .brand-name {
+    display: none;
+  }
 }
 #topbar #hud-badges {
   display: flex;
@@ -590,7 +663,7 @@ button.badge:hover:not(:disabled) {
   flex: 0 1 auto;
   min-width: 0;
 }
-/* the look's name: open the Look tab */
+/* the look's name: open Tools › Grade */
 #top-look {
   height: var(--ctl-sm);
   max-width: min(48ch, 32vw);
@@ -912,7 +985,7 @@ button.badge:hover:not(:disabled) {
   cursor: pointer;
 }
 
-/* the cast (Scene tab rows from projects-panel.ts actorRow) */
+/* the cast (Scene mode rows from projects-panel.ts actorRow) */
 .actors {
   display: flex;
   flex-direction: column;
@@ -1127,7 +1200,7 @@ button.badge:hover:not(:disabled) {
   pointer-events: none;
 }
 
-/* ---- Shoot tab (index.html, scene-panel.ts) -------------------------------------------------- */
+/* ---- Camera mode (index.html, camera-panel.ts) ----------------------------------------------- */
 .pair {
   display: flex;
   gap: var(--s3);
@@ -1190,7 +1263,7 @@ button.badge:hover:not(:disabled) {
   flex-direction: column;
   gap: 2px;
 }
-/* list rows (the generic .list-row; cameras, shots and the Scene tab's objects are instances) */
+/* list rows (the generic .list-row; shots, takes and Tools › Objects are instances) */
 .list-row,
 .cam-row,
 .shot-row,
@@ -1260,7 +1333,7 @@ button.line.speaking {
   color: var(--muted);
 }
 
-/* ---- Scene tab (scene-tab.ts) ---------------------------------------------------------------- */
+/* ---- Scene mode (scene-tab.ts) --------------------------------------------------------------- */
 .st-project {
   display: flex;
   align-items: center;
@@ -1293,11 +1366,6 @@ button.st-scene:disabled {
 .st-scene-name {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-#st-scenes {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 #st-world {
   display: flex;
@@ -1352,7 +1420,7 @@ button.st-scene:disabled {
   margin-top: var(--s3);
 }
 
-/* ---- Look tab (look-panel.ts) ---------------------------------------------------------------- */
+/* ---- Tools › Grade (look-panel.ts) ----------------------------------------------------------- */
 .look-panel {
   gap: var(--s4);
 }
@@ -1586,6 +1654,509 @@ input.look-color {
   height: 18px;
   padding: 0;
   background: none;
+}
+
+/* ---- Tools drawer (tools.ts): over the right panel, one collapsible section per tool -------- */
+.tools-drawer {
+  grid-area: right;
+  z-index: 15;
+  padding: 0 var(--s4) var(--s4);
+  border-left: 1px solid var(--hairline);
+  box-shadow: var(--shadow);
+}
+.tools-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+  height: 40px;
+  margin: 0 calc(-1 * var(--s4));
+  padding: 0 var(--s3) 0 var(--s4);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--hairline);
+}
+.title-sm {
+  font-weight: 600;
+}
+details.tool {
+  border-bottom: 1px solid var(--hairline);
+}
+details.tool > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s3) 0;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+details.tool > summary::-webkit-details-marker {
+  display: none;
+}
+details.tool > summary::before {
+  content: '';
+  align-self: center;
+  width: 0;
+  height: 0;
+  border-left: 4px solid var(--muted);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.12s;
+}
+details.tool[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.tool > summary .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-body {
+  padding-bottom: var(--s4);
+}
+.tool-body.dev {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.tool-body.dev .seg {
+  align-self: flex-start;
+}
+.tool-body.dev select {
+  width: auto;
+}
+#st-objects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---- Scene mode ------------------------------------------------------------------------------ */
+.scene-head {
+  gap: var(--s2);
+}
+.scene-title {
+  font-size: 17px;
+  line-height: 1.3;
+}
+.scene-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+.scene-strip:empty {
+  display: none;
+}
+.scene-strip .st-scene {
+  color: var(--muted);
+}
+.scene-strip .st-scene.current {
+  color: var(--text);
+}
+/* the mood presets as named swatches, one scrollable row */
+.mood-row {
+  position: relative;
+  display: flex;
+  gap: var(--s2);
+  margin: 0 calc(-1 * var(--s4));
+  padding: 2px var(--s4) var(--s2);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+.mood-row > .empty {
+  flex: 1;
+}
+button.mood {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 76px;
+  height: auto;
+  padding: 0;
+  box-shadow: none;
+  background: none;
+  scroll-snap-align: start;
+}
+button.mood:hover:not(:disabled) {
+  background: none;
+}
+.mood-chip {
+  display: block;
+  height: 44px;
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.mood-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+}
+button.mood:hover .mood-name,
+button.mood.on .mood-name {
+  color: var(--text);
+}
+button.mood.on .mood-chip {
+  box-shadow:
+    0 0 0 1.5px var(--bg),
+    0 0 0 3px var(--accent);
+}
+/* the planner's choice: a dot on its swatch */
+button.mood.planned::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 1.5px rgb(0 0 0 / 0.5);
+}
+.cast-meta {
+  padding: 0 var(--s2);
+}
+.st-cast-note {
+  padding: 0 var(--s2);
+}
+.actor-tools {
+  padding: 2px var(--s2) 0;
+}
+button.line {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.line .line-play {
+  align-self: start;
+  padding-top: 2px;
+  color: var(--muted);
+}
+.line .line-play .ico {
+  width: 12px;
+  height: 12px;
+}
+button.line:hover .line-play,
+button.line.speaking .line-play {
+  color: var(--accent);
+}
+.line .line-shots {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+}
+#st-background {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bg-row {
+  cursor: pointer;
+}
+.bg-row input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+.bg-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-row.off .bg-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+#st-location {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.loc-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  max-width: 100%;
+}
+.loc-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Shots mode (shots-panel.ts) -------------------------------------------------------------- */
+.shot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 calc(-1 * var(--s2));
+}
+.shots-hint {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.shot-item.selected {
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.shot-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px 26px 80px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2);
+  padding: 6px var(--s2);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.shot-row:hover {
+  background: var(--hover);
+}
+.shot-row.selected,
+.shot-row.selected:hover {
+  background: var(--surface-2);
+}
+.shot-row.selected .shot-num {
+  color: var(--accent);
+}
+.shot-row.dragging {
+  opacity: 0.5;
+}
+.shot-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.shot-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.shot-grip {
+  display: flex;
+  color: var(--muted);
+  opacity: 0;
+  cursor: grab;
+}
+.shot-grip .ico {
+  width: 12px;
+  height: 12px;
+}
+.shot-row:hover .shot-grip,
+.shot-row.selected .shot-grip {
+  opacity: 1;
+}
+.shot-num {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+button.shot-thumb {
+  display: block;
+  width: 80px;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+button.shot-thumb:hover:not(:disabled) {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--track);
+}
+.shot-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shot-noframe {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 10px;
+  color: var(--muted);
+}
+.shot-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* inline-editable name and note: plain text until focused */
+input.shot-name,
+input.shot-note {
+  height: 20px;
+  padding: 0 4px;
+  margin-left: -4px;
+  background: transparent;
+  box-shadow: none;
+  text-overflow: ellipsis;
+}
+input.shot-name {
+  font-weight: 500;
+}
+input.shot-note {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+input.shot-name:hover,
+input.shot-note:hover {
+  background: var(--hover);
+}
+input.shot-name:focus,
+input.shot-note:focus {
+  background: var(--surface-1);
+  color: var(--text);
+}
+.shot-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 18px;
+}
+.shot-meta .dot:not(.ok) {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+.shot-phone {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--phone);
+}
+.shot-phone .ico {
+  width: 12px;
+  height: 12px;
+}
+.shot-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 0;
+  padding: 1px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: 0 0 0 1px var(--hairline);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+.shot-row:hover .shot-actions,
+.shot-row.selected .shot-actions,
+.shot-row:focus-within .shot-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* the note's placeholder only where it can be typed into (hover, the selected shot) */
+.shot-row:not(:hover):not(.selected) input.shot-note::placeholder {
+  color: transparent;
+}
+.shot-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 2px var(--s2) var(--s3) calc(12px + 26px + 3 * var(--s2));
+}
+.shot-detail select {
+  width: auto;
+  height: var(--ctl-sm);
+}
+.line-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+button.line-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--muted);
+}
+button.line-chip b {
+  margin-right: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+button.line-chip.on {
+  color: var(--text);
+}
+
+/* the selected shot's frame: the matte around it (four bars), a hairline, its name bottom-left */
+.frame-guide {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.frame-matte,
+.frame-guide-frame {
+  position: absolute;
+}
+.frame-matte {
+  background: rgb(0 0 0 / 0.42);
+}
+.frame-guide-frame {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.55);
+}
+.frame-guide-label {
+  top: auto;
+  bottom: var(--s2);
+  left: var(--s2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+#stage > #hud-top,
+#stage > #pip-frame,
+#stage > #hud-caption,
+#stage > #hud-rec {
+  z-index: 2;
+}
+
+/* ---- Camera mode: the phone's shot, takes ------------------------------------------------------ */
+#ph-shot:empty {
+  display: none;
+}
+#take-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.take-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.take-dl {
+  display: inline-grid;
+  place-items: center;
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  color: var(--muted);
+}
+a.take-dl:hover {
+  color: var(--text);
+}
+.take-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  background: #000;
 }
 
 /* ---- cheatsheet + tour (shell.ts) ------------------------------------------------------------ */

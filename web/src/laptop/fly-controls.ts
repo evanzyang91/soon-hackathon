@@ -143,6 +143,11 @@ export class FlyControls {
     );
   }
 
+  /** A flyTo glide is under way (the camera is not where the director put it yet). */
+  get flying(): boolean {
+    return !!this.flight;
+  }
+
   syncFromCamera() {
     this.euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
   }

@@ -1,20 +1,25 @@
-// Viewport overlays: scene title, loading/error, caption, PiP frame, REC badge, view toggles,
-// plus the director keyboard shortcuts.
+// Viewport overlays and the top bar's breadcrumb: `Project · Sc 1 · HEADING`, the warnings that
+// matter to the director (a stand-in world, a rebuilt actor waiting for a reload), loading / error,
+// caption, PiP frame, REC badge, PiP + frame-guide toggles, and the viewport keys Space / V / R.
+// (Splat quality, grid, collider and reload live in Tools › Developer, tools.ts.)
 import type { WorldAsset } from '@shared/schema';
-import { floorOffset } from '../viewer/transform';
-import type { SplatQuality } from '../viewer/world';
 import type { Director } from './director';
 import { byId, fmtTime, isTyping } from './dom';
+import type { ProjectsPanel } from './projects-panel';
+import type { ShotsPanel } from './shots-panel';
 
 /**
- * The HUD's scale reference: calibrate.ts's `headline` ("door 2.04 m" / "unverified"); older
+ * The world's scale reference: calibrate.ts's `headline` ("door 2.04 m" / "unverified"); older
  * calibrations without one lead their evidence with the same text before the first " · ".
  */
 export function scaleHeadline(cal: NonNullable<WorldAsset['scaleCalibration']>): string {
   return cal.headline?.trim() || cal.evidence.split(' · ')[0]?.trim() || '';
 }
 
-export function mountHud(director: Director) {
+export function mountHud(director: Director, projects: ProjectsPanel) {
+  const crumbs = byId('crumbs');
+  const project = byId('hud-project');
+  const sceneNo = byId('hud-scene-no');
   const title = byId('hud-title');
   const badges = byId('hud-badges');
   const loading = byId('hud-loading');
@@ -22,30 +27,10 @@ export function mountHud(director: Director) {
   const pipFrame = byId('pip-frame');
   const pipLabel = byId('pip-label');
   const rec = byId('hud-rec');
-  const recBtn = byId<HTMLButtonElement>('hud-record');
   const pipBtn = byId<HTMLButtonElement>('hud-pip');
-  const gridBtn = byId<HTMLButtonElement>('hud-grid');
-  const colliderBtn = byId<HTMLButtonElement>('hud-collider');
-  const quality = byId<HTMLSelectElement>('hud-quality');
   const empty = byId('hud-empty');
 
-  recBtn.addEventListener('click', () => void director.toggleRecording());
-  byId('hud-still').addEventListener('click', () => director.captureStill());
-  byId('hud-reload').addEventListener('click', () => director.reloadScene());
   pipBtn.addEventListener('click', () => director.setPip(!director.pipEnabled));
-  gridBtn.addEventListener('click', () => {
-    const rt = director.runtime;
-    if (!rt) return;
-    rt.grid.visible = !rt.grid.visible;
-    gridBtn.classList.toggle('on', rt.grid.visible);
-  });
-  colliderBtn.addEventListener('click', () => {
-    const c = director.runtime?.collider;
-    if (!c) return;
-    c.visible = !c.visible;
-    colliderBtn.classList.toggle('on', c.visible);
-  });
-  quality.addEventListener('change', () => void director.setQuality(quality.value as SplatQuality));
 
   window.addEventListener('keydown', (e) => {
     if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -54,30 +39,31 @@ export function mountHud(director: Director) {
       e.preventDefault();
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       director.togglePlay();
-    } else if (e.code === 'KeyC') director.dropCamera();
-    else if (e.code === 'KeyV') director.setViewFromPhone(!director.viewFromPhone);
+    } else if (e.code === 'KeyV') director.setViewFromPhone(!director.viewFromPhone);
     else if (e.code === 'KeyR') void director.toggleRecording();
-    else if (e.code === 'KeyG') gridBtn.click();
-    else if (/^Digit[1-9]$/.test(e.code)) {
-      const cam = director.cameras[Number(e.code.slice(5)) - 1];
-      if (cam) {
-        director.setActiveCamera(cam.id);
-        director.flyTo(cam);
-      }
-    }
   });
+
+  const renderCrumbs = () => {
+    const rt = director.runtime;
+    crumbs.hidden = !rt;
+    const p = projects.current();
+    project.textContent = p?.title ?? '';
+    project.hidden = !p?.title;
+    sceneNo.textContent = director.sceneIndex != null ? `Sc ${director.sceneIndex + 1}` : '';
+    title.textContent = rt ? rt.manifest.plan.heading : '';
+    title.title = rt?.manifest.world.caption ?? '';
+  };
 
   const renderScene = () => {
     const rt = director.runtime;
     empty.hidden = !!rt || !!director.loading;
-    title.textContent = rt ? rt.manifest.plan.heading : '';
-    title.title = rt?.manifest.world.caption ?? '';
+    renderCrumbs();
     badges.replaceChildren();
     if (rt?.placeholder) {
       const b = document.createElement('span');
       b.className = 'badge warn';
       b.textContent = 'placeholder world';
-      b.title = 'The SPZ could not be loaded; showing a procedural stand-in.';
+      b.title = 'The world could not be loaded; a procedural stand-in is shown.';
       badges.append(b);
     }
     if (rt && director.sceneStale) {
@@ -89,43 +75,12 @@ export function mountHud(director: Director) {
       b.addEventListener('click', () => director.reloadScene());
       badges.append(b);
     }
-    if (rt?.manifest.world.provider === 'mock') {
-      const b = document.createElement('span');
-      b.className = 'badge';
-      b.textContent = 'mock world';
-      badges.append(b);
-    }
-    // measured scale (server/pipeline/calibrate.ts): "scale ×0.87 (door 2.04 m)"
-    const world = rt?.manifest.world;
-    const cal = world?.scaleCalibration;
-    if (cal) {
-      const b = document.createElement('span');
-      b.className = `badge scale ${cal.confidence}`;
-      b.dataset.testid = 'scale-calibration';
-      const ref = scaleHeadline(cal);
-      b.textContent = `scale ×${cal.factor.toFixed(2)}${ref ? ` (${ref})` : ''}`;
-      const floor = floorOffset(world);
-      b.title = [
-        `Scale calibration: ×${cal.factor} on top of Marble's metric scale (${cal.method}, ${cal.confidence} confidence)`,
-        ...cal.evidence.split(' · '),
-        ...(floor ? [`Floor: world raised ${(floor * 100).toFixed(0)} cm so actors stand on the visible ground`] : []),
-      ].join('\n');
-      badges.append(b);
-    }
-    for (const opt of quality.options)
-      opt.disabled = !rt?.manifest.world.spz[opt.value as SplatQuality];
-    quality.value = rt?.quality ?? director.quality;
-    gridBtn.classList.toggle('on', !!rt?.grid.visible);
-    colliderBtn.disabled = !rt?.collider;
-    colliderBtn.classList.toggle('on', !!rt?.collider?.visible);
   };
 
   const renderLoading = () => {
     loading.hidden = !director.loading && !director.error;
     loading.classList.toggle('error', !!director.error);
-    loading.textContent = director.error
-      ? `Scene failed: ${director.error}`
-      : (director.loading ?? '');
+    loading.textContent = director.error ? `Scene failed: ${director.error}` : (director.loading ?? '');
     empty.hidden = !!director.runtime || !!director.loading;
   };
 
@@ -134,8 +89,7 @@ export function mountHud(director: Director) {
     const line = rt?.manifest.plan.dialogue.find((l) => l.id === director.speakingLineId);
     caption.hidden = !line;
     if (line && rt) {
-      const who =
-        rt.manifest.characters.find((c) => c.id === line.characterId)?.name ?? line.characterId;
+      const who = rt.manifest.characters.find((c) => c.id === line.characterId)?.name ?? line.characterId;
       caption.replaceChildren();
       const b = document.createElement('b');
       b.textContent = `${who}: `;
@@ -156,11 +110,7 @@ export function mountHud(director: Director) {
     pipBtn.classList.toggle('on', director.pipEnabled);
     const recording = director.recorder.recording;
     rec.hidden = !recording;
-    if (recording)
-      rec.textContent = `REC ${fmtTime((performance.now() - director.recorder.startedAt) / 1000)}`;
-    recBtn.textContent = recording ? 'Stop take' : 'Record take';
-    recBtn.classList.toggle('rec', recording);
-    recBtn.disabled = !director.recorder.supported;
+    if (recording) rec.textContent = `REC ${fmtTime((performance.now() - director.recorder.startedAt) / 1000)}`;
   };
 
   director.on((c) => {
@@ -171,8 +121,26 @@ export function mountHud(director: Director) {
     if (c === 'lines' || c === 'scene') renderCaption();
     if (c === 'clock' || c === 'view' || c === 'recording') renderFrame();
   });
+  projects.onChange(renderCrumbs);
   renderScene();
   renderLoading();
   renderCaption();
   renderFrame();
+}
+
+/** The viewport's frame-guide aspect toggle (16:9 / 2.39), next to PiP. */
+export function mountGuideToggle(shots: ShotsPanel) {
+  const b169 = byId<HTMLButtonElement>('hud-guide-169');
+  const b239 = byId<HTMLButtonElement>('hud-guide-239');
+  const render = () => {
+    const a = shots.guideAspect();
+    b169.classList.toggle('on', a === '16:9');
+    b239.classList.toggle('on', a === '2.39');
+    b169.setAttribute('aria-pressed', String(a === '16:9'));
+    b239.setAttribute('aria-pressed', String(a === '2.39'));
+  };
+  b169.addEventListener('click', () => shots.setGuideAspect('16:9'));
+  b239.addEventListener('click', () => shots.setGuideAspect('2.39'));
+  shots.onChange(render);
+  render();
 }

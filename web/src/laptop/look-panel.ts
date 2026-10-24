@@ -1,12 +1,12 @@
-// Right panel "Look" tab: grade / film / atmosphere / lens / lights for the open scene, with
+// Tools › Grade (tools.ts): grade / film / atmosphere / lens / lights for the open scene, with
 // presets, reset per group, undo / redo (50 steps), hold-to-compare and a look name. Every change
 // renders on the next frame, is saved to scene-<n>/edits.json 300 ms after the last change
 // (viewer/look/session.ts) and reaches the phone: the live look in SceneState at ≤ 10 Hz while
 // unsaved, then `editsRevision` once it is on disk (the phone re-fetches the file).
 //
 // Lens: "click to focus" sets the focus distance from a splat raycast at the clicked pixel (Pick
-// focus, or Alt+click on the viewport). A dropped camera can carry its own depth of field (stored
-// next to the cameras on this laptop); the phone attached to it gets that lens in the live look.
+// focus, or Alt+click on the viewport). A shot can carry its own depth of field (stored next to the
+// shots on this laptop); the phone attached to it gets that lens in the live look.
 import * as THREE from 'three';
 import { Light, Look } from '@shared/look';
 import type { SceneState } from '@shared/protocol';
@@ -42,7 +42,6 @@ type Dof = Look['dof'];
 const HEARTBEAT_MS = 250;
 const LIVE_LOOK_SPACING_MS = HEARTBEAT_MS / 2;
 const HEARTBEAT_GRACE_MS = 60;
-const TAB_KEY = 'previz:rightTab';
 /** Look names run to "Preset label · mood words" (seedToLook caps them at 80). */
 const NAME_MAX = 80;
 
@@ -98,7 +97,7 @@ const FOG_DENSITY: SliderSpec = {
   get: (l) => l.fog.density,
   set: (l, v) => ({ ...l, fog: { ...l.fog, density: v } }),
   fmt: pct,
-  hint: 'Every splat fades toward the fog colour with its distance from the camera',
+  hint: 'The set fades toward the fog colour with its distance from the camera',
 };
 const SKY_STRENGTH: SliderSpec = {
   key: 'skyTint.strength',
@@ -109,7 +108,7 @@ const SKY_STRENGTH: SliderSpec = {
   get: (l) => l.skyTint.strength,
   set: (l, v) => ({ ...l, skyTint: { ...l.skyTint, strength: v } }),
   fmt: pct,
-  hint: 'Recolours far splats above the horizon (luminance kept)',
+  hint: 'Recolours the far set above the horizon (luminance kept)',
 };
 const AMBIENT: SliderSpec = field('ambient', 'Scene light', 0, 1, 0.01, pct, '100% = the world as captured; lower it to let the Look lights carry the scene');
 
@@ -160,37 +159,19 @@ export interface LookPanel {
   session: LookSession;
   /** The phone's look right now (scene look + the active camera's lens override). */
   phoneLook(): Look | null;
-  /** A dropped camera's own lens, when it has one (the viewport's focus point edits it through here). */
+  /** A shot's own lens, when it has one (the viewport's focus point edits it through here). */
   cameraLens(id: string): Look['dof'] | null;
-  /** Replaces a camera's own lens (only cameras that already have one; the Look tab turns it on). */
+  /** Replaces a shot's own lens (only shots that already have one; Tools › Grade turns it on). */
   setCameraLens(id: string, dof: Look['dof']): void;
 }
 
-export function mountLookPanel(director: Director): LookPanel {
-  const right = document.getElementById('right');
-  if (!right) throw new Error('#right missing from index.html');
-
-  // ---- tabs (Shoot = the existing cards, Look = this panel) ------------------------------------
-  const shootCards = [...right.children] as HTMLElement[];
+/**
+ * Mounts the panel into `host` (Tools › Grade). The section is `hidden` while that section of the
+ * Tools drawer does not show (tools.ts), which turns its keyboard undo off.
+ */
+export function mountLookPanel(director: Director, host: HTMLElement): LookPanel {
   const section = h('section', { class: 'card grow look-panel', id: 'look-panel', 'data-testid': 'look-panel' });
-  const tabs = h('div', { class: 'right-tabs', role: 'tablist' });
-  const tabBtn = (id: 'shoot' | 'look', label: string) =>
-    h('button', { type: 'button', class: 'tab', 'data-tab': id, 'data-testid': `tab-${id}`, role: 'tab', onclick: () => showTab(id) }, label);
-  const shootTab = tabBtn('shoot', 'Shoot');
-  const lookTab = tabBtn('look', 'Look');
-  tabs.append(shootTab, lookTab);
-  right.prepend(tabs);
-  right.append(section);
-  let activeTab: 'shoot' | 'look' = storageGet<'shoot' | 'look'>(TAB_KEY) === 'look' ? 'look' : 'shoot';
-  function showTab(id: 'shoot' | 'look') {
-    activeTab = id;
-    storageSet(TAB_KEY, id);
-    for (const c of shootCards) c.hidden = id !== 'shoot';
-    section.hidden = id !== 'look';
-    shootTab.classList.toggle('on', id === 'shoot');
-    lookTab.classList.toggle('on', id === 'look');
-  }
-  showTab(activeTab);
+  host.append(section);
 
   // ---- session + phone link --------------------------------------------------------------------
   /** When the last SceneState carrying the live look went out (ours or the heartbeat's). */
@@ -551,7 +532,7 @@ export function mountLookPanel(director: Director): LookPanel {
       pickBtn.classList.remove('on');
       director.canvas.classList.remove('look-picking');
       if (d == null || !(d > 0)) {
-        flashStatus('No splat under the cursor');
+        flashStatus('Nothing under the cursor');
         return;
       }
       e.stopPropagation();
@@ -615,10 +596,10 @@ export function mountLookPanel(director: Director): LookPanel {
       const active = director.cameras.find((c) => c.id === director.activeCameraId);
       overrideBox.disabled = !active;
       overrideBox.checked = !!activeOverride();
-      overrideLabel.textContent = active ? `Own lens for camera “${active.name}”` : 'Own lens per camera (drop one first)';
+      overrideLabel.textContent = active ? `Own lens for shot ${active.name}` : 'Own lens per shot (put the phone on a shot first)';
       overrideLabel.title = activeOverride()
-        ? `Focus / aperture above are camera “${active?.name}”'s: the phone on it (and the PiP) use them; the director view keeps the scene lens`
-        : 'Give the active camera its own depth of field; the phone attached to it adopts it';
+        ? `Focus / aperture above are shot ${active?.name}'s: the phone on it (and the PiP) use them; your view keeps the scene lens`
+        : 'Give the shot the phone is on its own depth of field; the phone adopts it';
     });
 
     body.append(
@@ -775,7 +756,7 @@ export function mountLookPanel(director: Director): LookPanel {
       h('div', { class: 'row wrap' }, add('point', '+ Point'), add('spot', '+ Spot'), add('sun', '+ Sun'), full ? h('span', { class: 'small muted' }, `max ${MAX_SPLAT_LIGHTS}`) : null),
     );
     if (!lights.length)
-      lightsBox.append(h('div', { class: 'small muted' }, 'Lights brighten nearby splats and actors (no new shadows: the world is baked).'));
+      lightsBox.append(h('div', { class: 'small muted' }, 'Lights brighten the set and the actors near them (no new shadows: the world is baked).'));
   }
 
   // ---- render ----------------------------------------------------------------------------------
@@ -798,7 +779,7 @@ export function mountLookPanel(director: Director): LookPanel {
     const now = performance.now();
     if (flash && now > flash.until) flash = null;
     const s = session.status;
-    status.textContent = flash?.text ?? `${STATUS[s] ?? s}${s === 'saved' ? ` · rev ${session.revision}` : ''}${session.error && s === 'error' ? `: ${session.error}` : ''}`;
+    status.textContent = flash?.text ?? `${STATUS[s] ?? s}${session.error && s === 'error' ? `: ${session.error}` : ''}`;
     status.dataset.status = s;
     status.dataset.revision = String(session.revision);
     undoBtn.disabled = !session.history?.canUndo;
@@ -809,9 +790,9 @@ export function mountLookPanel(director: Director): LookPanel {
     name.disabled = !runtime;
   }
 
-  // ---- keyboard: undo / redo while the Look tab is open ------------------------------------------
+  // ---- keyboard: undo / redo while Tools › Grade is open ------------------------------------------
   window.addEventListener('keydown', (e) => {
-    // the panel itself must be showing (other tabs, e.g. Edit, hide it without telling us)
+    // the panel itself must be showing (tools.ts hides it with the drawer or its section)
     if (section.hidden || !(e.metaKey || e.ctrlKey) || e.code !== 'KeyZ') return;
     if (isTyping(e.target)) return;
     e.preventDefault();

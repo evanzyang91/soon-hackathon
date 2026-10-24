@@ -6,7 +6,7 @@
 //
 // Where it lives: with no scene open the chat fills the viewport (big and readable, the first
 // thing a new director sees); once a scene opens it moves into the projects drawer above the list,
-// and the drawer widens over the viewport while the chat has focus, so the four right tabs and the
+// and the drawer widens over the viewport while the chat has focus, so the three modes and the
 // viewport keep their room. One DOM node moves between the two places, so a half-typed message,
 // its attachments and the scroll position survive the move.
 //
@@ -96,6 +96,11 @@ export interface ChatPanel {
   /** The project whose thread is shown (null: a new project). */
   readonly projectId: string | null;
   select(projectId: string | null): void;
+  /**
+   * Opens the project's thread with the composer focused: `text` goes in when nothing is typed,
+   * and photos attached next get `hint` as their target ("scene:0": "Change the location…").
+   */
+  compose(projectId: string, text: string, hint?: string): void;
 }
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -221,6 +226,8 @@ export function mountChatPanel(
   // ---- state ----------------------------------------------------------------------------------
   let selected: string | null = null;
   let drafts: Draft[] = [];
+  /** The target new photos get ("Change the location…" aims them at its scene). */
+  let defaultHint = '';
   let menuFor: string | null = null;
   let creating = false;
   let newError: string | null = null;
@@ -344,6 +351,7 @@ export function mountChatPanel(
       composers.set(was, { text: input.value, title: titleInput.value, drafts });
     else composers.delete(was);
     selected = id;
+    defaultHint = '';
     const kept = composers.get(id ?? '');
     composers.delete(id ?? '');
     input.value = kept?.text ?? '';
@@ -571,7 +579,7 @@ export function mountChatPanel(
         url: URL.createObjectURL(f),
         image: null,
         error: null,
-        hint: '',
+        hint: defaultHint,
       };
       drafts.push(d);
       void prepareImage(f, f.name || 'pasted.png').then(
@@ -983,15 +991,18 @@ export function mountChatPanel(
     return out;
   };
 
+  // first run: the three steps, one line each
   const hero = () =>
     h(
       'div',
       { class: 'chat-hero', 'data-testid': 'chat-hero' },
       h('h1', {}, 'Previz Stage'),
       h(
-        'p',
-        {},
-        'Paste a screenplay to start a project. I plan the scenes and the cast; change anything in words, attach photos of the people and places, then Generate.',
+        'ol',
+        { class: 'chat-steps' },
+        h('li', {}, 'Paste a screenplay.'),
+        h('li', {}, 'Review the breakdown; change it in words, add photos of the people and places.'),
+        h('li', {}, 'Generate: every scene becomes a set you can block, shoot and share.'),
       ),
     );
 
@@ -1381,10 +1392,22 @@ export function mountChatPanel(
 
   place();
   renderAll(true);
+  const compose = (projectId: string, text: string, hint = '') => {
+    select(projectId);
+    if (!input.value.trim()) input.value = text;
+    defaultHint = hint;
+    if (document.body.classList.contains('drawer-closed')) document.getElementById('drawer-toggle')?.click();
+    grow();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    setWide(true);
+  };
+
   return {
     get projectId() {
       return selected;
     },
     select,
+    compose,
   };
 }
