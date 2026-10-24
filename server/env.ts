@@ -16,6 +16,8 @@ export const env = {
   calibrate: process.env.CALIBRATE !== '0',
   /** The Claude-vision half of calibration (renders + 2 requests, ~$0.1/world); CALIBRATE_VISION=0 skips it. */
   calibrateVision: process.env.CALIBRATE_VISION !== '0',
+  /** Stage the actors on each new live Marble world with Claude vision (staging.ts); STAGING=0 skips it. */
+  staging: process.env.STAGING !== '0',
   keys: {
     marble: process.env.WLT_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',
