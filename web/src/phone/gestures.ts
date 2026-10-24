@@ -1,5 +1,7 @@
 // Touch + mouse input on the phone stage: pinch → zoom, one-finger / mouse drag → look (only
 // when enabled: desktop simulator or no motion sensors), wheel → zoom (desktop).
+// Only touches that started on the stage count (`targetTouches`): a thumb resting on the HUD's
+// joystick or height slider plus one finger on the stage is not a pinch.
 import { Euler, Quaternion } from 'three';
 
 export interface LookState {
@@ -67,32 +69,32 @@ export class Gestures {
   }
 
   private onTouchStart = (e: TouchEvent) => {
-    if (e.touches.length === 2) {
+    if (e.targetTouches.length === 2) {
       e.preventDefault();
-      this.pinchDist = touchDist(e.touches);
+      this.pinchDist = touchDist(e.targetTouches);
       this.drag = null;
       this.h.pinchStart();
-    } else if (e.touches.length === 1) {
-      const t = e.touches[0]!;
+    } else if (e.targetTouches.length === 1) {
+      const t = e.targetTouches[0]!;
       this.beginDrag(t.clientX, t.clientY);
     }
   };
 
   private onTouchMove = (e: TouchEvent) => {
-    if (e.touches.length === 2 && this.pinchDist > 0) {
+    if (e.targetTouches.length === 2 && this.pinchDist > 0) {
       e.preventDefault();
-      this.h.pinch(touchDist(e.touches) / this.pinchDist);
-    } else if (e.touches.length === 1 && this.drag) {
+      this.h.pinch(touchDist(e.targetTouches) / this.pinchDist);
+    } else if (e.targetTouches.length === 1 && this.drag) {
       e.preventDefault();
-      const t = e.touches[0]!;
+      const t = e.targetTouches[0]!;
       this.moveBy(t.clientX - this.drag.x, t.clientY - this.drag.y);
       this.drag = { x: t.clientX, y: t.clientY };
     }
   };
 
   private onTouchEnd = (e: TouchEvent) => {
-    if (e.touches.length < 2) this.pinchDist = 0;
-    if (e.touches.length === 0) this.drag = null;
+    if (e.targetTouches.length < 2) this.pinchDist = 0;
+    if (e.targetTouches.length === 0) this.drag = null;
   };
 
   private onMouseDown = (e: MouseEvent) => {

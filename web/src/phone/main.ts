@@ -5,9 +5,10 @@
 // Pose streaming is the critical path: it never waits on, or breaks because of, the 3D view.
 import { Euler, Quaternion } from 'three';
 import type { PhonePose, SceneState, ServerMessage } from '@shared/protocol';
-import { SceneManifest } from '@shared/schema';
+import { SceneManifest, type Vec3 } from '@shared/schema';
 import { clampFov, DEFAULT_FOV, focalLabel, pinchFov } from './fov.ts';
 import { Gestures } from './gestures.ts';
+import { KeyboardWalk, TouchStick } from './joystick.ts';
 import { HandheldNudge } from './nudge.ts';
 import { RelayClient, relayUrl, type ConnState } from './relay-client.ts';
 import { anchorFor, captionFor, SceneClockTracker, type Anchor } from './scene-sync.ts';
@@ -18,6 +19,7 @@ import { bindUi } from './ui.ts';
 import { attitudeOf } from './viewfinder.ts';
 import { enterFullscreenLandscape, keepScreenOn, requestSensorPermission } from './platform.ts';
 import type { PhoneView } from './view.ts';
+import { cameraPosition, headingOf, NO_WALK, Walker, type WalkInput } from './walk.ts';
 
 const params = new URLSearchParams(location.search);
 const SIM = params.get('sim') === '1';
@@ -27,10 +29,13 @@ const NO_3D = params.get('3d') === '0';
 const SWAY_GAIN = Number(params.get('sway') ?? 1) || 1;
 const QUALITY =
   (['k100', 'k500', 'full'] as const).find((q) => q === params.get('quality')) ?? 'k500';
+/** The joystick never takes the camera closer than this to the floor (y = 0). */
+const MIN_EYE_HEIGHT = 0.15;
 
 const ui = bindUi();
 const tracker = new OrientationTracker();
 const nudge = new HandheldNudge({ gain: SWAY_GAIN });
+const walker = new Walker();
 const throttle = new PoseThrottle(30, 250);
 const clock = new SceneClockTracker();
 /** ?governor=0 disables adaptive render throttling (always render every frame). */
@@ -51,6 +56,9 @@ let lastMotionAt = -Infinity;
 let lastMotionTs = 0;
 let lastPumpAt = performance.now();
 let gestures: Gestures | null = null;
+let stick: TouchStick | null = null;
+let heightSlider: TouchStick | null = null;
+let keys: KeyboardWalk | null = null;
 
 const angle = () =>
   ANGLE_OVERRIDE !== null && Number.isFinite(ANGLE_OVERRIDE) ? ANGLE_OVERRIDE : screenAngle();
@@ -76,11 +84,21 @@ const debug = {
   viewStatus: '',
   yawOffset: 0,
   anchor,
+  /** Joystick walk offset from the anchor (m, world frame) — also in every PhonePose. */
+  offset: [0, 0, 0] as Vec3,
+  /** Walking heading (rad, 0 = −Z), from the camera's view direction. */
+  heading: 0,
+  /** Current walk input: stick x / y, height rate (each -1..1). */
+  walk: { ...NO_WALK } as WalkInput,
+  /** Phone camera position = anchor + offset + nudge (as rendered, when 3D is drawing). */
+  cameraPosition: [0, 1.6, 0] as Vec3,
   recording: false,
   permission: 'unknown' as string,
   start: () => start(),
   recenter: () => recenter(),
   setFov: (f: number) => setFov(f),
+  /** Back to the attached camera (what a double-tap on the joystick does). */
+  resetWalk: () => resetWalk(),
 };
 export type PhoneDebug = typeof debug;
 declare global {
@@ -177,6 +195,22 @@ function start(): void {
   });
   relay.start();
 
+  stick = new TouchStick(ui.joystick.zone, ui.joystick.base, ui.joystick.knob, {
+    radius: 48,
+    axis: 'xy',
+    floating: true,
+  });
+  stick.onDoubleTap = () => {
+    resetWalk();
+    ui.toast(`Back at ${anchor.name}`);
+  };
+  heightSlider = new TouchStick(ui.height.zone, ui.height.zone, ui.height.knob, {
+    radius: 56,
+    axis: 'y',
+    floating: false,
+  });
+  if (SIM) keys = new KeyboardWalk();
+
   void initView();
   window.addEventListener('resize', () => view?.resize());
   ui.onRecenter(() => {
@@ -259,8 +293,23 @@ function listenSensors() {
 }
 
 function recenter() {
+  // only the heading: a recenter keeps where the joystick has walked to
   tracker.recenter(anchor.yaw);
   debug.yawOffset = tracker.yawOffset;
+}
+
+function resetWalk() {
+  walker.reset();
+  debug.offset = walker.offset;
+}
+
+function walkInput(): WalkInput {
+  const k = keys?.input ?? NO_WALK;
+  return {
+    x: stick?.active ? stick.x : k.x,
+    y: stick?.active ? stick.y : k.y,
+    rise: heightSlider?.active ? heightSlider.y : k.rise,
+  };
 }
 
 function setFov(f: number) {
@@ -324,6 +373,8 @@ function refreshAnchor() {
   ui.setCameraName(next.name);
   if (changed) {
     setFov(next.fovDeg);
+    // walking is relative to the attached camera: a new camera starts where it stands
+    resetWalk();
     if (AUTO_RECENTER) recenter();
   }
 }
@@ -357,7 +408,16 @@ function currentPose(now: number): PhonePose {
   const q = toQuat(tracker.quaternion);
   // Viewport aspect of the phone's render, so the laptop's frustum gizmo / PiP match the framing.
   const aspect = Math.round((window.innerWidth / Math.max(1, window.innerHeight)) * 1000) / 1000;
-  return { type: 'pose', t: now, q, nudge: nudge.offset, fovDeg, aspect, recording };
+  return {
+    type: 'pose',
+    t: now,
+    q,
+    nudge: nudge.offset,
+    offset: walker.offset,
+    fovDeg,
+    aspect,
+    recording,
+  };
 }
 
 /** Advance sway decay and send a pose if the throttle allows. Called from rAF and a timer. */
@@ -369,6 +429,12 @@ function pump(now: number) {
   if (document.visibilityState === 'visible' && view?.mode === 'webgl')
     governor.observeGap(now, gapMs);
   if (now - lastMotionAt > 250) nudge.update(null, tracker.deviceFrame, dt);
+  const input = walkInput();
+  debug.walk = input;
+  debug.heading = headingOf(tracker.quaternion);
+  debug.offset = walker.update(input, debug.heading, dt, {
+    down: Math.max(0, anchor.position[1] - MIN_EYE_HEIGHT),
+  });
   if (!relay || relay.state !== 'open') return;
   const pose = currentPose(now);
   if (!throttle.shouldSend(now, poseKey(pose))) return;
@@ -386,12 +452,14 @@ function frame(now: number) {
   lastFrameAt = now;
   const q = tracker.quaternion;
   const off = nudge.offset;
+  const pose = { position: anchor.position, quaternion: q, fovDeg, offset: walker.offset, nudge: off };
+  debug.cameraPosition = cameraPosition(pose);
   if (view) {
     const t0 = performance.now();
     const draw = governor.shouldRender(now);
     try {
       view.frame(
-        { position: anchor.position, quaternion: q, fovDeg, nudge: off },
+        pose,
         dt,
         {
           time: clock.time(now),
@@ -401,6 +469,7 @@ function frame(now: number) {
         { draw, paused: !governor.current.render3d },
       );
       if (draw && view.mode === 'webgl') {
+        debug.cameraPosition = view.renderedPosition;
         governor.rendered(now);
         const cost = performance.now() - t0;
         debug.renderMs = debug.renderMs ? debug.renderMs * 0.9 + cost * 0.1 : cost;
@@ -420,6 +489,16 @@ function frame(now: number) {
     `HDG ${a.headingDeg.toFixed(0).padStart(3, '0')}° TILT ${a.pitchDeg.toFixed(0)}° ROLL ${a.rollDeg.toFixed(0)}°`,
   );
   if (recording) ui.setRecordTime((now - recordStartedAt) / 1000);
+  ui.setWalkReadout(walkReadout(walker.offset));
+}
+
+/** "1.2 m · ↑0.4 m" away from the attached camera; '' while standing on it. */
+function walkReadout(o: Vec3): string {
+  const flat = Math.hypot(o[0], o[2]);
+  const parts: string[] = [];
+  if (flat >= 0.05) parts.push(`↔ ${flat.toFixed(1)} m`);
+  if (Math.abs(o[1]) >= 0.05) parts.push(`${o[1] > 0 ? '↑' : '↓'} ${Math.abs(o[1]).toFixed(1)} m`);
+  return parts.length ? `${parts.join(' · ')} from ${anchor.name}` : '';
 }
 
 function withParam(key: string, value: string) {

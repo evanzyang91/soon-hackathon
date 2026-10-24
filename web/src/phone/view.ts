@@ -7,11 +7,16 @@ import { ViewportRenderer } from '../viewer/render.ts';
 import type { SparkOptions } from '../viewer/spark.ts';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world.ts';
 import { drawViewfinder } from './viewfinder.ts';
+import { cameraPosition } from './walk.ts';
 
 export interface CameraPose {
+  /** The attached (anchor) camera. */
   position: Vec3;
   quaternion: THREE.Quaternion;
   fovDeg: number;
+  /** Joystick walk offset (m, world frame). */
+  offset: Vec3;
+  /** Handheld sway (m, world frame). */
   nudge: Vec3;
 }
 
@@ -148,9 +153,7 @@ export class PhoneView {
         }
         this.setShown('webgl');
         if (!opts.draw) return;
-        const p = pose.position;
-        const n = pose.nudge;
-        this.camera.position.set(p[0] + n[0], p[1] + n[1], p[2] + n[2]);
+        this.camera.position.set(...cameraPosition(pose));
         this.camera.quaternion.copy(pose.quaternion);
         if (this.camera.fov !== pose.fovDeg) {
           this.camera.fov = pose.fovDeg;
@@ -165,6 +168,12 @@ export class PhoneView {
     }
     this.setShown('viewfinder');
     this.drawViewfinder(pose, this.status);
+  }
+
+  /** Position of the last rendered 3D frame's camera (debug / e2e). */
+  get renderedPosition(): Vec3 {
+    const p = this.camera.position;
+    return [p.x, p.y, p.z];
   }
 
   /** What is on screen right now. */
