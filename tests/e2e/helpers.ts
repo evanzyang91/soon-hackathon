@@ -195,5 +195,8 @@ export interface PhoneState {
   renderLevel: number;
   framesRendered: number;
   yawOffset: number;
-  anchor: { name: string; key: string; yaw: number };
+  anchor: { name: string; key: string; yaw: number; position: number[] };
+  cameraPosition: number[];
+  poseSource: 'external' | 'sensors';
+  externalPoses: number;
 }

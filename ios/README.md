@@ -6,10 +6,10 @@ through the existing web renderer in a full-screen `WKWebView` (`/phone.html?pos
 the world, actors and look are identical. You walk with the phone to move the camera 1:1. There is
 no joystick and no camera passthrough (we film the virtual scene).
 
-**Status:** source, project and tests are done. The pure-Swift core (`PrevizCore`) is built and
-unit-tested here. The app sources are typechecked against Apple's real UIKit / ARKit / WebKit
-declarations (Mac Catalyst SDK). Nothing has been compiled for an iPhone or run on one, because
-this Mac has no Xcode yet. See [Verified vs not yet verified](#verified-vs-not-yet-verified).
+**Status:** the app builds for iOS with Xcode 26.5 (no errors or warnings), `PrevizCore` passes
+its 59 tests, and the page side of the bridge (`phone.html?pose=external`) is implemented and
+covered by `tests/e2e/phone-external-pose.spec.ts`. It has not run on an iPhone yet. See
+[Verified vs not yet verified](#verified-vs-not-yet-verified).
 
 ```
 ios/
@@ -308,16 +308,21 @@ Verified on this Mac (Command Line Tools only, Swift 6.1 toolchain):
   `webView:didReceiveAuthenticationChallenge:completionHandler:`,
   `URLSession:webSocketTask:didOpenWithProtocol:`, …).
 - `xcodegen generate` succeeds. `plutil -lint` passes on Info.plist and project.pbxproj.
+- **iOS build (Xcode 26.5, iPhoneOS 26.5 SDK, 2026-10-24):** `ios/scripts/typecheck-app.sh` builds
+  `PrevizCamera` for `generic/platform=iOS` unsigned: BUILD SUCCEEDED with no errors or warnings,
+  asset catalog included.
+- **The page side of the bridge:** `phone.html?pose=external` (`web/src/phone/external.ts`)
+  starts without the gate, hides the page controls, installs `__previzPose` / `__previzMessage`,
+  posts `ready`, places the camera at anchor + offset + nudge with the pose's lens, follows
+  `recording`, and never opens the relay socket (`tests/e2e/phone-external-pose.spec.ts`).
 
-Not yet verified (needs Xcode, the iOS SDK and an iPhone):
+Not yet verified (needs an iPhone and a signing team):
 
-- An actual iOS build: warnings that only the iOS SDK would raise, and asset catalog compilation.
 - Device behaviour: ARKit tracking at 60 Hz without a view, `check.rotationErrorDeg` /
   `fovErrorDeg` ≈ 0 on device, the camera / Local Network prompts, and QR scanning.
 - TLS: whether ATS honours the pin override for LAN IPs under `NSAllowsLocalNetworking` alone. If
   connections fail with an ATS error, add `NSAllowsArbitraryLoads` for the dev build, or use
   mkcert. Also unverified: whether WKWebView routes every sub-resource / worker request's server
   trust challenge to the navigation delegate (if not, use mkcert).
-- `phone.html?pose=external` itself, which is WP H's side of the contract above.
 - Performance: evaluateJavaScript at 60 Hz alongside a splat render (the app keeps at most one
   pose evaluation in flight and drops stale ones).

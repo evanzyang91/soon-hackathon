@@ -28,6 +28,7 @@ import { attitudeOf } from './viewfinder.ts';
 import { enterFullscreenLandscape, keepScreenOn, requestSensorPermission } from './platform.ts';
 import type { PhoneView } from './view.ts';
 import { cameraPosition, headingOf, NO_WALK, Walker, type WalkInput } from './walk.ts';
+import { clampExternalFov, installBridge } from './external.ts';
 
 const params = new URLSearchParams(location.search);
 const SIM = params.get('sim') === '1';
@@ -37,6 +38,8 @@ const NO_3D = params.get('3d') === '0';
 const SWAY_GAIN = Number(params.get('sway') ?? 1) || 1;
 /** ?voice=0 mutes the actors on the phone (e.g. when the laptop's speakers are in the room). */
 const VOICE = params.get('voice') !== '0';
+/** ?pose=external: the native ARKit app sends poses and relay messages; this page only renders. */
+const EXTERNAL = params.get('pose') === 'external';
 const QUALITY =
   (['k100', 'k500', 'full'] as const).find((q) => q === params.get('quality')) ?? 'k500';
 /** The joystick never takes the camera closer than this to the floor (y = 0). */
@@ -74,6 +77,9 @@ let hintedScene: string | null = null;
 let stick: TouchStick | null = null;
 let heightSlider: TouchStick | null = null;
 let keys: KeyboardWalk | null = null;
+/** Latest pose from the native app (pose=external), applied by the rAF loop. */
+let extPose: PhonePose | null = null;
+const extQuat = new Quaternion();
 
 const angle = () =>
   ANGLE_OVERRIDE !== null && Number.isFinite(ANGLE_OVERRIDE) ? ANGLE_OVERRIDE : screenAngle();
@@ -127,6 +133,10 @@ const debug = {
   /** The director's look as rendered here: name, edits.json revision, frames through the post pass. */
   look: { name: 'Default', revision: -1, postFrames: 0 },
   permission: 'unknown' as string,
+  /** 'external' when the native app drives the pose (phone.html?pose=external). */
+  poseSource: (EXTERNAL ? 'external' : 'sensors') as 'external' | 'sensors',
+  /** Poses received through window.__previzPose. */
+  externalPoses: 0,
   start: () => start(),
   recenter: () => recenter(),
   setFov: (f: number) => setFov(f),
@@ -147,14 +157,44 @@ window.__phone = debug;
 
 const initialRoom = (params.get('room') ?? '').trim().toUpperCase();
 ui.roomInput.value = initialRoom;
-if (!window.isSecureContext) {
-  ui.startError('Motion sensors need HTTPS. Open the https:// link printed by the server.');
+if (EXTERNAL) {
+  startExternal();
+} else {
+  if (!window.isSecureContext) {
+    ui.startError('Motion sensors need HTTPS. Open the https:// link printed by the server.');
+  }
+  ui.startButton.addEventListener('click', () => start());
+  ui.roomInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') start();
+  });
+  if (params.get('autostart') === '1' && initialRoom) start();
 }
-ui.startButton.addEventListener('click', () => start());
-ui.roomInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') start();
-});
-if (params.get('autostart') === '1' && initialRoom) start();
+
+/**
+ * Native-driven start (ios/README.md, "Web side contract"): no start gate, sensors, relay,
+ * joystick or pinch; the app forwards relay messages and sends the pose it also streams.
+ */
+function startExternal(): void {
+  started = true;
+  debug.started = true;
+  debug.room = initialRoom;
+  ui.showHud(initialRoom);
+  ui.hideForExternal();
+  // WKWebView allows media without a gesture; with ?voice=1 the actors speak here too.
+  if (VOICE) unlockAudio((s) => (debug.audio = s));
+  void initView();
+  window.addEventListener('resize', () => view?.resize());
+  installBridge({
+    onPose: (pose) => {
+      extPose = pose;
+      debug.externalPoses++;
+      debug.lastPose = pose;
+      if (pose.recording !== recording) setRecording(pose.recording, false);
+    },
+    onMessage,
+  });
+  requestAnimationFrame(frame);
+}
 
 /** Must run inside the user-gesture handler: permission + fullscreen requests happen synchronously. */
 function start(): void {
@@ -395,7 +435,8 @@ function onMessage(msg: ServerMessage) {
       break;
     case 'cmd':
       if (msg.cmd === 'recenter') {
-        recenter();
+        // pose=external: the app has already re-centred its own pose
+        if (!EXTERNAL) recenter();
         ui.toast('Director recentered you');
       } else if (msg.cmd === 'shutter') ui.flash();
       else if (msg.cmd === 'record-start') setRecording(true, false);
@@ -491,6 +532,7 @@ function currentPose(now: number): PhonePose {
 
 /** Advance sway decay and send a pose if the throttle allows. Called from rAF and a timer. */
 function pump(now: number) {
+  if (EXTERNAL) return; // the native app streams the pose
   const gapMs = now - lastPumpAt;
   const dt = Math.min(0.1, Math.max(0, gapMs / 1000));
   lastPumpAt = now;
@@ -532,9 +574,19 @@ function frame(now: number) {
   pump(now);
   const dt = Math.min(0.1, (now - lastFrameAt) / 1000);
   lastFrameAt = now;
-  const q = tracker.quaternion;
-  const off = nudge.offset;
-  const pose = { position: anchor.position, quaternion: q, fovDeg, offset: walker.offset, nudge: off };
+  let q = tracker.quaternion;
+  let off = nudge.offset;
+  let walked = walker.offset;
+  if (EXTERNAL && extPose) {
+    q = extQuat.fromArray(extPose.q);
+    off = extPose.nudge;
+    walked = extPose.offset ?? [0, 0, 0];
+    if (extPose.fovDeg !== fovDeg) {
+      fovDeg = clampExternalFov(extPose.fovDeg);
+      ui.setLens(focalLabel(fovDeg));
+    }
+  }
+  const pose = { position: anchor.position, quaternion: q, fovDeg, offset: walked, nudge: off };
   debug.cameraPosition = cameraPosition(pose);
   if (view) {
     const t0 = performance.now();

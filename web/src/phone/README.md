@@ -50,6 +50,7 @@ speakers are in the same room.
 ?sway=2           exaggerate the handheld nudge
 ?voice=0          mute the actors on the phone (the laptop still plays them)
 ?ws=wss://…/ws    override the relay URL
+?pose=external    the native ARKit app (ios/) drives the pose and relay; this page only renders
 ```
 
 ## Modules
@@ -63,6 +64,7 @@ speakers are in the same room.
 | `audio.ts`                            | AudioContext unlock inside the start tap, shared with three.js                |
 | `fov.ts` / `throttle.ts`              | pinch zoom (24–90°, "35mm" labels) / ≤ 30 Hz + 4 Hz keepalive                 |
 | `scene-sync.ts`                       | `SceneState` → anchor, caption, scene clock, ACTION / CUT (`DialogueActivity`)|
+| `external.ts`                         | `?pose=external` bridge for the iOS app: `__previzPose`, `__previzMessage`, `ready` |
 | `relay-client.ts`                     | reconnecting WebSocket client (role-agnostic; the laptop can reuse it)        |
 | `render-governor.ts`                  | steps 3D quality down (down to paused) when rendering starves the pose stream; perf label |
 | `view.ts` / `viewfinder.ts`           | 3D render via `loadScene` / 2D fallback                                       |
