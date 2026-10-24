@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Blocking, ScreenplayPlan } from './schema';
 import {
   beatsEnd,
+  fixMarks,
   GESTURE_S,
   performanceAt,
   poseFromAction,
@@ -169,5 +170,26 @@ describe('shiftBlocking', () => {
     expect(s.beats![1]!.yaw).toBe(Math.PI);
     expect(performanceAt(s, 30)).toMatchObject({ x: 2, z: -3.2, pose: 'sitting' });
     expect(shiftBlocking(maya, [-1, 0, -3])).toBe(maya);
+  });
+});
+
+describe('fixMarks', () => {
+  it('moves only the walk targets the fix changes, with the pose the actor arrives in', () => {
+    const seen: string[] = [];
+    const fixed = fixMarks(maya, (x, z, pose) => {
+      seen.push(pose);
+      return z < -4 ? [x + 0.5, z] : [x, z];
+    });
+    expect(seen).toEqual(['standing', 'sitting']);
+    expect(fixed.beats![0]).toBe(maya.beats![0]);
+    expect(fixed.beats![1]).toBe(maya.beats![1]);
+    expect(fixed.beats![2]!.moveTo).toEqual([1.5, 0, -4.2]);
+    expect(maya.beats![2]!.moveTo).toEqual([1, 0, -4.2]);
+  });
+
+  it('returns the same blocking when every mark is clear', () => {
+    expect(fixMarks(maya, (x, z) => [x, z])).toBe(maya);
+    const still = Blocking.parse({ characterId: 'a', position: [0, 0, 0], yaw: 0 });
+    expect(fixMarks(still, () => [9, 9])).toBe(still);
   });
 });
