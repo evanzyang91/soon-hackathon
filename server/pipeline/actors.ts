@@ -15,7 +15,7 @@
 //   2. `python3 worker/run_actor.py --image reference.png --out actors/<id>` (LHM on a Modal
 //      L4; receipt-first, so a crashed/timed-out call is recovered, never paid twice)
 //   3. -> { kind: 'splat-sequence', sequenceDir: 'actors/<id>/sequence', fps, nativeHeight
-//      (measured from frame_000.ply), heightMeters: 1.7 }. The worker also writes the runtime rig
+//      (measured from frame_000.ply), heightMeters }. The worker also writes the runtime rig
 //      (sequence.json `rig` -> rig.json, rig-splats.bin, motion-library.json, motion-clips.bin)
 //      in the same directory; the viewer prefers it and falls back to the baked frames.
 // An existing valid actors/<id>/sequence is reused without any network call.
@@ -29,7 +29,9 @@
 //   came from, and <build dir>/build-source.json which reference a sequence / Modal receipt was
 //   built from, so a new photo never reuses or recovers the previous person's build.
 // MOCK, missing keys, or ANY failure -> the free offline fallback
-//   { kind: 'glb-humanoid', glb: 'procedural:mannequin', clips, tint }
+//   { kind: 'glb-humanoid', glb: 'procedural:mannequin', clips, tint, heightMeters }
+// heightMeters is always the character's (Character.heightMeters from the planner, 1.7 when the
+// plan has none): the browser scales every body kind to it.
 // Outside MOCK the fallback is marked `fallback: true`, so project.ts rebuilds it (once keys and
 // Modal billing allow) instead of caching the mannequin as the final actor.
 // which the browser builds procedurally (web/src/viewer/actors/mannequin.ts). The `procedural:`
@@ -72,9 +74,25 @@ export function workerArgs(referencePath: string, actorDir: string, detail: Acto
 
 export const FALLBACK_GLB = 'procedural:mannequin';
 export const FALLBACK_CLIPS = { idle: 'Idle', talk: 'Talk', walk: 'Walk' } as const;
+/** Standing height of a character the planner gave none (older plans). */
 export const HEIGHT_METERS = 1.7;
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const RUN_ACTOR = join(REPO, 'worker', 'run_actor.py');
+
+/** The height every body kind of this character is scaled to (Character.heightMeters, else 1.7). */
+export function heightFor(character: Pick<Character, 'heightMeters'>): number {
+  const h = character.heightMeters;
+  return typeof h === 'number' && Number.isFinite(h) && h > 0 ? h : HEIGHT_METERS;
+}
+
+/**
+ * `asset` standing at its character's height. A cached actor.json from before the planner gave
+ * heights (or from a re-planned script) is brought in line; the same object when nothing changes.
+ */
+export function withHeight(asset: ActorAsset, character: Pick<Character, 'heightMeters'>): ActorAsset {
+  const heightMeters = heightFor(character);
+  return asset.heightMeters === heightMeters ? asset : { ...asset, heightMeters };
+}
 
 export function fallbackActor(character: Character): ActorAsset {
   return {
@@ -83,6 +101,7 @@ export function fallbackActor(character: Character): ActorAsset {
     glb: FALLBACK_GLB,
     clips: { ...FALLBACK_CLIPS },
     tint: tintFor(character.id),
+    heightMeters: heightFor(character),
   };
 }
 
@@ -345,7 +364,7 @@ export async function sequenceAsset(
       sequenceDir: relative(projectDir, sequenceDir).split(sep).join('/'),
       fps: seq.fps,
       nativeHeight: Math.round(nativeHeight * 1e4) / 1e4,
-      heightMeters: HEIGHT_METERS,
+      heightMeters: heightFor(character),
     };
   } catch {
     return null;

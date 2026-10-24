@@ -8,12 +8,14 @@ import {
   floorOffsetOf,
   withGround,
   calibrateWorld,
+  combineSources,
   decide,
   evidenceText,
   formatReport,
   geometricEstimate,
   previousCalibration,
   redecide,
+  scaleSources,
   shortName,
   writeCalibration,
   type CalibrationReport,
@@ -106,6 +108,62 @@ describe('decision rules', () => {
     );
     expect(d).toMatchObject({ method: 'none', factor: 1 });
     expect(d.reason).toMatch(/collider: only 1 weak reference\(s\); vision: agreeing runs but too little evidence/);
+  });
+
+  // no collider estimate (outdoors): vision, Claude's eyeballed runs and the camera eye-height
+  // prior weighed by 1/σ². The numbers are the stored reports of the three outdoor worlds.
+  const runs = (factor: number, spread: number, weight: number, eyeballed: number[]) => ({
+    available: false,
+    agree: true,
+    factor,
+    spread,
+    weight,
+    eyeballed,
+  });
+
+  it('outdoors: agreeing vision and a camera that point the same way are applied (rooftop)', () => {
+    const d = decide(null, runs(0.846, 0.122, 0.725, [0.595, 1.0]), { cameraHeight: 2.172 });
+    expect(d).toMatchObject({ applied: true, confidence: 'medium', method: 'vision+camera' });
+    expect(d.factor).toBeCloseTo(0.778, 2);
+    expect(d.sigma).toBeCloseTo(0.091, 2);
+    expect(d.reason).toMatch(/2\.8σ/);
+  });
+
+  it('outdoors: weak vision the camera and Claude’s own eye contradict is kept (bus stop)', () => {
+    const d = decide(null, runs(1.16, 0.051, 0.615, [0.96, 1.026]), { cameraHeight: 1.612 });
+    expect(d).toMatchObject({ applied: false, factor: 1, confidence: 'low', method: 'vision+eyeballed+camera' });
+    expect(d.candidate).toBeCloseTo(1.044, 2);
+    // a bigger, still insignificant pull: kept with the σ in the reason
+    const e = decide(null, runs(1.22, 0.05, 0.6, [1.02, 1.05]), { cameraHeight: 1.55 });
+    expect(e).toMatchObject({ applied: false, factor: 1, confidence: 'low' });
+    expect(e.reason).toMatch(/σ from Marble's scale \(< 1\.5σ\): not applied/);
+  });
+
+  it('outdoors: vision and camera more than 25 % apart are refused (city street)', () => {
+    const d = decide(null, runs(0.889, 0.01, 1.105, [1.037, 0.938, 0.918]), { cameraHeight: 1.3925 });
+    expect(d).toMatchObject({ applied: false, factor: 1, confidence: 'low' });
+    expect(d.reason).toMatch(/vision ×0\.89 .* and camera height ×1\.11 .* disagree by 25%/);
+  });
+
+  it('outdoors: clean vision outweighs a mildly disagreeing camera', () => {
+    // four standard objects measured from pixels (W 2.2), runs 3 % apart; camera at eye height
+    const d = decide(null, { ...runs(0.85, 0.03, 2.2, []), available: true }, { cameraHeight: 1.55 });
+    expect(d).toMatchObject({ applied: true, confidence: 'medium', method: 'vision+camera' });
+    expect(d.factor).toBeGreaterThan(0.87);
+    expect(d.factor).toBeLessThan(0.9);
+  });
+
+  it('outdoors: the camera alone never changes anything', () => {
+    const d = decide({ available: false, factor: NaN, consistent: 0, note: 'nothing' }, { available: false, factor: NaN, agree: false }, { cameraHeight: 2.17 });
+    expect(d).toMatchObject({ applied: false, factor: 1, method: 'none' });
+    expect(d.reason).toMatch(/camera height ×0\.71 ± 13% alone is only a prior/);
+  });
+
+  it('the eye-height prior: 1.55 m ± 0.2', () => {
+    const cam = scaleSources(null, { cameraHeight: 2.17 }).find((s) => s.kind === 'camera')!;
+    expect(cam.factor).toBeCloseTo(0.714, 3);
+    expect(cam.sigma).toBeCloseTo(0.129, 3);
+    expect(combineSources([cam, { ...cam, factor: 1 }]).factor).toBeCloseTo(Math.sqrt(0.714), 3);
   });
 
   it('evidence leads with the strongest reference at the calibrated scale (what the HUD shows)', () => {
