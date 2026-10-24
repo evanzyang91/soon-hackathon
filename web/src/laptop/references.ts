@@ -17,7 +17,7 @@ export function projectPlan(p: ProjectStatus, onLoad: () => void): ScreenplayPla
   const key = `${p.parse.status}:${p.chatRevision ?? 0}`;
   if (p.parse.status === 'done' && cached?.key !== key && !loading.has(p.id)) {
     loading.add(p.id);
-    void fetch(`/projects/${encodeURIComponent(p.id)}/plan.json`, { cache: 'no-store' })
+    void fetch(api.plan(p.id), { cache: 'no-store' })
       .then((r) => (r.ok ? (r.json() as Promise<ScreenplayPlan>) : null))
       .catch(() => null)
       .then((plan) => {
