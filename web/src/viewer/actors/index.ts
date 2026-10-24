@@ -15,7 +15,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { headYawToward } from '../gaze';
-import { buildMannequin, MANNEQUIN_HEIGHT_M, type Pose } from './mannequin';
+import { buildMannequin, MANNEQUIN_HEIGHT_M, restHeight, type Pose } from './mannequin';
 import { loadSequence, loadSplatBody } from './splat-actor';
 import { loadSkinnedBody } from './skinned-actor';
 import type { RigPointer } from './rig';
@@ -85,8 +85,8 @@ export function wantsGlbFile(glb: string): boolean {
 
 function mannequinBody(tint: string, heightM: number): Body {
   const m = buildMannequin(tint);
-  // built 1.7 m tall: scaling the root scales every joint, the sitting pose included
-  const s = heightM / MANNEQUIN_HEIGHT_M;
+  // scaling the root scales every joint, the sitting pose included; the head top lands at heightM
+  const s = heightM / restHeight(m.root);
   m.root.scale.setScalar(s);
   return {
     kind: 'mannequin',

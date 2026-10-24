@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildMannequin, LOOK_LIMIT, MANNEQUIN_HEIGHT_M } from './mannequin';
+import { buildMannequin, LOOK_LIMIT, MANNEQUIN_HEIGHT_M, restHeight } from './mannequin';
 import { actorHeight, poseDrop, wantsGlbFile, PROCEDURAL_GLB, SIT_DROP_M } from './index';
 import { tintFor } from '@shared/tint';
 import { projectCandidates, wrapText } from './common';
@@ -210,12 +210,13 @@ describe('speaking caption + seated height', () => {
     expect(actorHeight({}, { heightMeters: 1.3 })).toBe(1.3);
     expect(actorHeight({})).toBe(1.7);
     expect(poseDrop('sitting', 1.3)).toBeCloseTo((SIT_DROP_M * 1.3) / 1.7, 6);
-    // the mannequin body scales its root: a 1.85 m character's head tops out 1.85/1.7 higher
+    // the mannequin body scales its root by height / rest height: the head top lands at 1.85 m
     const m = buildMannequin('#3366cc');
-    m.animate(0.016, 0, false, 0);
-    const built = box(m.root).max.y;
-    m.root.scale.setScalar(1.85 / MANNEQUIN_HEIGHT_M);
-    expect(box(m.root).max.y).toBeCloseTo((built * 1.85) / 1.7, 3);
+    const rest = restHeight(m.root);
+    expect(rest).toBeGreaterThan(MANNEQUIN_HEIGHT_M); // the head sphere ends a little above 1.7
+    expect(rest).toBeLessThan(1.75);
+    m.root.scale.setScalar(1.85 / rest);
+    expect(box(m.root).max.y).toBeCloseTo(1.85, 3);
     expect(box(m.root).min.y).toBeCloseTo(0, 1);
   });
 });

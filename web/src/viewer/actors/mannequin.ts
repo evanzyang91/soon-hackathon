@@ -8,8 +8,19 @@
 // (actors/index.ts mannequinBody), so every proportion and pose below stays in 1.7 m units.
 import * as THREE from 'three';
 
-/** The mannequin's built standing height (m). */
+/** The mannequin's nominal standing height (m): the default for a character without one. */
 export const MANNEQUIN_HEIGHT_M = 1.7;
+
+/**
+ * Head top of a freshly built mannequin (rest pose), m: about 1.73, since the head sphere ends a
+ * little above the nominal 1.7. Scale the root by height / this so the character's height is the
+ * top of the head, exactly.
+ */
+export function restHeight(root: THREE.Object3D): number {
+  root.updateMatrixWorld(true);
+  const top = new THREE.Box3().setFromObject(root).max.y;
+  return top > 0 ? top : MANNEQUIN_HEIGHT_M;
+}
 
 export type Pose = 'standing' | 'sitting' | 'walking';
 
