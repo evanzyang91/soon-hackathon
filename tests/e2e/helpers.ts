@@ -179,7 +179,7 @@ export interface LaptopState {
   mainFrames: number;
   lastStillAt: number;
   ground: { cols: number; rows: number; cell: number } | null;
-  actors: { id: string; kind: string; position: number[]; groundY: number; placementCorrected: boolean }[];
+  actors: { id: string; kind: string; position: number[]; groundY: number; heightMeters: number | null; placementCorrected: boolean }[];
   dynamics: { id: string; position: number[]; phase: string }[];
   voice: { context: string; playing: string[]; level: number; heard: string[]; peak: number };
 }
