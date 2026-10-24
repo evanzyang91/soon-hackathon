@@ -5,6 +5,9 @@
 // Plug-in points (WP G and the laptop):
 //   setLook(look) / getLook()       the scene's look (the laptop's live look, edits.json's look)
 //   edits                           the scene's SceneEdits document (null until one is loaded)
+//   adoptEdits(doc)                 a document the server returned (GET, PUT, re-prompt): becomes
+//                                   `edits` and its look the scene look; onEdits listeners (the
+//                                   laptop's look session) pick up the new revision
 //   viewLook = (camera) => Look     per-view override (e.g. a dropped camera's own lens)
 //   compare = true                  ungraded frame (no grade, no lights, no DOF)
 import * as THREE from 'three';
@@ -52,6 +55,7 @@ export class SceneLook implements LookProvider {
   private readonly params = new WeakMap<Look, GradeParams>();
   private lastAttach = -Infinity;
   private readonly listeners = new Set<(look: Look) => void>();
+  private readonly editsListeners = new Set<(doc: SceneEdits) => void>();
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -82,6 +86,18 @@ export class SceneLook implements LookProvider {
   onChange(fn: (look: Look) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Takes a server document (edits.json) as the truth: `edits`, and its look as the scene look. */
+  adoptEdits(doc: SceneEdits): void {
+    this.edits = doc;
+    this.setLook(doc.look);
+    for (const fn of this.editsListeners) fn(doc);
+  }
+
+  onEdits(fn: (doc: SceneEdits) => void): () => void {
+    this.editsListeners.add(fn);
+    return () => this.editsListeners.delete(fn);
   }
 
   setCompare(on: boolean) {
@@ -135,5 +151,6 @@ export class SceneLook implements LookProvider {
     this.meshLights.dispose();
     this.scene.remove(this.meshLights.group);
     this.listeners.clear();
+    this.editsListeners.clear();
   }
 }

@@ -554,3 +554,144 @@ button.line.speaking {
   font-style: italic;
   margin-right: 6px;
 }
+
+/* right panel tabs + look panel (look-panel.ts) */
+.right-tabs {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.right-tabs .tab {
+  flex: 1;
+  padding: 5px 0;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.look-panel {
+  gap: 8px;
+}
+.look-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.look-name {
+  font-weight: 600;
+}
+.look-presets {
+  max-width: 60%;
+}
+.look-compare {
+  user-select: none;
+  touch-action: none;
+}
+.look-compare.on {
+  background: #4a3a12;
+  border-color: var(--warn);
+}
+.look-status[data-status='unsaved'],
+.look-status[data-status='saving'] {
+  color: var(--warn);
+}
+.look-status[data-status='error'] {
+  color: var(--bad);
+}
+.look-group {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+.look-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 2px 0 4px;
+  list-style: none;
+}
+.look-group > summary::-webkit-details-marker {
+  display: none;
+}
+.look-group > summary::before {
+  content: '▸';
+  font-size: 10px;
+}
+.look-group[open] > summary::before {
+  content: '▾';
+}
+.look-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+.look-row > .look-row {
+  flex: 1;
+  min-width: 0;
+}
+.look-label {
+  flex: 0 0 76px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.look-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.look-row input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+.look-val {
+  flex: 0 0 60px;
+  white-space: nowrap;
+  text-align: right;
+  font: 11px ui-monospace, 'SF Mono', Menlo, monospace;
+}
+input.look-color {
+  flex: none;
+  width: 28px;
+  height: 22px;
+  padding: 1px;
+  cursor: pointer;
+}
+.look-lights {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.look-light {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.look-light.selected {
+  border-color: var(--accent);
+}
+.look-light.off {
+  opacity: 0.6;
+}
+.look-light select {
+  padding: 3px 4px;
+}
+.look-light-name {
+  flex: 1;
+  min-width: 0;
+}
+.look-vec .look-num {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+  font-size: 11px;
+}
+#viewport.look-picking {
+  cursor: crosshair;
+}
