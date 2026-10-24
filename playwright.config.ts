@@ -32,7 +32,8 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     // DOM snapshots only: screencast frames are expensive when every frame is software-rendered
     trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true },
-    screenshot: 'only-on-failure',
+    // E2E_SCREENSHOTS=on keeps an end-of-test screenshot of every page (demo evidence)
+    screenshot: process.env.E2E_SCREENSHOTS === 'on' ? 'on' : 'only-on-failure',
   },
   projects: [
     {
