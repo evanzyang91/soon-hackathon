@@ -153,6 +153,10 @@ export interface LookPanel {
   session: LookSession;
   /** The phone's look right now (scene look + the active camera's lens override). */
   phoneLook(): Look | null;
+  /** A dropped camera's own lens, when it has one (the viewport's focus point edits it through here). */
+  cameraLens(id: string): Look['dof'] | null;
+  /** Replaces a camera's own lens (only cameras that already have one; the Look tab turns it on). */
+  setCameraLens(id: string, dof: Look['dof']): void;
 }
 
 export function mountLookPanel(director: Director): LookPanel {
@@ -296,6 +300,14 @@ export function mountLookPanel(director: Director): LookPanel {
     if (l) change({ ...l, dof: fn(l.dof) }, coalesce);
   };
   const currentDof = (): Dof | null => activeOverride() ?? current()?.dof ?? null;
+  const cameraLens = (id: string): Dof | null => overrides[id] ?? null;
+  const setCameraLens = (id: string, dof: Dof) => {
+    if (!overrides[id]) return;
+    overrides[id] = structuredClone(dof);
+    saveOverrides();
+    sync();
+    broadcast(false);
+  };
 
   // ---- DOM -------------------------------------------------------------------------------------
   // controls register a syncer (look → control value); header ones live for the panel's
@@ -738,7 +750,7 @@ export function mountLookPanel(director: Director): LookPanel {
   });
 
   attach(director.runtime);
-  const panel = { session, phoneLook };
+  const panel = { session, phoneLook, cameraLens, setCameraLens };
   // debug / e2e: window.__look.session.look, .phoneLook()
   Object.defineProperty(window, '__look', { configurable: true, value: panel });
   return panel;

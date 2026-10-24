@@ -12,7 +12,6 @@ import { EditsStore } from './edits-store';
 import { GIZMO_LAYER } from './gizmos';
 import type { LookPanel } from './look-panel';
 import { displayName } from './projects-panel';
-import { storageGet } from './storage';
 
 export interface ManipulationOptions {
   toast(text: string): void;
@@ -54,7 +53,6 @@ export function mountManipulation(director: Director, look: LookPanel, opts: Man
     }
   };
 
-  const lensKey = () => `previz:lens:${director.projectId}:${director.sceneIndex}`;
   const host: ManipHost = {
     canvas: director.canvas,
     overlay: stage,
@@ -82,9 +80,10 @@ export function mountManipulation(director: Director, look: LookPanel, opts: Man
       const l = session.look;
       if (!l) return null;
       // the Look panel keeps per-camera lenses next to the cameras (look-panel.ts)
-      const own = storageGet<Record<string, Look['dof']>>(lensKey())?.[id];
+      const own = look.cameraLens(id);
       return own ? { dof: own, own: true } : { dof: l.dof, own: false };
     },
+    setCameraLens: (id, dof) => look.setCameraLens(id, dof),
     cameras: () => director.cameras,
     activeCameraId: () => director.activeCameraId,
     updateCamera: (id, patch, persist) => director.updateCamera(id, patch, persist),
