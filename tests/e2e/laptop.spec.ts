@@ -33,8 +33,9 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   await expect.poll(async () => (await laptopState(page)).mainFrames).toBeGreaterThan(f0 + 5);
   s = await laptopState(page);
   const fps = ((s.mainFrames - f0) * 1000) / (Date.now() - t0);
-  test.info().annotations.push({ type: 'laptop fps (1280x720, SwiftShader)', description: fps.toFixed(1) });
-  console.log(`laptop fps at 1280x720 (headless SwiftShader): ${fps.toFixed(1)}`);
+  // (right after load; SwiftShader settles near 1 fps at this size once every splat is drawn)
+  test.info().annotations.push({ type: 'laptop fps after load (1280x720, SwiftShader)', description: fps.toFixed(1) });
+  console.log(`laptop fps right after load at 1280x720 (headless SwiftShader): ${fps.toFixed(1)}`);
 
   // the world is on screen: mostly lit pixels, many distinct colours (not a clear colour)
   const px = await pixelStats(page, '#viewport');
