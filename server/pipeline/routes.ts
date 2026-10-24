@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
+import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -96,6 +97,8 @@ export function createPipelineHandler(
     if (parts[0] !== 'api' || parts[1] !== 'projects') return false;
     // GET / PUT /api/projects/:id/scenes/:n/edits (look + scene edits, server/pipeline/edits.ts)
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
+    // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
+    if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
     const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';
     if (parts.length > 4 && !rebuild) return false;
     if (parts.length === 4 && parts[3] !== 'retry') return false;
