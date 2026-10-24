@@ -315,6 +315,61 @@ describe('project pipeline (mock)', () => {
     expect(await run(true)).toEqual({ calls: ['s1-l2'], fallbacks: 3 });
   });
 
+  it('live: a matching world-library world is reused instead of calling Marble; MOCK ignores it', async () => {
+    const library = join(dataDir, '..', `${dataDir.split('/').pop()}-library`);
+    const lib = join(library, 'city-street-night');
+    await mkdir(lib, { recursive: true });
+    for (const f of ['world_500k.spz', 'thumbnail.webp']) await writeFile(join(lib, f), f);
+    await writeFile(join(lib, 'marble-receipt.json'), JSON.stringify({ status: 'complete' }));
+    await writeFile(
+      join(lib, 'world-asset.json'),
+      JSON.stringify({
+        provider: 'marble',
+        worldId: 'w-lib',
+        spz: { k500: 'world_500k.spz' },
+        thumbnail: 'thumbnail.webp',
+        metricScaleFactor: 2,
+        groundPlaneOffset: 1,
+      }),
+    );
+    const run = async (mock: boolean) => {
+      const prompts: string[] = [];
+      const s = store({
+        mock,
+        worldLibraryDir: library,
+        deps: {
+          ...fakeActors().deps,
+          generateWorld: async (o) => {
+            prompts.push(o.prompt);
+            const { generateWorld } = await import('./marble.ts');
+            return generateWorld({ ...o, mock: true });
+          },
+        },
+      });
+      const { id } = await s.createProject({ screenplay: FIXTURE });
+      await s.idle();
+      return { id, st: (await s.getProject(id))!, worldCalls: prompts.length };
+    };
+
+    const live = await run(false);
+    expect(live.worldCalls).toBe(2); // scenes 1 and 2 only
+    const job = live.st.scenes[0]!;
+    expect(job.stages.world).toEqual({ status: 'done', note: 'reused library world w-lib' });
+    expect(job.stages.manifest.status).toBe('done');
+    expect(job.thumbnailUrl).toBe(`/projects/${live.id}/scene-0/world/thumbnail.webp`);
+    const m = await readManifest(live.id, 0);
+    expect(m.world).toMatchObject({ provider: 'marble', worldId: 'w-lib' });
+    // project-root-relative, and the file is really there (what the laptop loads)
+    expect(m.world.spz.k500).toBe('scene-0/world/world_500k.spz');
+    expect(existsSync(join(dataDir, live.id, m.world.spz.k500))).toBe(true);
+    expect(existsSync(join(dataDir, live.id, 'scene-0/world/marble-receipt.json'))).toBe(true);
+    expect((await readManifest(live.id, 1)).world.provider).toBe('mock');
+
+    const mock = await run(true);
+    expect(mock.worldCalls).toBe(3);
+    expect((await readManifest(mock.id, 0)).world.provider).toBe('mock');
+  });
+
   it('end to end with the real (mock-mode) WP D modules and Marble mock', async () => {
     const s = store();
     const { id } = await s.createProject({ screenplay: FIXTURE });
