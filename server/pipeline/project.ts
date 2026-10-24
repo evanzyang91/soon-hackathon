@@ -8,6 +8,8 @@
 //   log.txt                 human-readable pipeline log
 //   actors/<characterId>/   one actor per character, shared by every scene (actor.json caches it;
 //                           live projects copy a matching actors-library avatar instead of Modal)
+//   actors/<characterId>/high/  the "High detail" rebuild (LHM-1B + fine-tune), next to the
+//                           standard build; actor.json points at whichever the manifests use
 //   scene-<n>/world/        Marble outputs + marble-receipt.json + world-asset.json (or a copy of
 //                           a matching world-library world: live projects only, no credits);
 //                           scale-calibration.json once the world's scale has been measured
@@ -19,12 +21,17 @@
 // scaleCalibration, also in the world-library copy so reuse carries it. CALIBRATE=0 or
 // `calibrate: false` turns it off; a failure never fails the world stage.
 //
+// Actor rebuilds (rebuildActor, POST /api/projects/:id/actors/:characterId/rebuild) run one
+// character in the background at a detail level, recorded in ProjectStatus.actors[].rebuild; the
+// current build stays in the manifests until the new one is ready, then every scene manifest
+// showing the character is rewritten to it. A failure changes nothing but the note.
+//
 // Per scene, world / actors / tts run concurrently (Marble jobs capped at 3 across the server);
 // manifest follows. A failed stage is recorded with a note; the manifest is still written when the
 // world succeeded. Asset URLs inside manifests are relative to the project root
 // (/projects/<id>/), matching shared/api.ts.
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { api } from '../../shared/api.ts';
 import {
@@ -34,13 +41,15 @@ import {
   SceneManifest,
   ScreenplayPlan,
   WorldAsset,
+  type ActorBuildStatus,
+  type ActorDetail,
   type Character,
   type DialogueLine,
   type ScenePlan,
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
-import { buildActor } from './actors.ts';
+import { actorDirFor, buildActor } from './actors.ts';
 import {
   calibrateWorld,
   previousCalibration,
@@ -82,6 +91,8 @@ export interface PipelineDeps {
     sceneDir: string;
     mock: boolean;
     log: (m: string) => void;
+    /** 'high' (rebuilds only): LHM-1B + fine-tune into actors/<id>/high/; throws on failure. */
+    detail?: ActorDetail;
   }) => Promise<ActorAsset>;
   synthesizeLine: (opts: {
     line: DialogueLine;
@@ -165,6 +176,32 @@ class Semaphore {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 400);
 const settled = (s: Stage) => s.status !== 'pending' && s.status !== 'running';
+
+/** "LEO" → "Leo", "MR. SMITH" → "Mr. Smith" (screenplay names are upper case). */
+export const displayName = (name: string) =>
+  name.toLowerCase().replace(/(^|[\s.'-])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
+
+/** 292_000 → "4m 52s". */
+export const fmtDuration = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+};
+
+/** ProjectStatus.actors entry for a character from its current actor asset. */
+export function actorBuildStatus(
+  character: Pick<Character, 'id' | 'name'>,
+  asset: ActorAsset | undefined,
+  rebuild?: ActorBuildStatus['rebuild'],
+): ActorBuildStatus {
+  return {
+    characterId: character.id,
+    name: character.name,
+    detail: asset?.kind === 'splat-sequence' && asset.detail ? asset.detail : 'standard',
+    ...(asset ? { kind: asset.kind } : {}),
+    ...(asset?.fallback ? { fallback: true } : {}),
+    ...(rebuild ? { rebuild } : {}),
+  };
+}
 
 function initJob(scene: ScenePlan): SceneJob {
   return {
@@ -353,13 +390,48 @@ export class ProjectStore {
     return structuredClone(st);
   }
 
+  /**
+   * Rebuilds one character at `detail` in the background (the route answers 202): 'high' = LHM-1B
+   * plus a fine-tune against the reference into actors/<id>/high/ (about 5 minutes on Modal);
+   * 'standard' = back to the standard build in actors/<id>/ (built if missing). The current build
+   * stays in every manifest until the new one is ready; then each scene manifest showing the
+   * character is rewritten to it and an existing actors-library copy of the character refreshed.
+   * Idempotent (a finished build is reused, a submitted Modal call recovered, never paid twice) and
+   * a no-op while a rebuild of the character is running. Live projects with Modal keys only.
+   */
+  async rebuildActor(id: string, characterId: string, detail: ActorDetail): Promise<ProjectStatus> {
+    const st = await this.load(id);
+    if (!st) throw new PipelineError(`no project ${id}`, 404);
+    const plan = await this.plan(id);
+    const character = plan?.characters.find((c) => c.id === characterId);
+    if (!plan || !character) throw new PipelineError(`no character ${characterId} in ${id}`, 404);
+    if (st.mock)
+      throw new PipelineError('MOCK project: actor rebuilds need a live project and Modal', 409);
+    if (!this.keys.modal)
+      throw new PipelineError('Modal keys are not set (MODAL_TOKEN_ID / MODAL_TOKEN_SECRET)', 409);
+    const building = plan.scenes.some(
+      (sc) => sc.characterIds.includes(characterId) && !settled(st.scenes[sc.index]?.stages.actors ?? { status: 'done' }),
+    );
+    if (building) throw new PipelineError(`${characterId} is still being built; rebuild it afterwards`, 409);
+    await this.syncActors(st, plan);
+    const entry = st.actors!.find((a) => a.characterId === characterId)!;
+    if (entry.rebuild?.status === 'running') return structuredClone(st);
+    entry.rebuild = { detail, status: 'running', note: 'queued', startedAt: new Date().toISOString() };
+    await this.persist(id);
+    await this.log(id, `rebuild: ${characterId} at ${detail} detail (was ${entry.detail})`);
+    this.enqueue(`${id}:rebuild:${characterId}`, () => this.runRebuild(id, characterId));
+    return structuredClone(st);
+  }
+
   /** Picks up unfinished work after a restart (call once at startup). */
   async resumeAll(): Promise<string[]> {
     const resumed: string[] = [];
     for (const st of await this.listProjects()) {
       const live = this.statuses.get(st.id)!;
+      const rebuilding = (live.actors ?? []).filter((a) => a.rebuild?.status === 'running');
       const unfinished =
         !settled(live.parse) ||
+        rebuilding.length > 0 ||
         live.scenes.some((j) => Object.values(j.stages).some((s) => !settled(s)));
       if (!unfinished) continue;
       if (this.mock && !live.mock) {
@@ -372,6 +444,9 @@ export class ProjectStore {
         this.enqueue(st.id, () => this.runParse(st.id));
         continue;
       }
+      // a rebuild interrupted mid-call recovers its Modal receipt instead of submitting again
+      for (const a of rebuilding)
+        this.enqueue(`${st.id}:rebuild:${a.characterId}`, () => this.runRebuild(st.id, a.characterId));
       for (const job of live.scenes) {
         for (const stage of ['world', 'actors', 'tts'] as const) {
           if (!settled(job.stages[stage])) this.scheduleStage(st.id, job.sceneIndex, stage);
@@ -423,6 +498,10 @@ export class ProjectStore {
     const raw = await readJson(join(this.dir(id), 'project.json'));
     if (!raw) return undefined;
     const st = ProjectStatus.parse(raw);
+    if (!st.actors && st.parse.status === 'done') {
+      const plan = await this.plan(id).catch(() => undefined);
+      if (plan) await this.syncActors(st, plan);
+    }
     this.statuses.set(id, this.statuses.get(id) ?? st);
     return this.statuses.get(id);
   }
@@ -716,6 +795,7 @@ export class ProjectStore {
       note: `building ${cast.length} actor(s)`,
     });
     const built = await Promise.all(cast.map((c) => this.actor(st, c)));
+    await this.syncActors(st, plan);
     const failed = cast.filter((_, k) => !built[k]);
     if (failed.length) {
       const why = failed
@@ -784,6 +864,123 @@ export class ProjectStore {
     })();
     this.actorBuilds.set(key, p);
     return p;
+  }
+
+  /** ProjectStatus.actors from the plan and each character's actor.json (keeps rebuild records). */
+  private async syncActors(st: ProjectStatus, plan: ScreenplayPlan): Promise<void> {
+    const prev = new Map((st.actors ?? []).map((a) => [a.characterId, a]));
+    const out: ActorBuildStatus[] = [];
+    for (const c of plan.characters) {
+      const cached = ActorAsset.safeParse(
+        await readJson(join(this.dir(st.id), 'actors', c.id, 'actor.json')).catch(() => undefined),
+      );
+      out.push(actorBuildStatus(c, cached.success ? cached.data : undefined, prev.get(c.id)?.rebuild));
+    }
+    st.actors = out;
+  }
+
+  private async runRebuild(id: string, characterId: string): Promise<void> {
+    const st = await this.load(id);
+    const plan = await this.plan(id);
+    const entry = st?.actors?.find((a) => a.characterId === characterId);
+    const character = plan?.characters.find((c) => c.id === characterId);
+    if (!st || !plan || !character || entry?.rebuild?.status !== 'running') return;
+    const { detail, startedAt } = entry.rebuild;
+    const started = startedAt ? Date.parse(startedAt) : Date.now();
+    const name = displayName(character.name);
+    const log = this.logger(id, `rebuild ${characterId}: `);
+    const note = (status: 'running' | 'done' | 'failed', text: string) => {
+      entry.rebuild = { detail, status, note: text.slice(0, 400), ...(startedAt ? { startedAt } : {}) };
+      return this.persist(id);
+    };
+    const projectDir = this.dir(id);
+    const actorDir = actorDirFor(projectDir, characterId, detail);
+    await note(
+      'running',
+      detail === 'high' ? `rebuilding ${name} · ~5 min` : `switching ${name} to the standard build`,
+    );
+    let cost: number | undefined;
+    try {
+      await mkdir(actorDir, { recursive: true });
+      const raw = await this.actorSem.use(() =>
+        this.deps.buildActor({
+          character,
+          projectDir,
+          sceneDir: actorDir,
+          mock: false,
+          detail,
+          log: (m) => {
+            log(m);
+            const usd = /~\$([0-9.]+) GPU/.exec(m);
+            if (usd) cost = Number(usd[1]);
+          },
+        }),
+      );
+      const built = await normalizeActor(ActorAsset.parse(raw), actorDir, projectDir);
+      if (built.kind !== 'splat-sequence' || built.fallback)
+        throw new Error(`the ${detail} build came back as a ${built.fallback ? 'fallback ' : ''}${built.kind}`);
+      const { detail: _d, ...plain } = built;
+      const asset: ActorAsset = detail === 'standard' ? plain : { ...plain, detail };
+      await writeJsonAtomic(join(actorDirFor(projectDir, characterId), 'actor.json'), asset);
+      this.actorBuilds.set(`${id}:${characterId}`, Promise.resolve(asset));
+      const scenes = await this.pointManifestsAt(st, plan, asset);
+      const library = await this.refreshLibraryActor(projectDir, asset, log).catch((e) => {
+        log(`library copy not refreshed: ${errMsg(e)}`);
+        return false;
+      });
+      entry.detail = detail;
+      entry.kind = asset.kind;
+      delete entry.fallback;
+      const done = [
+        `${detail === 'high' ? 'high detail ✓' : 'standard ✓'} in ${fmtDuration(Date.now() - started)}${cost ? ` (~$${cost.toFixed(2)} GPU)` : ''}`,
+        `${scenes} scene manifest(s) updated`,
+        library ? 'library copy refreshed' : '',
+      ].filter(Boolean);
+      await note('done', done.join(' · '));
+      log(`done: ${asset.kind === 'splat-sequence' ? asset.sequenceDir : ''} — ${done.join('; ')}`);
+    } catch (e) {
+      await note('failed', errMsg(e));
+      log(`FAILED ${errMsg(e)} (the current build stays in use)`);
+    }
+  }
+
+  /** Rewrites every written scene manifest that shows `asset.characterId` to use `asset`. */
+  private async pointManifestsAt(st: ProjectStatus, plan: ScreenplayPlan, asset: ActorAsset): Promise<number> {
+    let n = 0;
+    for (const scene of plan.scenes) {
+      if (!scene.characterIds.includes(asset.characterId)) continue;
+      const path = join(this.sceneDir(st.id, scene.index), 'manifest.json');
+      const m = SceneManifest.safeParse(await readJson(path).catch(() => undefined));
+      if (!m.success) continue;
+      const has = m.data.actors.some((a) => a.characterId === asset.characterId);
+      const actors = has
+        ? m.data.actors.map((a) => (a.characterId === asset.characterId ? asset : a))
+        : [...m.data.actors, asset];
+      await writeJsonAtomic(path, SceneManifest.parse({ ...m.data, actors }));
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * An existing actors-library copy of the character (<lib>/<id>/sequence/) becomes the new build,
+   * so later projects reuse it; the replaced one is kept as sequence.previous/. Characters without a
+   * library copy are left alone (the library is filled by hand, see README).
+   */
+  private async refreshLibraryActor(projectDir: string, asset: ActorAsset, log: (m: string) => void) {
+    if (!this.actorsLibraryDir || asset.kind !== 'splat-sequence') return false;
+    const libDir = join(this.actorsLibraryDir, asset.characterId);
+    const libSeq = join(libDir, 'sequence');
+    const src = resolve(projectDir, asset.sequenceDir);
+    if (!(await exists(join(libSeq, 'sequence.json'))) || src === resolve(libSeq)) return false;
+    const tmp = join(libDir, `.sequence-${randomBytes(3).toString('hex')}`);
+    await cp(src, tmp, { recursive: true, filter: (f) => !/\.(part|tmp)$/.test(f) });
+    const previous = join(libDir, 'sequence.previous');
+    await rm(previous, { recursive: true, force: true });
+    await rename(libSeq, previous);
+    await rename(tmp, libSeq);
+    log(`library copy ${libSeq} refreshed (previous build kept in sequence.previous/)`);
+    return true;
   }
 
   private async ttsStage(st: ProjectStatus, plan: ScreenplayPlan, scene: ScenePlan): Promise<void> {
@@ -966,3 +1163,5 @@ export const getProject = (id: string) => defaultStore().getProject(id);
 export const listProjects = () => defaultStore().listProjects();
 export const retry = (id: string, sceneIndex: number, stage: StageName) =>
   defaultStore().retry(id, sceneIndex, stage);
+export const rebuildActor = (id: string, characterId: string, detail: ActorDetail) =>
+  defaultStore().rebuildActor(id, characterId, detail);
