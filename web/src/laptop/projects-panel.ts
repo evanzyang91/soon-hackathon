@@ -1,13 +1,45 @@
-// Left panel: screenplay input → POST /api/projects, project list with per-scene stage chips.
+// Left panel: screenplay input → POST /api/projects, project list with per-scene stage chips and
+// one row per character (build detail, kind, fallback) with the "High detail" rebuild button.
 import { api } from '@shared/api';
-import type { ProjectStatus } from '@shared/schema';
-import { createProject, listProjects, retryStage } from './api';
+import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
+import { createProject, getHealth, listProjects, rebuildActor, retryStage } from './api';
 import type { Director } from './director';
 import { byId, h } from './dom';
 import { SAMPLE_SCREENPLAY, SAMPLE_TITLE } from './sample';
 
 type SceneJob = ProjectStatus['scenes'][number];
 const STAGES = ['parse', 'world', 'actors', 'tts', 'manifest'] as const;
+
+export const HIGH_DETAIL_LABEL = 'High detail (~5 min per actor)';
+export const HIGH_DETAIL_TIP =
+  'LHM-1B + fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build stays until the new one lands.';
+
+/** "LEO" → "Leo" (screenplay names are upper case). */
+export const displayName = (name: string) =>
+  name.toLowerCase().replace(/(^|[\s.'-])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
+
+const clock = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/** Text, chip class and tooltip of a character's rebuild status (null = no rebuild yet). */
+export function rebuildChip(a: ActorBuildStatus, now = Date.now()) {
+  const r = a.rebuild;
+  if (!r) return null;
+  const what = r.detail === 'high' ? 'high detail' : 'standard';
+  if (r.status === 'running' || r.status === 'pending') {
+    const since = r.startedAt ? Date.parse(r.startedAt) : NaN;
+    const base = r.detail === 'high' ? `rebuilding ${displayName(a.name)} · ~5 min` : `switching ${displayName(a.name)} to standard`;
+    return {
+      cls: 'running',
+      text: Number.isFinite(since) ? `${base} · ${clock(now - since)}` : base,
+      title: r.note ?? 'queued',
+    };
+  }
+  if (r.status === 'done') return { cls: 'done', text: `${what} ✓`, title: r.note ?? '' };
+  return { cls: 'failed', text: `${what} failed`, title: r.note ?? 'failed' };
+}
 
 export function sceneReady(job: SceneJob): boolean {
   const manifest = (job.stages as Partial<SceneJob['stages']>).manifest;
@@ -16,6 +48,7 @@ export function sceneReady(job: SceneJob): boolean {
 
 function busy(p: ProjectStatus) {
   if (p.parse.status === 'pending' || p.parse.status === 'running') return true;
+  if (p.actors?.some((a) => a.rebuild?.status === 'running')) return true;
   return p.scenes.some((s) =>
     Object.values(s.stages).some((st) => st?.status === 'pending' || st?.status === 'running'),
   );
@@ -30,6 +63,16 @@ export function mountProjectsPanel(director: Director) {
   let autoOpen: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let apiDown = false;
+  let modalKeys: boolean | null = null;
+  const rebuildErrors = new Map<string, string>();
+  /** project:character → the actor detail last applied to the open scene (hot-swap trigger). */
+  const applied = new Map<string, string>();
+  void getHealth()
+    .then((hlt) => {
+      modalKeys = !!hlt.keys.modal;
+      render();
+    })
+    .catch(() => {});
 
   byId('pp-sample').addEventListener('click', () => {
     title.value = SAMPLE_TITLE;
@@ -85,6 +128,82 @@ export function mountProjectsPanel(director: Director) {
     );
   };
 
+  const rebuild = (p: ProjectStatus, a: ActorBuildStatus, detail: ActorDetail) => {
+    const key = `${p.id}:${a.characterId}`;
+    rebuildErrors.delete(key);
+    void rebuildActor(p.id, a.characterId, detail)
+      .then(refresh)
+      .catch((err: unknown) => {
+        rebuildErrors.set(key, err instanceof Error ? err.message : String(err));
+        render();
+      });
+  };
+
+  const actorRow = (p: ProjectStatus, a: ActorBuildStatus) => {
+    const running = a.rebuild?.status === 'running' || a.rebuild?.status === 'pending';
+    const chip = rebuildChip(a);
+    const why = p.mock
+      ? 'MOCK project: rebuilds need a live project'
+      : modalKeys === false
+        ? 'Modal keys are not set'
+        : null;
+    const error = rebuildErrors.get(`${p.id}:${a.characterId}`);
+    const failed = a.rebuild?.status === 'failed';
+    const kind = a.kind === 'splat-sequence' ? 'splat' : a.kind === 'glb-humanoid' ? 'mannequin' : 'not built';
+    return h(
+      'div',
+      { class: 'actor-row', 'data-testid': 'actor-row', 'data-character': a.characterId },
+      h('span', { class: 'actor-name', title: a.characterId }, displayName(a.name)),
+      h(
+        'span',
+        {
+          class: `chip detail ${a.detail}`,
+          'data-testid': 'actor-detail',
+          title: a.detail === 'high' ? 'LHM-1B + fine-tune against the reference' : 'LHM-500M (the standard build)',
+        },
+        a.detail,
+      ),
+      h('span', { class: 'actor-kind muted small' }, kind),
+      a.fallback ? h('span', { class: 'chip done fallback', title: 'Offline stand-in; retry the actors stage to upgrade it' }, 'fallback') : null,
+      chip
+        ? h('span', { class: `chip ${chip.cls}`, 'data-testid': 'rebuild-status', title: chip.title }, chip.text)
+        : null,
+      a.detail !== 'high' || running || failed
+        ? h(
+            'button',
+            {
+              class: 'small',
+              type: 'button',
+              'data-testid': 'high-detail',
+              title: why ? `${HIGH_DETAIL_TIP}\n(${why})` : HIGH_DETAIL_TIP,
+              disabled: running || !!why,
+              onclick: (e: Event) => {
+                e.stopPropagation();
+                rebuild(p, a, 'high');
+              },
+            },
+            failed && a.rebuild?.detail === 'high' ? 'Retry high detail' : HIGH_DETAIL_LABEL,
+          )
+        : h(
+            'button',
+            {
+              class: 'small link-ish',
+              type: 'button',
+              'data-testid': 'standard-detail',
+              title: 'Switch back to the standard build (kept on disk; no GPU)',
+              disabled: !!why,
+              onclick: (e: Event) => {
+                e.stopPropagation();
+                rebuild(p, a, 'standard');
+              },
+            },
+            'use standard',
+          ),
+      failed && a.rebuild?.note ? h('div', { class: 'error small actor-note' }, a.rebuild.note) : null,
+      error ? h('div', { class: 'error small actor-note' }, error) : null,
+    );
+  };
+
   const render = () => {
     list.replaceChildren();
     if (apiDown) {
@@ -135,6 +254,9 @@ export function mountProjectsPanel(director: Director) {
             ? h('div', { class: 'error small' }, p.parse.note)
             : null,
           scenes,
+          p.actors?.length
+            ? h('div', { class: 'actors', 'data-testid': 'actors' }, ...p.actors.map((a) => actorRow(p, a)))
+            : null,
         ),
       );
     }
@@ -146,6 +268,15 @@ export function mountProjectsPanel(director: Director) {
       apiDown = false;
     } catch {
       apiDown = true;
+    }
+    // a finished rebuild rewrote the manifests: swap that actor in the open scene
+    const current = projects.find((x) => x.id === director.projectId);
+    for (const a of current?.actors ?? []) {
+      const key = `${current!.id}:${a.characterId}`;
+      const sig = `${a.detail}:${a.rebuild?.status ?? ''}:${a.rebuild?.startedAt ?? ''}`;
+      const prev = applied.get(key);
+      applied.set(key, sig);
+      if (prev !== undefined && prev !== sig && a.rebuild?.status === 'done') void director.refreshActors();
     }
     if (autoOpen) {
       const p = projects.find((x) => x.id === autoOpen);

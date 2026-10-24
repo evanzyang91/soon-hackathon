@@ -80,15 +80,24 @@ export function mountHud(director: Director) {
       b.title = 'The SPZ could not be loaded; showing a procedural stand-in.';
       badges.append(b);
     }
+    if (rt && director.sceneStale) {
+      const b = document.createElement('button');
+      b.className = 'badge warn';
+      b.dataset.testid = 'scene-stale';
+      b.textContent = 'scene updated — reload';
+      b.title = 'An actor was rebuilt; reload the scene to show it';
+      b.addEventListener('click', () => director.reloadScene());
+      badges.append(b);
+    }
     if (rt?.manifest.world.provider === 'mock') {
       const b = document.createElement('span');
       b.className = 'badge';
       b.textContent = 'mock world';
       badges.append(b);
     }
-    // measured scale (server/pipeline/calibrate.ts): "scale ×0.87 (door 2.04 m)"; the evidence
-    // leads with the main reference at the calibrated scale, details after " · "
-    const cal = rt?.manifest.world.scaleCalibration;
+    // measured scale (server/pipeline/calibrate.ts): "scale ×0.87 (door 2.04 m)"
+    const world = rt?.manifest.world;
+    const cal = world?.scaleCalibration;
     if (cal) {
       const b = document.createElement('span');
       b.className = `badge scale ${cal.confidence}`;
