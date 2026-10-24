@@ -24,6 +24,8 @@ export interface ScaleFigure {
   tint?: string;
   /** default standing; sitting lowers the hips onto a seat ~0.45 m up (feet stay at y) */
   pose?: 'standing' | 'sitting';
+  /** Standing height of the mannequin (default 1.70 m), scaled like a character's actor. */
+  heightMeters?: number;
 }
 
 /**

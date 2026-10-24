@@ -13,7 +13,8 @@
 //   parapet   a long flat top 0.3–1.3 m up with floor on one side and a drop / void beyond
 //   door      an opening in a wall reaching the floor, 0.6–1.4 m wide, with a lintel above
 //   canopy    outdoors: a down-facing roof 2–3.5 m above open floor (bus shelter, awning)
-//   camera    Marble's source camera height above the floor (a handheld/eye-level band)
+//   camera    Marble's source camera height above the floor (a standing eye height: the
+//             eye-height prior calibrate.ts weighs when the collider has nothing else)
 //
 // Each one yields implied = expected.typ / measured (the correction that would make it typical)
 // and a weight from how clean the evidence is; calibrate.ts combines them.
@@ -47,7 +48,8 @@ export const EXPECTED: Record<MeasurementKind, Expected & { label: string }> = {
   parapet: { lo: 0.5, typ: 0.9, hi: 1.1, label: 'parapet' },
   door: { lo: 1.98, typ: 2.04, hi: 2.4, label: 'door' },
   canopy: { lo: 2.2, typ: 2.6, hi: 3.5, label: 'shelter roof / awning' },
-  camera: { lo: 1.3, typ: 1.6, hi: 1.9, label: 'camera height' },
+  // Marble's text worlds: a standing eye height (1.55 ± 0.2 m, calibrate.ts EYE_HEIGHT)
+  camera: { lo: 1.35, typ: 1.55, hi: 1.75, label: 'camera height' },
 };
 
 export interface Measurement {

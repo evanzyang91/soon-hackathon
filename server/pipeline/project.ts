@@ -56,7 +56,7 @@ import {
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
-import { actorDirFor, buildActor } from './actors.ts';
+import { actorDirFor, buildActor, heightFor, withHeight } from './actors.ts';
 import {
   calibrateWorld,
   previousCalibration,
@@ -82,6 +82,7 @@ import {
 } from './staging.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
+import { calibrationFactor } from '../../web/src/viewer/transform.ts';
 
 export type StageName = 'parse' | 'world' | 'actors' | 'tts' | 'manifest';
 type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -794,8 +795,9 @@ export class ProjectStore {
         const prev = await previousCalibration(outDir, asset.worldId);
         if (!prev) return { asset, note: '' };
         const report = await withGround(redecide(prev), outDir, marks);
-        if (asset.scaleCalibration.headline && asset.floorOffsetMeters === report.floorOffsetMeters)
-          return { asset, note: '' };
+        // rewritten when the floor moved or the decision rule changed the calibration
+        const same = JSON.stringify(asset.scaleCalibration) === JSON.stringify(report.calibration);
+        if (same && asset.floorOffsetMeters === report.floorOffsetMeters) return { asset, note: '' };
         return { asset: await writeCalibration(outDir, report, { log }), note: '' };
       } catch (e) {
         log(`floor offset not measured: ${errMsg(e)}`);
@@ -804,7 +806,7 @@ export class ProjectStore {
     }
     try {
       let report = await previousCalibration(outDir, asset.worldId);
-      if (report) report = await withGround(report, outDir, marks);
+      if (report) report = await withGround(redecide(report), outDir, marks);
       if (!report) {
         await this.setStage(st.id, scene.index, 'world', {
           status: 'running',
@@ -853,7 +855,8 @@ export class ProjectStore {
       r.status === 'staged' ? `; ${r.blocking.length} actor(s) staged on the set` : '; staging kept the planner marks';
     try {
       const prev = await readStaging(sceneDir);
-      if (prev && stagingCurrent(prev, { worldId: asset.worldId, scene, characters: plan.characters })) {
+      const factor = calibrationFactor(asset);
+      if (prev && stagingCurrent(prev, { worldId: asset.worldId, scene, characters: plan.characters, factor })) {
         log(`staging: reusing ${sceneDir.split(sep).slice(-1)[0]}/staging.json (${prev.status})`);
         return summary(prev);
       }
@@ -954,7 +957,12 @@ export class ProjectStore {
     const log = this.logger(st.id, `actor ${character.id}: `);
     const p = (async () => {
       const cached = ActorAsset.safeParse(await readJson(cachePath).catch(() => undefined));
-      if (cached.success && !this.upgradable(st, cached.data, 'modal')) return cached.data;
+      if (cached.success && !this.upgradable(st, cached.data, 'modal')) {
+        // an actor.json from before per-character heights (or a re-planned script) follows the plan
+        const sized = withHeight(cached.data, character);
+        if (sized !== cached.data) await writeJsonAtomic(cachePath, sized);
+        return sized;
+      }
       if (cached.success) log('cached actor is a fallback and Modal keys are set; rebuilding');
       await mkdir(actorDir, { recursive: true });
       try {
@@ -963,7 +971,7 @@ export class ProjectStore {
             ? await findLibraryActor(this.actorsLibraryDir, character.id, log)
             : null;
         if (found) {
-          const asset = await copyLibraryActor(found, projectDir);
+          const asset = await copyLibraryActor(found, projectDir, heightFor(character));
           await writeJsonAtomic(cachePath, asset);
           this.actorErrors.delete(key);
           this.libraryActors.add(key);
@@ -1043,7 +1051,7 @@ export class ProjectStore {
       if (built.kind !== 'splat-sequence' || built.fallback)
         throw new Error(`the ${detail} build came back as a ${built.fallback ? 'fallback ' : ''}${built.kind}`);
       const { detail: _d, ...plain } = built;
-      const asset: ActorAsset = detail === 'standard' ? plain : { ...plain, detail };
+      const asset: ActorAsset = withHeight(detail === 'standard' ? plain : { ...plain, detail }, character);
       await writeJsonAtomic(join(actorDirFor(projectDir, characterId), 'actor.json'), asset);
       this.actorBuilds.set(`${id}:${characterId}`, Promise.resolve(asset));
       const scenes = await this.pointManifestsAt(st, plan, asset);
@@ -1195,11 +1203,14 @@ export class ProjectStore {
         ...(rawWorld.thumbnail ? { thumbnail: prefix + rawWorld.thumbnail } : {}),
       };
       const actorAssets: ActorAsset[] = [];
+      const chars = this.characterMap(plan);
       for (const cid of scene.characterIds) {
         const a = ActorAsset.safeParse(
           await readJson(join(projectDir, 'actors', cid, 'actor.json')).catch(() => undefined),
         );
-        if (a.success) actorAssets.push(a.data);
+        // the plan is the source of truth for each character's height
+        const c = chars.get(cid);
+        if (a.success) actorAssets.push(c ? withHeight(a.data, c) : a.data);
       }
       const audio =
         LineAudio.array().safeParse(

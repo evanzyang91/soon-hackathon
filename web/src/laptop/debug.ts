@@ -35,6 +35,7 @@ export interface PrevizDebugState {
     kind: string;
     position: number[];
     yaw: number;
+    heightMeters: number | null;
     placementCorrected: boolean;
     placement: { status: string; from: number[]; to: number[] } | null;
   }[];
@@ -122,6 +123,8 @@ export function installDebugHook(director: Director) {
           kind: String(a.object.userData.actorKind ?? ''),
           position: a.object.position.toArray(),
           yaw: a.object.rotation.y,
+          /** Standing height the body is scaled to (the character's). */
+          heightMeters: (a.object.userData.heightMeters ?? null) as number | null,
           /** Line id whose bubble this actor is showing right now (null = name label). */
           speakingLine: (a.object.userData.speakingLine ?? null) as string | null,
           placementCorrected: placement?.status === 'moved',

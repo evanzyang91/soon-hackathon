@@ -11,14 +11,37 @@
 //   vision     calibrate-vision.ts: Claude compares objects with 1.70 m mannequins in renders
 //              from the source camera (calibrate-render.ts), twice, on different views
 //
-// Combination (`decide`):
+// plus two weak checks that only take part when the collider has no reference:
+//
+//   eyeballed  Claude's own size comparisons with the mannequins (no pixel geometry), when the
+//              runs agree within 15 %
+//   camera     Marble's text worlds put the source camera at a standing eye height: 1.39–1.61 m
+//              above the collider floor on three of four worlds (the kitchen, which every
+//              reference confirms, at 1.43 m). 1.55 m ± 0.2 is the prior, so a camera 2.17 m up
+//              says the world is ×0.71 too big (±13 %)
+//
+// Combination (`decide`), with a collider estimate (interiors: ceiling, doors, counters):
 //   both, within 10 %         apply the geometric median, confidence high
 //   both, 10–25 % apart       apply geometric (medium) only if ≥ 3 geometric references agree
 //   both, > 25 % apart        apply nothing: factor 1, confidence low, evidence says why
 //   geometric only            high with ≥ 3 consistent references, else medium
-//   vision only               medium
-//   any factor outside [0.5, 2] is refused; a correction under 5 % is not applied (factor 1:
-//   Marble's scale confirmed) but the measurements are still recorded.
+// Without one (every outdoor world: Marble's collider never has doors or counters there), each
+// source is a factor with an uncertainty σ in log space and they are weighed by 1/σ²:
+//   vision     σ = √(0.06² + 0.08²/W + (spread/2)²), W = object weight of the agreeing runs:
+//              the 6 % floor is what vision shares however much it measured (standard sizes
+//              vary; on the kitchen ten good objects still came out 7 % off its collider)
+//   eyeballed  σ = 15 %        camera  σ = 13 %
+//   no vision (the runs disagree, or none): nothing is applied, whatever the camera says;
+//   vision with too little evidence for `available` needs eyeballed or camera beside it
+//   any two sources > 25 % apart          refused: factor 1, low, the evidence says which
+//   combined within 1.5 σ of ×1           kept (low: unverified); the evidence gives ×c ± σ
+//   otherwise                              apply the combination, confidence medium
+// So agreeing vision with a camera that points the same way gets applied (rooftop: parapets
+// ×0.85 ± 13 %, camera ×0.71 ± 13 % → ×0.78 ± 9 %, 2.8 σ); four clean pixel-measured objects
+// (W ≈ 2, σ ≈ 9 %) outweigh a mildly disagreeing camera; four ad panels and posts (W 0.6) that
+// the camera and Claude's own eye both contradict do not (bus stop: ×1.04 ± 8 %, kept).
+// Everywhere: any factor outside [0.5, 2] is refused; a correction under 5 % is not applied
+// (factor 1: Marble's scale confirmed) but the measurements are still recorded.
 //
 // `headline` is the main reference at the calibrated scale ("door 2.04 m", or "unverified"), which
 // the laptop HUD shows next to the factor; `evidence` starts with the same text, then " · " and
@@ -35,6 +58,7 @@ import { hasFloor, spotBlocked, TriGrid } from '../../web/src/viewer/placement.t
 import {
   analyzeGeometry,
   EXPECTED,
+  median,
   metricTriangles,
   RayGrid,
   weightedMedian,
@@ -63,6 +87,23 @@ export const DEADBAND = 0.05;
 /** A measured floor offset larger than this is treated as a bad measurement and not written. */
 export const MAX_FLOOR_OFFSET = 0.5;
 export const FACTOR_RANGE = [0.5, 2] as const;
+/** Source-camera eye height (m above the collider floor) Marble's text worlds are built around. */
+export const EYE_HEIGHT = { typ: EXPECTED.camera.typ, sd: 0.2 } as const;
+/** Without a collider estimate, a correction is applied only this many σ away from ×1. */
+export const SIGNIFICANCE = 1.5;
+/** Two sources further apart than this (max/min − 1): nothing is applied. */
+export const MAX_DISAGREEMENT = 0.25;
+/** 1σ of ln(factor) per source (see the header). */
+export const SIGMA = {
+  camera: EYE_HEIGHT.sd / EYE_HEIGHT.typ,
+  eyeballed: 0.15,
+  /** per unit of vision object weight (sizeConfidence × pixelConfidence) */
+  visionObject: 0.08,
+  /** shared by every vision estimate, however many objects it measured */
+  visionFloor: 0.06,
+} as const;
+/** Claude's eyeballed run estimates count only when they agree this well. */
+const EYEBALL_AGREE = 0.15;
 
 export type Confidence = 'high' | 'medium' | 'low';
 export type ScaleCalibration = NonNullable<WorldAsset['scaleCalibration']>;
@@ -114,6 +155,33 @@ export function geometricEstimate(ms: Measurement[]): GeometricEstimate {
   };
 }
 
+/** What `decide` needs from the vision runs (a VisionEstimate, or a stored one: visionSummary). */
+export interface VisionSummary extends Pick<VisionEstimate, 'available' | 'factor'> {
+  /** ≥ 2 runs agree within 15 % (combineRuns), whether or not their objects were enough */
+  agree?: boolean;
+  /** max/min − 1 over the agreeing runs */
+  spread?: number;
+  /** total object weight of the agreeing runs */
+  weight?: number;
+  /** each run's eyeballed-only factor (Claude's comparison with the mannequins, no geometry) */
+  eyeballed?: number[];
+}
+
+/** Evidence that is not a measurement of a standard object. */
+export interface Prior {
+  /** Marble's source camera above the collider floor near it, m (GeometryReport.cameraHeight). */
+  cameraHeight?: number;
+}
+
+/** One estimate of the correction with its uncertainty. */
+export interface Source {
+  kind: 'vision' | 'eyeballed' | 'camera';
+  factor: number;
+  /** 1σ of ln(factor) */
+  sigma: number;
+  note: string;
+}
+
 export interface Decision {
   /** what gets written: 1 unless a correction is applied */
   factor: number;
@@ -123,15 +191,89 @@ export interface Decision {
   confidence: Confidence;
   method: string;
   reason: string;
+  /** the sources weighed when the collider had no estimate, and σ of their combination */
+  sources?: Source[];
+  sigma?: number;
 }
 
 const pct = (x: number) => `${(Math.abs(x) * 100).toFixed(0)}%`;
 /** n.toFixed(d), or "—" for NaN / null (a report read back from JSON has null for NaN). */
 const fx = (n: number | null | undefined, d = 3) => (typeof n === 'number' && Number.isFinite(n) ? n.toFixed(d) : '—');
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+
+export function visionSummary(v: VisionEstimate): VisionSummary {
+  const runs = v.runs ?? [];
+  const weight = (v.agreeing ?? []).reduce(
+    (s, i) => s + (runs[i]?.objects ?? []).reduce((t, o) => t + o.weight, 0),
+    0,
+  );
+  return {
+    available: v.available,
+    factor: finite(v.factor) ? v.factor : NaN,
+    agree: v.agree,
+    ...(finite(v.spread) ? { spread: v.spread } : {}),
+    weight,
+    eyeballed: runs.map((r) => r.eyeballed).filter(finite),
+  };
+}
+
+/**
+ * The sources `decide` weighs when the collider has no estimate: vision (agreeing runs, even
+ * with too little evidence for `available`), Claude's eyeballed runs when they agree within
+ * 15 %, and the camera eye-height prior.
+ */
+export function scaleSources(vision: VisionSummary | null, prior: Prior = {}): Source[] {
+  const out: Source[] = [];
+  if (vision && (vision.available || vision.agree) && finite(vision.factor) && vision.factor > 0) {
+    // a bare {available, factor} (tests, old callers): the least evidence `available` allows
+    const w = vision.weight ?? (vision.available ? 0.8 : 0.4);
+    const spread = vision.spread ?? 0;
+    const sigma = Math.sqrt(SIGMA.visionFloor ** 2 + SIGMA.visionObject ** 2 / Math.max(w, 0.05) + (spread / 2) ** 2);
+    out.push({
+      kind: 'vision',
+      factor: vision.factor,
+      sigma,
+      note: `object weight ${w.toFixed(2)}${spread ? `, runs ${pct(spread)} apart` : ''}`,
+    });
+  }
+  const eyes = (vision?.eyeballed ?? []).filter((x) => finite(x) && x > 0);
+  if (eyes.length >= 2 && Math.max(...eyes) / Math.min(...eyes) - 1 <= EYEBALL_AGREE)
+    out.push({
+      kind: 'eyeballed',
+      factor: median(eyes),
+      sigma: SIGMA.eyeballed,
+      note: `${eyes.length} runs ${eyes.map((x) => `×${x.toFixed(2)}`).join(', ')}`,
+    });
+  const h = prior.cameraHeight;
+  if (finite(h) && h > 0.5 && h < 4)
+    out.push({
+      kind: 'camera',
+      factor: EYE_HEIGHT.typ / h,
+      sigma: SIGMA.camera,
+      note: `source camera ${h.toFixed(2)} m above the floor vs ${EYE_HEIGHT.typ} ± ${EYE_HEIGHT.sd} m eye height`,
+    });
+  return out;
+}
+
+/** Inverse-variance weighted mean in log space, and its σ. */
+export function combineSources(s: readonly Source[]): { factor: number; sigma: number } {
+  let sw = 0;
+  let sl = 0;
+  for (const x of s) {
+    const w = 1 / x.sigma ** 2;
+    sw += w;
+    sl += w * Math.log(x.factor);
+  }
+  return sw ? { factor: Math.exp(sl / sw), sigma: 1 / Math.sqrt(sw) } : { factor: NaN, sigma: NaN };
+}
+
+const sourceText = (s: Source) =>
+  `${s.kind === 'camera' ? 'camera height' : s.kind} ×${s.factor.toFixed(2)} ± ${pct(s.sigma)}`;
 
 export function decide(
   geo: (Pick<GeometricEstimate, 'available' | 'factor' | 'consistent'> & { note?: string }) | null,
-  vision: (Pick<VisionEstimate, 'available' | 'factor'> & { agree?: boolean }) | null,
+  vision: VisionSummary | null,
+  prior: Prior = {},
 ): Decision {
   const g = geo?.available ? geo : null;
   const v = vision?.available ? vision : null;
@@ -143,11 +285,12 @@ export function decide(
     method,
     reason,
   });
+  if (!g) return decideWithoutCollider(geo, vision, prior);
   let candidate: number;
   let confidence: Confidence;
   let method: string;
   let reason: string;
-  if (g && v) {
+  if (v) {
     const d = g.factor / v.factor - 1;
     if (Math.abs(d) <= 0.1) {
       [candidate, confidence, method] = [g.factor, 'high', 'geometric+vision'];
@@ -170,32 +313,104 @@ export function decide(
         g.factor,
       );
     }
-  } else if (g) {
+  } else {
     [candidate, method] = [g.factor, 'geometric'];
     confidence = g.consistent >= 3 ? 'high' : 'medium';
     reason = `collider only (${g.consistent} consistent references)`;
-  } else if (v) {
-    [candidate, confidence, method] = [v.factor, 'medium', 'vision'];
-    reason = 'vision only (the collider had no usable references)';
-  } else {
+  }
+  return finish({ candidate, confidence, method, reason });
+}
+
+/** The clamp and the deadband, shared by both paths. */
+function finish(d: Pick<Decision, 'candidate' | 'confidence' | 'method' | 'reason' | 'sources' | 'sigma'>): Decision {
+  const { candidate } = d;
+  if (!(candidate >= FACTOR_RANGE[0] && candidate <= FACTOR_RANGE[1]))
+    return {
+      ...d,
+      factor: 1,
+      applied: false,
+      confidence: 'low',
+      reason: `×${candidate.toFixed(2)} is outside [${FACTOR_RANGE.join(', ')}]: refused`,
+    };
+  if (Math.abs(candidate - 1) < DEADBAND)
+    return {
+      ...d,
+      factor: 1,
+      applied: false,
+      reason: `${d.reason}; correction ${pct(candidate - 1)} < ${pct(DEADBAND)}: Marble's scale kept`,
+    };
+  return { ...d, factor: Math.round(candidate * 1000) / 1000, applied: true };
+}
+
+/**
+ * No collider estimate (outdoors): vision, Claude's eyeballed runs and the camera eye-height
+ * prior weighed by 1/σ² (header). Priors alone never change anything, nor does weak vision alone.
+ */
+function decideWithoutCollider(
+  geo: { note?: string } | null,
+  vision: VisionSummary | null,
+  prior: Prior,
+): Decision {
+  const sources = scaleSources(vision, prior);
+  const vis = sources.find((s) => s.kind === 'vision');
+  const cam = sources.find((s) => s.kind === 'camera');
+  // weak vision (too little evidence for `available`) needs a second source to weigh against
+  if (!vis || (!vision?.available && sources.length < 2)) {
     const why = [
       geo ? `collider: ${geo.note ?? 'unavailable'}` : 'no collider',
       vision ? (vision.agree ? 'vision: agreeing runs but too little evidence' : 'vision: runs disagree or found nothing') : 'no vision',
+      ...(cam && Math.abs(cam.factor - 1) >= DEADBAND ? [`${sourceText(cam)} alone is only a prior`] : []),
     ];
-    return keep('low', 'none', `not enough evidence to change anything (${why.join('; ')}): Marble scale kept, unverified`);
-  }
-  if (!(candidate >= FACTOR_RANGE[0] && candidate <= FACTOR_RANGE[1]))
-    return keep('low', method, `×${candidate.toFixed(2)} is outside [${FACTOR_RANGE.join(', ')}]: refused`, candidate);
-  if (Math.abs(candidate - 1) < DEADBAND)
     return {
       factor: 1,
-      candidate,
+      candidate: NaN,
       applied: false,
-      confidence,
-      method,
-      reason: `${reason}; correction ${pct(candidate - 1)} < ${pct(DEADBAND)}: Marble's scale kept`,
+      confidence: 'low',
+      method: 'none',
+      reason: `not enough evidence to change anything (${why.join('; ')}): Marble scale kept, unverified`,
+      sources,
     };
-  return { factor: Math.round(candidate * 1000) / 1000, candidate, applied: true, confidence, method, reason };
+  }
+  const method = sources.map((s) => s.kind).join('+');
+  const { factor: c, sigma } = combineSources(sources);
+  const list = sources.map(sourceText).join(', ');
+  for (const [i, a] of sources.entries())
+    for (const b of sources.slice(i + 1)) {
+      const apart = Math.max(a.factor, b.factor) / Math.min(a.factor, b.factor) - 1;
+      if (apart > MAX_DISAGREEMENT)
+        return {
+          factor: 1,
+          candidate: c,
+          applied: false,
+          confidence: 'low',
+          method,
+          reason: `${sourceText(a)} and ${sourceText(b)} disagree by ${pct(apart)}: not applied`,
+          sources,
+          sigma,
+        };
+    }
+  const z = Math.abs(Math.log(c)) / sigma;
+  const combined = `${list} → ×${c.toFixed(2)} ± ${pct(sigma)}`;
+  if (Math.abs(c - 1) >= DEADBAND && z < SIGNIFICANCE)
+    return {
+      factor: 1,
+      candidate: c,
+      applied: false,
+      confidence: 'low',
+      method,
+      reason: `${combined}, ${z.toFixed(1)}σ from Marble's scale (< ${SIGNIFICANCE}σ): not applied, unverified`,
+      sources,
+      sigma,
+    };
+  return finish({
+    candidate: c,
+    // a clean vision estimate that lands within the deadband confirms Marble's scale
+    confidence: Math.abs(c - 1) < DEADBAND && !vision?.available ? 'low' : 'medium',
+    method,
+    reason: `${combined} (${z.toFixed(1)}σ)`,
+    sources,
+    sigma,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -275,21 +490,27 @@ export async function colliderMetric(worldDir: string, asset: WorldAsset, factor
 const strongest = (ms: Measurement[]) =>
   [...ms].filter((m) => m.kind !== 'camera').sort((a, b) => b.weight - a.weight)[0];
 
-/** "door 2.04 m" for the HUD: the strongest reference at the calibrated scale. */
+/**
+ * "door 2.04 m" for the HUD: the strongest reference at the calibrated scale; "unverified" when
+ * nothing was measured, or when a world without collider references kept Marble's scale only
+ * because the evidence was too weak to say otherwise.
+ */
 export function headline(
   geo: GeometricEstimate | null,
   vision: VisionEstimate | null,
-  factor: number,
-  method?: string,
+  d: Pick<Decision, 'factor' | 'method' | 'applied' | 'confidence'>,
 ): string {
-  if (method === 'none') return 'unverified';
+  if (d.method === 'none') return 'unverified';
   const m = geo?.available ? strongest(geo.used) : undefined;
-  if (m) return `${EXPECTED[m.kind].label} ${(m.measured * factor).toFixed(2)} m`;
-  const o = vision?.runs.flatMap((r) => r.objects).sort((a, b) => b.weight - a.weight)[0];
+  if (m) return `${EXPECTED[m.kind].label} ${(m.measured * d.factor).toFixed(2)} m`;
+  if (!d.applied && d.confidence === 'low') return 'unverified';
+  const runs = vision?.runs ?? [];
+  const agreeing = vision?.agreeing?.length ? vision.agreeing.flatMap((i) => runs[i] ?? []) : runs;
+  const o = agreeing.flatMap((r) => r.objects).sort((a, b) => b.weight - a.weight)[0];
   if (o) {
     const name = shortName(o.object);
     const h = o.measured?.ok ? o.measured.height : o.apparentMeters;
-    return `${name} ${(h * factor).toFixed(2)} m (vision)`;
+    return `${name} ${(h * d.factor).toFixed(2)} m (vision)`;
   }
   return 'no reference';
 }
@@ -300,7 +521,7 @@ export function evidenceText(
   vision: VisionEstimate | null,
   d: Decision,
 ): string {
-  const parts: string[] = [headline(geo, vision, d.factor, d.method)];
+  const parts: string[] = [headline(geo, vision, d)];
   const refs = all
     .filter((m) => m.kind !== 'camera')
     .map((m) => `${EXPECTED[m.kind].label} ${m.measured.toFixed(2)} m (×${m.implied.toFixed(2)}${m.weight < 0.3 ? ', weak' : ''})`);
@@ -394,13 +615,13 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     }
   }
 
-  const decision = decide(geo, vision);
+  const decision = decide(geo, vision ? visionSummary(vision) : null, { cameraHeight: geometry?.cameraHeight });
   const calibration: ScaleCalibration = {
     factor: decision.factor,
     method: decision.method,
     confidence: decision.confidence,
     evidence: evidenceText(geo, geometry?.measurements ?? [], vision, decision),
-    headline: headline(geo, vision, decision.factor, decision.method),
+    headline: headline(geo, vision, decision),
   };
   const ground = await splatGround(worldDir, asset, o.marks).catch((e) => {
     log(`calibrate: splat ground not measured (${(e as Error).message.slice(0, 120)})`);
@@ -437,7 +658,9 @@ export function redecide(report: CalibrationReport): CalibrationReport {
   const geo = report.geometry ? geometricEstimate(report.geometry.measurements) : null;
   const v = report.vision;
   const vision = v ? { ...v, factor: typeof v.factor === 'number' ? v.factor : NaN } : null;
-  const decision = decide(geo, vision);
+  const decision = decide(geo, vision ? visionSummary(vision) : null, {
+    cameraHeight: report.geometry?.cameraHeight,
+  });
   const floorOffsetMeters = floorOffsetOf(report);
   const { floorOffsetMeters: _old, ...rest } = report;
   return {
@@ -448,7 +671,7 @@ export function redecide(report: CalibrationReport): CalibrationReport {
       method: decision.method,
       confidence: decision.confidence,
       evidence: evidenceText(geo, report.geometry?.measurements ?? [], vision, decision),
-      headline: headline(geo, vision, decision.factor, decision.method),
+      headline: headline(geo, vision, decision),
     },
     ...(floorOffsetMeters !== undefined ? { floorOffsetMeters } : {}),
   };
@@ -488,9 +711,11 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
     const g = r.geometry;
     L.push('  collider (Marble scale)   measured   expected (range)        implied   weight');
     for (const m of g.measurements) {
-      const e = m.expected;
+      // a stored report keeps the eye-height band it was measured with; show today's prior
+      const e = m.kind === 'camera' ? EXPECTED.camera : m.expected;
+      const implied = m.kind === 'camera' ? e.typ / m.measured : m.implied;
       L.push(
-        `    ${EXPECTED[m.kind].label.padEnd(22)} ${`${m.measured.toFixed(2)} m`.padStart(8)}   ${`${e.typ.toFixed(2)} (${e.lo.toFixed(2)}–${e.hi.toFixed(2)})`.padEnd(22)} ×${m.implied.toFixed(3)}   ${m.weight.toFixed(2)}${m.note ? `  ${m.note}` : ''}`,
+        `    ${EXPECTED[m.kind].label.padEnd(22)} ${`${m.measured.toFixed(2)} m`.padStart(8)}   ${`${e.typ.toFixed(2)} (${e.lo.toFixed(2)}–${e.hi.toFixed(2)})`.padEnd(22)} ×${implied.toFixed(3)}   ${m.weight.toFixed(2)}${m.note ? `  ${m.note}` : ''}`,
       );
     }
     L.push(`    → ${g.estimate.available ? `×${g.estimate.factor.toFixed(3)}, ` : 'unavailable: '}${g.estimate.note}`);
@@ -516,6 +741,18 @@ export function formatReport(r: CalibrationReport, name = r.worldId ?? 'world'):
     L.push(`    → ${r.vision.note}`);
   } else L.push(`  vision: ${r.visionSkipped ?? 'skipped'}`);
   const d = r.decision;
+  if (d.sources?.length) {
+    L.push('  weighed (no collider estimate)   factor    σ      weight');
+    const total = d.sources.reduce((s, x) => s + 1 / x.sigma ** 2, 0);
+    for (const s of d.sources)
+      L.push(
+        `    ${s.kind.padEnd(29)} ×${s.factor.toFixed(3)}   ${pct(s.sigma).padStart(3)}   ${((1 / s.sigma ** 2 / total) * 100).toFixed(0).padStart(3)}%   ${s.note}`,
+      );
+    if (finite(d.sigma) && finite(d.candidate))
+      L.push(
+        `    → ×${d.candidate.toFixed(3)} ± ${pct(d.sigma)} (${(Math.abs(Math.log(d.candidate)) / d.sigma).toFixed(1)}σ from Marble's scale)`,
+      );
+  }
   L.push(
     `  decision: ${d.applied ? `APPLY ×${d.factor.toFixed(3)}` : 'keep Marble scale (×1)'}  confidence ${d.confidence}  [${d.method}]${typeof d.candidate === 'number' && Number.isFinite(d.candidate) ? `  candidate ×${fx(d.candidate)}` : ''}`,
   );
@@ -596,6 +833,11 @@ export async function previousCalibration(worldDir: string, worldId?: string): P
 export interface BeforeAfterOptions {
   log?: (m: string) => void;
   openRenderer?: (dir: string, asset: WorldAsset) => Promise<WorldRenderer>;
+  /**
+   * The stored report a `--reuse` re-decided: the left panel then shows ITS decision (old rule
+   * vs new rule) instead of plain Marble scale.
+   */
+  previous?: Pick<CalibrationReport, 'decision' | 'calibration'>;
 }
 
 /** The reference the before/after picture is built around: where it is and what it is. */
@@ -672,7 +914,9 @@ function showcase(report: CalibrationReport, geo3: { grid: TriGrid; cast: RayCas
   const close = views.find((v) => v.closeupOf);
   if (close) return { view: close, where: `by the ${shortName(close.closeupOf!)} (vision close-up)` };
   const objs = (report.vision?.runs ?? []).flatMap((r) => r.located).sort((a, b) => b.sizeConfidence - a.sizeConfidence);
-  const planned = objs.length ? planCloseups(geo3, objs, 1)[0] : undefined;
+  // a standard object first; else whatever vision measured (a parapet, a shelter's ad panel):
+  // judging the mannequin next to it beats judging it against a far-away street
+  const planned = objs.length ? (planCloseups(geo3, objs, 1)[0] ?? planCloseups(geo3, objs, 1, 0.2)[0]) : undefined;
   if (planned) return { view: planned, where: `by the ${shortName(planned.closeupOf!)}` };
   const v = views.find((x) => x.figures.length && !x.closeupOf) ?? planViews(geo3, 1)[0];
   return v
@@ -699,9 +943,10 @@ export async function renderBeforeAfter(
   const sc = showcase(report, geo3);
   if (!sc) throw new Error('no free floor for the mannequin');
   const d = report.decision;
-  const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
   const vf = report.vision?.factor;
   const after = d.applied ? d.factor : finite(d.candidate) ? d.candidate : finite(vf) ? vf : 1;
+  const prev = o.previous;
+  const beforeFactor = prev && finite(prev.decision.factor) ? prev.decision.factor : 1;
   const v = sc.view;
   const shotAt = (factor: number) => ({
     factor,
@@ -718,7 +963,7 @@ export async function renderBeforeAfter(
   });
   const renderer = await (o.openRenderer ?? ((dd, aa) => openWorldRenderer(dd, aa, { log: o.log })))(worldDir, asset);
   try {
-    const before = await renderer.shot(shotAt(1));
+    const before = await renderer.shot(shotAt(beforeFactor));
     const afterPng = await renderer.shot(shotAt(after));
     const meas = (report.geometry?.measurements ?? []).filter((m) => m.kind !== 'camera');
     const vis = (report.vision?.runs ?? [])
@@ -733,16 +978,28 @@ export async function renderBeforeAfter(
       vis.length
         ? `vision, measured from pixels: ${vis.map((x) => `${shortName(x.object)} ${x.measured!.height.toFixed(2)} m (typ ${x.typicalMeters.toFixed(2)})`).join(' · ')}`
         : `vision: ${report.vision?.note ?? report.visionSkipped ?? 'skipped'}`,
-      `decision: ${d.applied ? `apply ×${d.factor.toFixed(3)}` : 'keep Marble scale'} (${d.confidence} confidence) — ${d.reason}`,
+      ...(prev
+        ? [`previous rule: ${prev.decision.applied ? `apply ×${prev.decision.factor.toFixed(3)}` : 'keep Marble scale'} (${prev.decision.confidence}) — ${prev.decision.reason}`]
+        : []),
+      `${prev ? 'new rule' : 'decision'}: ${d.applied ? `apply ×${d.factor.toFixed(3)}` : 'keep Marble scale'} (${d.confidence} confidence) — ${d.reason}`,
     ];
+    const keptTitle = `×${after.toFixed(2)} — NOT applied (kept ×1.00)`;
     const png = await renderer.compose(
       [
-        { image: before, title: 'Before: Marble scale ×1.00', subtitle: `1.70 m mannequin ${sc.where}` },
+        prev
+          ? {
+              image: before,
+              title: `Previous rule: ×${beforeFactor.toFixed(2)} ${prev.decision.applied ? 'applied' : 'kept'} (${prev.decision.confidence})`,
+              subtitle: `1.70 m mannequin ${sc.where} · HUD "${prev.calibration.headline ?? prev.calibration.evidence.split(' · ')[0]}"`,
+            }
+          : { image: before, title: 'Before: Marble scale ×1.00', subtitle: `1.70 m mannequin ${sc.where}` },
         {
           image: afterPng,
           title: d.applied
-            ? `After: calibrated ×${after.toFixed(2)}`
-            : `×${after.toFixed(2)} — NOT applied (kept ×1.00)`,
+            ? `${prev ? 'New rule' : 'After'}: calibrated ×${after.toFixed(2)}`
+            : prev
+              ? `New rule: kept ×1.00 (${d.confidence}) — ×${after.toFixed(2)} shown`
+              : keptTitle,
           subtitle: d.applied
             ? `${report.calibration.evidence.split(' · ')[0]} · ${d.confidence} confidence`
             : Math.abs(after - 1) < 1e-3
