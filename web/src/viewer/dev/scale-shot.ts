@@ -22,6 +22,8 @@ export interface ScaleFigure {
   /** Text over the head (default "1.70 m"). */
   label?: string;
   tint?: string;
+  /** Standing height of the mannequin (default 1.70 m), scaled like a character's actor. */
+  heightMeters?: number;
 }
 
 export interface ScaleShot {

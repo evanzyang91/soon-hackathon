@@ -23,13 +23,18 @@ const reply = (text: string, live = false, attachments: Attachment[] = []) =>
 const kinds = (actions: ChatAction[]) => actions.map((a) => `${a.type}:${a.status}`);
 
 describe('mock chat planner rules', () => {
-  it('makes a character taller by 10 cm from the 1.70 m default (an actor rebuild when live)', () => {
+  it('makes a character taller by 10 cm, from 1.70 m when the plan has no height (an actor rebuild when live)', () => {
+    const theo = plan.characters.find((c) => c.id === 'theo')!.heightMeters!; // the mock planner's "tall" 1.80
     const r = reply('make Theo taller');
+    const after = Math.round((theo + 0.1) * 100) / 100;
     expect(r.actions).toMatchObject([
-      { type: 'plan-patch', target: 'character:theo', field: 'heightMeters', before: 1.7, after: 1.8, summary: 'Theo is now 1.80 m', status: 'applied' },
+      { type: 'plan-patch', target: 'character:theo', field: 'heightMeters', before: theo, after, summary: `Theo is now ${after.toFixed(2)} m`, status: 'applied' },
     ]);
-    expect(r.plan.characters.find((c) => c.id === 'theo')!.heightMeters).toBe(1.8);
-    expect(plan.characters.find((c) => c.id === 'theo')!.heightMeters).toBeUndefined(); // input untouched
+    expect(r.plan.characters.find((c) => c.id === 'theo')!.heightMeters).toBe(after);
+    expect(plan.characters.find((c) => c.id === 'theo')!.heightMeters).toBe(theo); // input untouched
+    const unset = structuredClone(plan);
+    delete unset.characters[0]!.heightMeters;
+    expect(mockChatReply({ plan: unset, live: false, text: 'make Theo taller', attachments: [] }).actions[0]).toMatchObject({ before: 1.7, after: 1.8, summary: 'Theo is now 1.80 m' });
     expect(kinds(reply('make theo older and shorter', true).actions)).toEqual([
       'plan-patch:applied',
       'plan-patch:applied',
@@ -93,9 +98,9 @@ describe('FakeChatApi', () => {
     expect(chat.messages[1]).toMatchObject({ planCard: true, text: 'Planned 3 scenes and 2 characters: Theo, Maya.' });
 
     const taller = await fake.send(draft.id, { text: 'make Theo taller' });
-    expect(taller.chat.messages.at(-1)!.actions).toMatchObject([{ summary: 'Theo is now 1.80 m', status: 'applied' }]);
+    expect(taller.chat.messages.at(-1)!.actions).toMatchObject([{ summary: 'Theo is now 1.90 m', status: 'applied' }]);
     expect(taller.status.chatRevision).toBe(taller.chat.revision);
-    expect((await fake.getPlan(draft.id)).characters[0]!.heightMeters).toBe(1.8);
+    expect((await fake.getPlan(draft.id)).characters[0]!.heightMeters).toBe(1.9);
 
     const att = await fake.uploadImage(draft.id, new Blob(['png']), 'maya.png');
     const ref = await fake.send(draft.id, { text: '', attachments: [{ id: att.id, hint: 'character:maya' }] });

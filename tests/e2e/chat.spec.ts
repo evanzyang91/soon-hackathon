@@ -44,14 +44,17 @@ test('chat: plan → "make Theo taller" → photo for Maya → Generate → the 
   await expect(page.getByTestId('chat-title')).toHaveText('The Last Bus');
   await expect(page.getByTestId('plan-generate')).toBeVisible();
 
-  // amend in words
+  // amend in words: 10 cm taller than planned (the MOCK planner's "tall" Theo is 1.80 m; 1.70 when unset)
+  const theoHeight = card.locator('[data-character=theo] [data-testid=plan-height]');
+  const planned = parseFloat((await theoHeight.textContent()) ?? '');
+  const taller = `${(Math.round((planned + 0.1) * 100) / 100).toFixed(2)} m`;
   await page.getByTestId('screenplay').fill('make Theo taller');
   await page.getByTestId('screenplay').press('Enter');
   const patch = page.locator('[data-testid=action-card][data-type=plan-patch]').last();
   await expect(patch).toBeVisible({ timeout: 20_000 });
   await expect(patch).toHaveAttribute('data-status', 'applied');
-  await expect(patch).toContainText('1.80 m');
-  await expect(card.locator('[data-character=theo] [data-testid=plan-height]')).toHaveText('1.80 m');
+  await expect(patch).toContainText(taller);
+  await expect(theoHeight).toHaveText(taller);
 
   // a reference photo, targeted at Maya with the picker
   await page.getByTestId('chat-file').setInputFiles({ name: 'maya.png', mimeType: 'image/png', buffer: await portrait(page) });
