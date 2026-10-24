@@ -459,7 +459,7 @@ export function airplane(_color: string, label: string): Prop {
 // ---- helicopter ----------------------------------------------------------------------------------
 
 const HELI_LIVERY: [RegExp, string, string][] = [
-  [/\bpolice|cops?|law enforcement|sheriff\b/i, '#1f3a7a', '#e8e8e8'],
+  [/\b(police|cops?|law enforcement|sheriff)\b/i, '#1f3a7a', '#e8e8e8'],
   [/\b(news|tv|television|traffic|media)\b/i, '#e8e8e8', '#c0392b'],
   [
     /\b(rescue|medical|medevac|air ambulance|ambulance|coast ?guard|hospital|search and rescue)\b/i,
