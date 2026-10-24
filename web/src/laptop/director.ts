@@ -320,6 +320,36 @@ export class Director {
     }
   }
 
+  /**
+   * Re-reads the open scene's manifest and swaps its background action when it changed (a chat
+   * "add a dinosaur walking by" rewrote it), keeping the camera, the clock and the actors. Like
+   * refreshActors, the manifest URL gets a revision query so the paired phone reloads the scene.
+   */
+  async refreshDynamics(): Promise<boolean> {
+    const rt = this.runtime;
+    const url = this.manifestUrl;
+    if (!rt || !url) return false;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`manifest HTTP ${res.status}`);
+      const fresh = SceneManifest.parse(await res.json());
+      if (this.runtime !== rt || !rt.swapDynamics(fresh.plan.dynamics)) return false;
+      const u = new URL(url, location.href);
+      u.searchParams.set('rev', String(Date.now()));
+      this.manifestUrl = u.pathname + u.search;
+      this.broadcast(true);
+      this.emit('scene');
+      return true;
+    } catch (err) {
+      console.warn('background refresh failed; offering a reload', err);
+      if (this.runtime === rt) {
+        this.sceneStale = true;
+        this.emit('scene');
+      }
+      return false;
+    }
+  }
+
   reloadScene() {
     if (this.projectId && this.sceneIndex != null && this.manifestUrl)
       void this.openScene(this.projectId, this.sceneIndex, this.manifestUrl);

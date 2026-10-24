@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ChatMessage } from '../../../shared/chat.ts';
 import { LOOK_PRESET_LABELS } from '../../../shared/look-presets.ts';
-import type { ScreenplayPlan } from '../../../shared/schema.ts';
+import type { ScenePlan, ScreenplayPlan } from '../../../shared/schema.ts';
 import { lookSeedFor, styleForPlan } from '../look-seed.ts';
 
 /** "LEO" → "Leo", "MR. SMITH" → "Mr. Smith" (same rule as project.ts displayName). */
@@ -19,9 +19,19 @@ export function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 
+/** "A red sedan drives past, its headlights sweeping …" → "a red sedan drives past" (its first clause). */
+export function shortLabel(label: string, max = 48): string {
+  const first = (label.split(/[,.;:—–(]/)[0] ?? label).trim();
+  const t = first.length > max ? `${first.slice(0, max).replace(/\s+\S*$/, '')}…` : first;
+  return t.charAt(0).toLowerCase() + t.slice(1);
+}
+
+/** A scene's background action in a few words: "a red sedan drives past, a night bus rumbles by". */
+export const backgroundText = (s: ScenePlan) => s.dynamics.map((d) => shortLabel(d.label)).join(', ');
+
 /**
  * "Planned 3 scenes and 2 characters: Maya and Theo. 1 EXT. CITY STREET - NIGHT (4 lines, Night
- * street) · …", then "Style: contemporary drama · present day · natural tones …" on its own line
+ * street; background: a red sedan drives past, a night bus rumbles by without stopping) · …", then "Style: contemporary drama · present day · natural tones …" on its own line
  * when the plan has a style. Each scene names the look it opens with (derived for older plans).
  */
 export function planCardText(
@@ -33,7 +43,7 @@ export function planCardText(
   const scenes = plan.scenes
     .map(
       (s) =>
-        `${s.index + 1} ${s.heading} (${plural(s.dialogue.length, 'line')}, ${LOOK_PRESET_LABELS[lookSeedFor(s, derived).preset]})`,
+        `${s.index + 1} ${s.heading} (${plural(s.dialogue.length, 'line')}, ${LOOK_PRESET_LABELS[lookSeedFor(s, derived).preset]}${s.dynamics.length ? `; background: ${backgroundText(s)}` : ''})`,
     )
     .join(' · ');
   const style = plan.style
