@@ -7,6 +7,7 @@
     python3 worker/run_actor.py --check            # Modal auth + CUDA image build + imports, no GPU
     python3 worker/run_actor.py --stage            # one-time weight staging (CPU only, resumable)
     python3 worker/run_actor.py --recover DIR/recovery-receipt.json   # no inference
+    python3 worker/run_actor.py --rig DIR [DIR ...]   # runtime rig for finished actors (no inference)
 
 Auth: MODAL_TOKEN_ID / MODAL_TOKEN_SECRET from the environment, else from the repo's
 .env.local / .env (values are never printed). Uses the deployed app ``previz-stage-lhm`` when
@@ -146,6 +147,79 @@ def recover(receipt_path: Path, include_raw: bool, all_frames: bool = False) -> 
     return result(ok, 0 if ok else 1, **summary)
 
 
+MOTION_LIBRARY = HERE / "motion-library"  # built by worker/motion_library.py --build
+MOTION_FILES = ("motion-library.json", "motion-clips.bin")
+
+
+def install_rig(actor_dir: Path, files: dict, library: Path = MOTION_LIBRARY) -> dict:
+    """Write rig.json + rig-splats.bin (+ the shared motion library) into actor_dir/sequence and
+    point sequence.json at them. The baked frames stay untouched (they remain the fallback)."""
+    import hashlib
+
+    from rig_export import install_in_sequence
+
+    seq_dir = actor_dir / "sequence"
+    sequence = json.loads((seq_dir / "sequence.json").read_text())
+    rig = json.loads(files["rig.json"])
+    blob = files["rig-splats.bin"]
+    expect = rig["files"]["splats"]
+    if len(blob) != expect["bytes"] or hashlib.sha256(blob).hexdigest() != expect["sha256"]:
+        raise ValueError("rig-splats.bin does not match rig.json")
+    if rig["splats"] != sequence.get("gaussiansPerFrame"):
+        raise ValueError(f"rig has {rig['splats']} splats, sequence {sequence.get('gaussiansPerFrame')}")
+    (seq_dir / "rig-splats.bin").write_bytes(blob)
+    (seq_dir / "rig.json").write_bytes(files["rig.json"])
+    if "canonical.npz" in files:  # offline rebuild / evaluation input; the browser never loads it
+        (actor_dir / "rig-canonical.npz").write_bytes(files["canonical.npz"])
+    pointer = install_in_sequence(seq_dir, rig, library)
+    return {"dir": str(seq_dir), "pointer": pointer, "validation": rig.get("validation"), "measure": rig.get("measure")}
+
+
+def recovery_id_of(actor_dir: Path) -> str:
+    for name in ("recovery-manifest.json", "recovery-receipt.json"):
+        path = actor_dir / name
+        if path.is_file():
+            rid = json.loads(path.read_text()).get("recoveryId")
+            if rid:
+                return rid
+    raise ValueError(f"{actor_dir}: no recovery-manifest.json / recovery-receipt.json with a recoveryId")
+
+
+def local_rig(actor_dir: Path) -> dict | None:
+    """Rebuild the rig from a previously downloaded rig-canonical.npz (numpy only, no Modal)."""
+    npz = actor_dir / "rig-canonical.npz"
+    if not npz.is_file():
+        return None
+    import tempfile
+
+    import numpy as np
+
+    import rig_build
+    from package_actor import read_ply
+
+    c = dict(np.load(npz))
+    refs = {k[4:-2]: (c[k], c[k[:-1] + "q"]) for k in c if k.startswith("ref_") and k.endswith("_x")}
+    props, static = read_ply(actor_dir / "sequence" / "frame_000.ply")
+    with tempfile.TemporaryDirectory() as tmp:
+        rig_build.build(c, props, static, Path(tmp), refs)
+        return {name: (Path(tmp) / name).read_bytes() for name in ("rig.json", "rig-splats.bin")}
+
+
+def rig_actors(dirs: list[str], remote_only: bool = False) -> int:
+    actor_dirs = [Path(d) for d in dirs]
+    files = {} if remote_only else {d: f for d in actor_dirs if (f := local_rig(d))}
+    todo = [d for d in actor_dirs if d not in files]
+    seconds = cost = 0.0
+    if todo:
+        ids = [recovery_id_of(d) for d in todo]
+        with remote("rig") as fn:
+            out = fn.remote(ids)
+        files.update({d: out["files"][rid] for d, rid in zip(todo, ids)})
+        seconds, cost = out["seconds"], out["estimatedComputeUSD"]
+    installed = [install_rig(d, files[d]) for d in actor_dirs]
+    return result(True, 0, installed=installed, rebuiltLocally=[str(d) for d in actor_dirs if d not in todo], workerSeconds=seconds, estimatedComputeUSD=cost)
+
+
 def run(a) -> int:
     image = Path(a.image)
     validate_image(image)
@@ -198,6 +272,8 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--stage", action="store_true")
     ap.add_argument("--recover")
+    ap.add_argument("--rig", nargs="+", metavar="DIR", help="export the runtime rig for finished actor dirs")
+    ap.add_argument("--rig-remote", action="store_true", help="re-export on Modal even when DIR/rig-canonical.npz exists")
     a = ap.parse_args(argv)
     if not load_modal_auth():
         return result(False, 1, error="Modal credentials absent (MODAL_TOKEN_ID/SECRET)")
@@ -216,6 +292,8 @@ def main(argv=None) -> int:
             return result(code == 0, code)
         if a.recover:
             return recover(Path(a.recover), a.include_raw, a.all_frames)
+        if a.rig:
+            return rig_actors(a.rig, a.rig_remote)
         if not a.image or not a.out:
             ap.print_usage(sys.stderr)
             return result(False, 2, error="--image and --out are required")

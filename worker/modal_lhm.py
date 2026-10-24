@@ -162,6 +162,8 @@ def actor(
         ]
         if (prepared / "mask.png").exists():
             command += ["--mask", str(prepared / "mask.png")]
+        if Path("/cache/motion-library/motion-library.json").is_file():
+            command += ["--motion-library", "/cache/motion-library"]
         if quantize:
             command += ["--quantize"]
         with (out / "inference.log").open("w") as log:
@@ -231,6 +233,72 @@ def actor(
         "manifestSha256": file_hash(checkpoint / "manifest.json"),
         "status": manifest["status"],
         "totalWorkerSeconds": time.time() - start,
+    }
+
+
+@app.function(
+    image=image,
+    gpu="L4",
+    cpu=GPU_CPU,
+    memory=GPU_MEM_GIB * 1024,
+    timeout=900,
+    retries=0,
+    max_containers=1,
+    volumes={"/cache": cache},
+    scaledown_window=2,
+)
+def rig(recovery_ids: list):
+    """Runtime rig for finished actors, from the canonical-state.pt their LHM call left in the
+    Volume (no inference: the model is loaded only for its dense SMPL-X buffers).
+
+    Writes /cache/rigs/<id>/{rig.json, rig-splats.bin} (finalized checkpoints are never touched)
+    and returns those bytes per id, plus the validation report and timings.
+    """
+    import json
+    import os
+    import subprocess
+    import time
+
+    start = time.time()
+    cache.reload()
+    links = link_model_caches()
+    os.chdir("/opt/lhm")
+    from huggingface_hub import snapshot_download
+
+    model = snapshot_download(MODEL_ID, revision=MODEL_REV, local_files_only=True)
+    jobs = []
+    for rid in recovery_ids:
+        if not rid.isalnum():
+            raise ValueError(f"bad recovery id {rid!r}")
+        src = Path("/cache/recovery") / rid / "output"
+        if not (src / "canonical-state.pt").is_file():
+            raise FileNotFoundError(f"{rid}: canonical-state.pt not in the Volume")
+        out = Path("/cache/rigs") / rid
+        jobs.append({"state": str(src / "canonical-state.pt"), "frozen": str(src / "raw/frozen.ply"), "result": str(src / "result.json"), "out": str(out)})
+    job_file = Path("/tmp/rig-jobs.json")
+    job_file.write_text(json.dumps(jobs))
+    proc = subprocess.run(
+        ["python", "/root/lhm_stages/rig_export.py", "--job", str(job_file), "--model", model],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": "/root:/root/lhm_stages:/opt/lhm"},
+    )
+    log = (proc.stdout + proc.stderr)[-20000:]
+    print(log, flush=True)
+    cache.commit()
+    if proc.returncode != 0:
+        raise RuntimeError(f"rig_export exited {proc.returncode}: {log[-3000:]}")
+    files = {}
+    for rid, job in zip(recovery_ids, jobs):
+        out = Path(job["out"])
+        files[rid] = {name: (out / name).read_bytes() for name in ("rig.json", "rig-splats.bin", "canonical.npz")}
+    seconds = time.time() - start
+    return {
+        "files": files,
+        "log": log,
+        "links": links,
+        "seconds": seconds,
+        "estimatedComputeUSD": seconds * (L4_PER_S + GPU_CPU * CPU_CORE_PER_S + GPU_MEM_GIB * GIB_PER_S),
     }
 
 
