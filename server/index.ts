@@ -49,7 +49,12 @@ async function main() {
   const vite = dev
     ? await (await import('vite')).createServer({
         configFile: new URL('../web/vite.config.ts', import.meta.url).pathname,
-        server: { middlewareMode: true, https: certs, hmr: { server: undefined } },
+        server: {
+          middlewareMode: true,
+          https: certs,
+          // Own port per dev server so two checkouts can run side by side.
+          hmr: { server: undefined, port: Number(process.env.HMR_PORT ?? 24678) },
+        },
       })
     : null;
 
@@ -63,7 +68,11 @@ async function main() {
       }
       if (p === '/api/rooms/new') {
         const room = newRoom();
-        const host = req.headers.host ?? `localhost:${env.port}`;
+        // A phone cannot reach "localhost"; prefer the first LAN address when the laptop is local.
+        const reqHost = req.headers.host ?? `localhost:${env.port}`;
+        const [name, port = String(env.port)] = reqHost.split(':');
+        const lan = lanAddresses()[0];
+        const host = (name === 'localhost' || name === '127.0.0.1') && lan ? `${lan}:${port}` : reqHost;
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ room, phoneUrl: `https://${host}/phone.html?room=${room}` }));
       }
