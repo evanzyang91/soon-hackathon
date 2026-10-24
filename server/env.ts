@@ -25,6 +25,9 @@ export const env = {
   /** Pre-generated Marble worlds reused by live projects (server/pipeline/world-library.ts). */
   worldLibraryDir:
     process.env.WORLD_LIBRARY_DIR ?? new URL('../data/marble/', import.meta.url).pathname,
+  /** Pre-built LHM avatars reused by live projects (server/pipeline/actor-library.ts). */
+  actorsLibraryDir:
+    process.env.ACTORS_LIBRARY_DIR ?? new URL('../data/actors-library/', import.meta.url).pathname,
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */
