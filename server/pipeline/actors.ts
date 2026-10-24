@@ -1,6 +1,12 @@
 // WP D: character -> ActorAsset.
 //
-//   buildActor({ character, projectDir, sceneDir, mock, log }) -> ActorAsset   (contract with WP C)
+//   buildActor({ character, projectDir, sceneDir, mock, log, detail? }) -> ActorAsset   (contract with WP C)
+//
+// detail 'standard' (default) is everything below. detail 'high' (the laptop's "High detail"
+// rebuild, about 5 minutes per actor) runs the worker with `--detail high` (LHM-1B + a fine-tune
+// against the reference) into actors/<id>/high/, reusing actors/<id>/reference.png, and returns
+// the asset with `detail: 'high'`. It never falls back to the mannequin: any failure throws, so
+// the caller keeps the standard build.
 //
 // Real path (MOCK off, Modal + OpenAI keys present):
 //   1. reference image: OpenAI `gpt-image-1` (then gpt-image-1.5 / gpt-image-2 when the account
@@ -24,7 +30,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ActorAsset, Character } from '../../shared/schema.ts';
+import type { ActorAsset, ActorDetail, Character } from '../../shared/schema.ts';
 import { env } from '../env.ts';
 import { exists } from './fsutil.ts';
 import { measurePly, parseGaussianPly, validateSequence } from '../../shared/actor-sequence.ts';
@@ -36,6 +42,20 @@ export interface BuildActorOptions {
   sceneDir: string;
   mock: boolean;
   log: (m: string) => void;
+  /** Build quality (default 'standard'); 'high' builds into actors/<id>/high/ and throws on failure. */
+  detail?: ActorDetail;
+}
+
+/** Where a character's build of `detail` lives: actors/<id>/ (standard) or actors/<id>/<detail>/. */
+export function actorDirFor(projectDir: string, characterId: string, detail: ActorDetail = 'standard'): string {
+  const base = join(projectDir, 'actors', characterId);
+  return detail === 'standard' ? base : join(base, detail);
+}
+
+/** Worker arguments for a fresh build (detail 'high' = LHM-1B + fine-tune). */
+export function workerArgs(referencePath: string, actorDir: string, detail: ActorDetail = 'standard'): string[] {
+  const args = ['--image', referencePath, '--out', actorDir, '--frames', '48', '--talk-frames', '24', '--fps', '12'];
+  return detail === 'high' ? [...args, '--detail', 'high'] : args;
 }
 
 export const FALLBACK_GLB = 'procedural:mannequin';
@@ -194,7 +214,7 @@ async function runActorCli(args: string[], log: (m: string) => void, timeoutMs: 
           } catch {
             /* keep the last parseable one */
           }
-        } else if (/animated gaussian frame|receipt|Durable|Error|error|Traceback|using deployed|ephemeral|status/.test(line)) {
+        } else if (/animated gaussian frame|fine-tune|Loading 3DAIGC|receipt|Durable|Error|error|Traceback|using deployed|ephemeral|status/.test(line)) {
           log(`lhm: ${line.slice(0, 240)}`);
         }
       }
@@ -266,18 +286,28 @@ async function readReceipt(path: string): Promise<ReceiptState | undefined> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A high-detail build that could not be made; the standard build stays in use. */
+export class ActorBuildError extends Error {
+  override name = 'ActorBuildError';
+}
+
 export async function buildActor(opts: BuildActorOptions, overrides: Partial<ActorDeps> = {}): Promise<ActorAsset> {
   const { character, projectDir, log } = opts;
+  const detail = opts.detail ?? 'standard';
   const deps = { ...defaultDeps(), ...overrides };
-  const actorDir = join(projectDir, 'actors', character.id);
+  const actorDir = actorDirFor(projectDir, character.id, detail);
   const sequenceDir = join(actorDir, 'sequence');
-  const referencePath = join(actorDir, 'reference.png');
+  // one reference per character, shared by every detail level
+  const referencePath = join(actorDirFor(projectDir, character.id), 'reference.png');
   const receiptPath = join(actorDir, 'recovery-receipt.json');
   const fallback = (reason: string): ActorAsset => {
+    if (detail !== 'standard') throw new ActorBuildError(reason);
     log(`fallback mannequin (${reason})`);
     const asset = fallbackActor(character);
     return opts.mock ? asset : { ...asset, fallback: true };
   };
+  const withDetail = (a: Extract<ActorAsset, { kind: 'splat-sequence' }>): ActorAsset =>
+    detail === 'standard' ? a : { ...a, detail };
   try {
     const cached = opts.mock ? null : await sequenceAsset(character, projectDir, sequenceDir);
     const plan = planActor({
@@ -291,7 +321,7 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
     if (plan.action === 'fallback') return fallback(plan.reason);
     if (plan.action === 'cached') {
       log(`reusing LHM sequence ${cached!.sequenceDir}`);
-      return cached!;
+      return withDetail(cached!);
     }
     await mkdir(actorDir, { recursive: true });
     let outcome: WorkerResult;
@@ -302,8 +332,12 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
         log(`generating reference image (${IMAGE_MODELS.join(' -> ')}, 1024x1536)`);
         await deps.generateReference(referencePrompt(character), referencePath, log);
       }
-      log('running LHM on Modal (L4); first call includes a cold image pull');
-      outcome = await deps.runWorker(['--image', referencePath, '--out', actorDir, '--frames', '48', '--talk-frames', '24', '--fps', '12'], log);
+      log(
+        detail === 'high'
+          ? 'running LHM-1B + fine-tune on Modal (L4), about 5 minutes'
+          : 'running LHM on Modal (L4); first call includes a cold image pull',
+      );
+      outcome = await deps.runWorker(workerArgs(referencePath, actorDir, detail), log);
     } else {
       log('recovering a previous LHM call from its receipt (no new inference)');
       outcome = await deps.runWorker(['--recover', receiptPath], log);
@@ -318,8 +352,9 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
     if (!asset) return fallback('worker reported success but the sequence is invalid');
     const cost = outcome.result?.estimatedComputeUSD;
     log(`LHM avatar ready: ${asset.sequenceDir} @ ${asset.fps} fps${typeof cost === 'number' ? ` (~$${cost.toFixed(3)} GPU)` : ''}`);
-    return asset;
+    return withDetail(asset);
   } catch (err) {
+    if (err instanceof ActorBuildError) throw err;
     return fallback(err instanceof Error ? err.message : String(err));
   }
 }

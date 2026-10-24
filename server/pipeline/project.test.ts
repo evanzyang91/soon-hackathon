@@ -504,6 +504,153 @@ describe('project pipeline (mock)', () => {
   });
 });
 
+describe('actor rebuilds (High detail)', () => {
+  const liveKeys = { anthropic: false, marble: false, modal: true, tts: true };
+  /** Live WP D fake: standard builds and high rebuilds write a real sequence dir. */
+  function liveActors(o: { failHigh?: string; hangHigh?: boolean } = {}) {
+    const calls: string[] = [];
+    const deps: Partial<PipelineDeps> = {
+      ...fakeActors().deps,
+      buildActor: async ({ character, sceneDir, detail }) => {
+        calls.push(`${character.id}:${detail ?? 'standard'}`);
+        if (detail === 'high' && o.failHigh) throw new Error(o.failHigh);
+        if (detail === 'high' && o.hangHigh) return new Promise<never>(() => {});
+        await mkdir(join(sceneDir, 'sequence'), { recursive: true });
+        // what the worker writes: a playable frame and `detail` in sequence.json
+        const h = detail === 'high' ? 1.8 : 1.7;
+        await writeFile(
+          join(sceneDir, 'sequence', 'sequence.json'),
+          JSON.stringify({ frames: ['frame_000.ply'], count: 1, fps: 12, nativeHeight: h, ...(detail ? { detail } : {}) }),
+        );
+        await writeFile(join(sceneDir, 'sequence', 'frame_000.ply'), `ply-${detail ?? 'standard'}`);
+        const a: ActorAsset = {
+          kind: 'splat-sequence',
+          characterId: character.id,
+          sequenceDir: 'sequence',
+          fps: 12,
+          nativeHeight: detail === 'high' ? 1.8 : 1.7,
+          heightMeters: 1.7,
+          ...(detail === 'high' ? { detail: 'high' as const } : {}),
+        };
+        return a;
+      },
+    };
+    return { deps, calls };
+  }
+  const live = (o: Partial<StoreOptions> = {}) => store({ mock: false, keys: liveKeys, ...o });
+  const maya = (m: SceneManifest) => m.actors.find((a) => a.characterId === 'maya')!;
+  const mayaStatus = (st: ProjectStatus | undefined) => st!.actors!.find((a) => a.characterId === 'maya')!;
+
+  it('rebuilds one character in the background and points every manifest at the new build', async () => {
+    const f = liveActors();
+    const s = live({ deps: f.deps });
+    const { id } = await s.createProject({ screenplay: FIXTURE });
+    await s.idle();
+    expect((await s.getProject(id))!.actors!.sort((a, b) => a.characterId.localeCompare(b.characterId))).toEqual([
+      { characterId: 'maya', name: 'MAYA', detail: 'standard', kind: 'splat-sequence' },
+      { characterId: 'theo', name: 'THEO', detail: 'standard', kind: 'splat-sequence' },
+    ]);
+    const before = await readManifest(id, 0);
+
+    const queued = await s.rebuildActor(id, 'maya', 'high');
+    const entry = queued.actors!.find((a) => a.characterId === 'maya')!;
+    expect(entry.detail).toBe('standard'); // the standard build stays until the new one lands
+    expect(entry.rebuild).toMatchObject({ detail: 'high', status: 'running' });
+    expect(Date.parse(entry.rebuild!.startedAt!)).toBeGreaterThan(0);
+    await s.idle();
+
+    const st = (await s.getProject(id))!;
+    const done = st.actors!.find((a) => a.characterId === 'maya')!;
+    expect(done).toMatchObject({ detail: 'high', kind: 'splat-sequence', rebuild: { detail: 'high', status: 'done' } });
+    expect(done.rebuild!.note).toMatch(/^high detail ✓ in \d+s · 3 scene manifest\(s\) updated$/);
+    for (let n = 0; n < 3; n++) {
+      const m = await readManifest(id, n);
+      expect(maya(m)).toMatchObject({ kind: 'splat-sequence', detail: 'high', sequenceDir: 'actors/maya/high/sequence' });
+      expect(m.actors.find((a) => a.characterId === 'theo')).toEqual(before.actors.find((a) => a.characterId === 'theo'));
+    }
+    // the standard build is still on disk, and the cached actor now points at the high one
+    expect(existsSync(join(dataDir, id, 'actors/maya/sequence/sequence.json'))).toBe(true);
+    expect(JSON.parse(await readFile(join(dataDir, id, 'actors/maya/actor.json'), 'utf8')).detail).toBe('high');
+    expect(f.calls.filter((c) => c.endsWith(':high'))).toEqual(['maya:high']);
+
+    // idempotent: again reuses the finished build; standard switches back without a new build
+    await s.rebuildActor(id, 'maya', 'standard');
+    await s.idle();
+    expect(maya(await readManifest(id, 2))).toMatchObject({ sequenceDir: 'actors/maya/sequence' });
+    expect('detail' in maya(await readManifest(id, 2))).toBe(false);
+    expect(mayaStatus(await s.getProject(id))).toMatchObject({ detail: 'standard', rebuild: { detail: 'standard', status: 'done' } });
+  });
+
+  it('a failed rebuild leaves the standard build and manifests untouched and reports why', async () => {
+    const f = liveActors({ failHigh: 'CUDA out of memory' });
+    const s = live({ deps: f.deps });
+    const { id } = await s.createProject({ screenplay: FIXTURE });
+    await s.idle();
+    const before = await readFile(join(dataDir, id, 'scene-0', 'manifest.json'), 'utf8');
+    await s.rebuildActor(id, 'maya', 'high');
+    await s.idle();
+    const entry = (await s.getProject(id))!.actors!.find((a) => a.characterId === 'maya')!;
+    expect(entry).toMatchObject({ detail: 'standard', rebuild: { status: 'failed', note: 'CUDA out of memory' } });
+    expect(await readFile(join(dataDir, id, 'scene-0', 'manifest.json'), 'utf8')).toBe(before);
+    expect(await readFile(join(dataDir, id, 'log.txt'), 'utf8')).toMatch(/FAILED CUDA out of memory \(the current build stays in use\)/);
+  });
+
+  it('refuses MOCK projects and missing Modal keys; a running rebuild is not queued twice', async () => {
+    const mock = store({ deps: fakeActors().deps });
+    const p = await mock.createProject({ screenplay: FIXTURE });
+    await mock.idle();
+    await expect(mock.rebuildActor(p.id, 'maya', 'high')).rejects.toMatchObject({ status: 409 });
+    const noModal = live({ keys: { ...liveKeys, modal: false }, deps: liveActors().deps });
+    const q = await noModal.createProject({ screenplay: FIXTURE });
+    await noModal.idle();
+    await expect(noModal.rebuildActor(q.id, 'maya', 'high')).rejects.toThrow(/Modal keys/);
+    await expect(noModal.rebuildActor(q.id, 'nobody', 'high')).rejects.toMatchObject({ status: 404 });
+
+    const f = liveActors({ hangHigh: true });
+    const s = live({ deps: f.deps });
+    const { id } = await s.createProject({ screenplay: FIXTURE });
+    await s.idle();
+    void s.rebuildActor(id, 'maya', 'high');
+    for (let i = 0; i < 200 && !f.calls.includes('maya:high'); i++) await new Promise((r) => setTimeout(r, 5));
+    const again = await s.rebuildActor(id, 'maya', 'high');
+    expect(mayaStatus(again).rebuild!.status).toBe('running');
+    expect(f.calls.filter((c) => c === 'maya:high')).toHaveLength(1);
+
+    // a restart resumes the interrupted rebuild (the worker recovers its receipt)
+    const g = liveActors();
+    const resumed = live({ deps: g.deps });
+    expect(await resumed.resumeAll()).toEqual([id]);
+    await resumed.idle();
+    expect(g.calls).toEqual(['maya:high']);
+    expect(maya(await readManifest(id, 1))).toMatchObject({ detail: 'high' });
+  });
+
+  it('refreshes an existing actors-library copy and later projects reuse it as high detail', async () => {
+    const library = join(dataDir, '..', `${dataDir.split('/').pop()}-lib-actors`);
+    const seqDir = join(library, 'maya', 'sequence');
+    await mkdir(seqDir, { recursive: true });
+    await writeFile(join(seqDir, 'sequence.json'), JSON.stringify({ frames: ['frame_000.ply'], count: 1, fps: 12, nativeHeight: 1.7 }));
+    await writeFile(join(seqDir, 'frame_000.ply'), 'ply');
+    const f = liveActors();
+    const s = live({ deps: f.deps, actorsLibraryDir: library });
+    const { id } = await s.createProject({ screenplay: FIXTURE });
+    await s.idle();
+    expect(f.calls).toEqual(['theo:standard']); // maya came from the library
+    await s.rebuildActor(id, 'maya', 'high');
+    await s.idle();
+    expect(mayaStatus(await s.getProject(id)).rebuild!.note).toMatch(/library copy refreshed/);
+    expect(await readFile(join(library, 'maya/sequence/frame_000.ply'), 'utf8')).toBe('ply-high');
+    expect(await readFile(join(library, 'maya/sequence.previous/frame_000.ply'), 'utf8')).toBe('ply');
+    expect(f.calls).toEqual(['theo:standard', 'maya:high']);
+
+    const next = live({ deps: liveActors().deps, actorsLibraryDir: library });
+    const p2 = await next.createProject({ screenplay: FIXTURE });
+    await next.idle();
+    expect(maya(await readManifest(p2.id, 0))).toMatchObject({ detail: 'high', nativeHeight: 1.8 });
+    expect(mayaStatus(await next.getProject(p2.id))).toMatchObject({ characterId: 'maya', detail: 'high' });
+  });
+});
+
 describe('toProjectUrl', () => {
   it('normalizes paths from WP D modules to project-relative URLs', async () => {
     const project = join(dataDir, 'p1');

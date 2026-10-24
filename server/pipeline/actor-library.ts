@@ -65,6 +65,8 @@ export async function copyLibraryActor(found: LibraryActor, projectDir: string):
     if (!e.isFile() || !plainFile(e.name) || e.name.endsWith('.part')) continue;
     await copyFile(join(found.sequenceDir, e.name), join(dest, e.name), constants.COPYFILE_FICLONE);
   }
+  // a "High detail" rebuild refreshed this copy (the worker writes `detail` into sequence.json)
+  const high = (found.sequence as { detail?: unknown }).detail === 'high';
   return {
     kind: 'splat-sequence',
     characterId: found.characterId,
@@ -72,5 +74,6 @@ export async function copyLibraryActor(found: LibraryActor, projectDir: string):
     fps: found.sequence.fps,
     nativeHeight: Math.round(found.sequence.nativeHeight! * 1e4) / 1e4,
     heightMeters: HEIGHT_METERS,
+    ...(high ? { detail: 'high' as const } : {}),
   };
 }
