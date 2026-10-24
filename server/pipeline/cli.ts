@@ -187,7 +187,8 @@ async function main() {
       }
       const ba = str(flags['before-after']);
       if (ba) {
-        await renderBeforeAfter(worldDir, report, resolve(ba), { log });
+        // --reuse: the stored decision (old rule) on the left, the re-decided one on the right
+        await renderBeforeAfter(worldDir, report, resolve(ba), { log, ...(prev ? { previous: prev } : {}) });
         log(`before/after image: ${ba}`);
       }
       return;
@@ -205,7 +206,7 @@ async function main() {
       const sceneDir = join(projectDir, `scene-${n}`);
       const worldDir = join(sceneDir, 'world');
       const asset = await readWorldAsset(worldDir);
-      const inputs = { worldId: asset.worldId, scene, characters: plan.characters };
+      const inputs = { worldId: asset.worldId, scene, characters: plan.characters, factor: asset.scaleCalibration?.factor ?? 1 };
       const prev = flags.reuse === true ? await readStaging(sceneDir) : undefined;
       let report = prev && stagingCurrent(prev, inputs) ? prev : undefined;
       if (flags.reuse === true) log(report ? 'reusing scene staging.json (no Claude call)' : 'no current staging.json for this scene; staging');
