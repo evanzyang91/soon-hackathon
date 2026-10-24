@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
-import { SceneManifest, type Character, type DialogueLine } from '@shared/schema';
+import { SceneManifest, type ActorAsset, type Character, type DialogueLine } from '@shared/schema';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
@@ -59,6 +59,12 @@ export interface SceneRuntime {
   playLine(lineId: string): Promise<void>;
   stopLines(): void;
   setQuality(quality: SplatQuality): Promise<boolean>;
+  /**
+   * Replaces the actors whose asset differs from the loaded manifest's (e.g. after a "High detail"
+   * rebuild rewrote it) in place: same spot, facing, pose and placement; camera, clock and every
+   * other actor untouched. Resolves with the swapped character ids.
+   */
+  swapActors(assets: ActorAsset[]): Promise<string[]>;
   dispose(): void;
 }
 
@@ -306,6 +312,42 @@ class LoadedScene implements SceneRuntime {
     this.setWorld(mesh);
     this.quality = quality;
     return true;
+  }
+
+  async swapActors(assets: ActorAsset[]): Promise<string[]> {
+    const swapped: string[] = [];
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    for (const asset of assets) {
+      const index = this.manifest.actors.findIndex((a) => a.characterId === asset.characterId);
+      if (index >= 0 && same(this.manifest.actors[index], asset)) continue;
+      const character =
+        this.manifest.characters.find((c) => c.id === asset.characterId) ?? FALLBACK_CHARACTER(asset.characterId);
+      const actor = await createActor(asset, character, this.listener, this.assetBase);
+      if (this.disposed) {
+        actor.dispose();
+        break;
+      }
+      const old = this.actors.get(asset.characterId);
+      const b = this.manifest.plan.blocking.find((x) => x.characterId === asset.characterId);
+      if (old) {
+        actor.object.position.copy(old.object.position);
+        actor.object.rotation.y = old.object.rotation.y;
+        actor.object.userData.placement = old.object.userData.placement;
+        old.stopSpeaking();
+        this.scene.remove(old.object);
+        old.dispose();
+      } else if (b) {
+        actor.object.position.set(...b.position);
+        actor.object.rotation.y = b.yaw;
+      }
+      actor.setPose(b?.pose ?? 'standing');
+      this.scene.add(actor.object);
+      this.actors.set(asset.characterId, actor);
+      if (index >= 0) this.manifest.actors[index] = asset;
+      else this.manifest.actors.push(asset);
+      swapped.push(asset.characterId);
+    }
+    return swapped;
   }
 
   get isDisposed() {

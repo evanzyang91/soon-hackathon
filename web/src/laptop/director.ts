@@ -2,7 +2,7 @@
 // emits coarse change events so they can re-render.
 import * as THREE from 'three';
 import type { DropCamera, PhoneCommand, ServerMessage } from '@shared/protocol';
-import type { Quat, SuggestedShot, Vec3 } from '@shared/schema';
+import { SceneManifest, type Quat, type SuggestedShot, type Vec3 } from '@shared/schema';
 import { ViewportRenderer, type PipRect } from '../viewer/render';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world';
 import { downloadBlob } from './dom';
@@ -61,6 +61,8 @@ export class Director {
   projectId: string | null = null;
   sceneIndex: number | null = null;
   manifestUrl: string | null = null;
+  /** The open scene's manifest changed on disk but could not be applied live: offer a reload. */
+  sceneStale = false;
   cameras: DropCamera[] = [];
   activeCameraId: string | null = null;
   speakingLineId: string | null = null;
@@ -160,6 +162,7 @@ export class Director {
       this.projectId = projectId;
       this.sceneIndex = sceneIndex;
       this.manifestUrl = manifestUrl;
+      this.sceneStale = false;
       this.speakingLineId = null;
       this.lastLineId = null;
       rt.scene.add(this.markers.group, this.phoneGizmo.object);
@@ -189,6 +192,40 @@ export class Director {
       this.loading = null;
       this.error = err instanceof Error ? err.message : String(err);
       this.emit('loading');
+    }
+  }
+
+  /**
+   * Re-reads the open scene's manifest and swaps every actor whose asset changed (a finished
+   * "High detail" rebuild), keeping the camera, the clock and the other actors. The manifest URL
+   * gets a revision query so the paired phone reloads the scene with the new actor. When the swap
+   * fails, `sceneStale` makes the HUD offer a reload instead.
+   */
+  async refreshActors(): Promise<string[]> {
+    const rt = this.runtime;
+    const url = this.manifestUrl;
+    if (!rt || !url) return [];
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`manifest HTTP ${res.status}`);
+      const fresh = SceneManifest.parse(await res.json());
+      if (this.runtime !== rt) return [];
+      const swapped = await rt.swapActors(fresh.actors);
+      if (swapped.length && this.runtime === rt) {
+        const u = new URL(url, location.href);
+        u.searchParams.set('rev', String(Date.now()));
+        this.manifestUrl = u.pathname + u.search;
+        this.broadcast(true);
+        this.emit('scene');
+      }
+      return swapped;
+    } catch (err) {
+      console.warn('actor refresh failed; offering a reload', err);
+      if (this.runtime === rt) {
+        this.sceneStale = true;
+        this.emit('scene');
+      }
+      return [];
     }
   }
 

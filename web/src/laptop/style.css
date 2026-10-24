@@ -284,6 +284,43 @@ button.icon {
   white-space: nowrap;
   font-size: 12px;
 }
+.actors {
+  margin: 4px 0 2px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.actor-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.actor-name {
+  min-width: 44px;
+  font-weight: 600;
+}
+.actor-row button {
+  margin-left: auto;
+}
+.actor-note {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+.chip.detail.high {
+  background: #2b2350;
+  color: #b9a7ff;
+}
+button.badge {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
 .chips {
   display: flex;
   gap: 3px;
