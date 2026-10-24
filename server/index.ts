@@ -4,6 +4,7 @@
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import type { ViteDevServer } from 'vite';
 import { env, keyPresence } from './env.ts';
 import { loadOrCreateCerts, lanAddresses } from './https.ts';
 import { attachRelay, newRoom } from './relay.ts';
@@ -46,22 +47,22 @@ async function serveFile(root: string, urlPath: string, res: import('node:http')
 async function main() {
   const certs = await loadOrCreateCerts();
   const dev = process.env.NODE_ENV !== 'production';
-  const vite = dev
-    ? await (await import('vite')).createServer({
-        configFile: new URL('../web/vite.config.ts', import.meta.url).pathname,
-        server: {
-          middlewareMode: true,
-          https: certs,
-          // Own port per dev server so two checkouts can run side by side.
-          hmr: { server: undefined, port: Number(process.env.HMR_PORT ?? 24678) },
-        },
-      })
-    : null;
+  // Vite is created after the HTTPS server so its HMR WebSocket can ride on the same origin the
+  // phone already trusted. HMR_PORT forces a separate port instead (two checkouts side by side).
+  let vite: ViteDevServer | null = null;
 
   const server = createHttpsServer(certs, async (req, res) => {
     const url = new URL(req.url ?? '/', 'https://x');
     const p = url.pathname;
     try {
+      if (p === '/cert.pem') {
+        // iOS: open this URL in Safari to install the certificate profile instead of tapping through.
+        res.writeHead(200, {
+          'content-type': 'application/x-x509-ca-cert',
+          'content-disposition': 'attachment; filename="previz-stage.pem"',
+        });
+        return res.end(certs.cert);
+      }
       if (p === '/api/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, mock: env.mock, keys: keyPresence() }));
@@ -101,6 +102,17 @@ async function main() {
     }
   });
 
+  if (dev) {
+    const hmrPort = process.env.HMR_PORT ? Number(process.env.HMR_PORT) : undefined;
+    vite = await (await import('vite')).createServer({
+      configFile: new URL('../web/vite.config.ts', import.meta.url).pathname,
+      server: {
+        middlewareMode: true,
+        https: certs,
+        ws: hmrPort ? { port: hmrPort } : { server },
+      },
+    });
+  }
   attachRelay(server, { viteHmr: vite?.ws });
   // Pick up projects whose pipeline was interrupted by a previous process exit.
   Promise.resolve(resumePipelines()).catch((e) => console.error('resume failed', e));
