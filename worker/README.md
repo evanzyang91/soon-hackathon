@@ -3,8 +3,11 @@
 A trimmed port of OrbisEngine's `worker/modal_lhm.py`. Same CUDA image, same LHM code revision
 (`4f88aaeb`), same `3DAIGC/LHM-500M-HF` weights (`dd639290`), and the same rule of checkpointing
 to a Volume and then returning a small receipt. Input is one generated full-body reference PNG.
-Output is a frozen gaussian PLY plus a looping idle/talk PLY sequence that the browser plays
-(`web/src/viewer/actors/splat-actor.ts`).
+Output is a frozen gaussian PLY, a looping idle/talk PLY sequence (the fallback the browser can
+always play, `web/src/viewer/actors/splat-actor.ts`) and a **runtime rig**: the canonical splats
+with skin weights and the SMPL-X skeleton, which the browser animates on the GPU from a shared
+library of text-to-motion clips (`web/src/viewer/actors/skinned-actor.ts`; see
+"Performance motion" below).
 
 | File | Role |
 | --- | --- |
@@ -15,9 +18,15 @@ Output is a frozen gaussian PLY plus a looping idle/talk PLY sequence that the b
 | `lhm_stages/lhm_actor.py` | Runs inside the GPU container. Port of Orbis `lhm_person.py`: rembg mask → Multi-HMR pose → LHM canonical inference → frozen + animated frames → packaging |
 | `lhm_stages/idle_motion.py` | Procedural SMPL-X idle/talk loop (numpy) |
 | `lhm_stages/package_actor.py` | Raw LHM PLYs → avatar-local frames + `sequence.json` + motion track (numpy, no plyfile) |
+| `lhm_stages/rig_export.py` | Runs inside the GPU container: canonical-state.pt + LHM's dense SMPL-X buffers → `canonical.npz` (zero-pose splats, 55-joint weights, skeleton) + LHM reference poses |
+| `lhm_stages/rig_build.py` | numpy: `canonical.npz` → `rig.json` + `rig-splats.bin` (top-4 skin, rebound at the source pose, validated against LHM); runs in the worker and offline |
+| `lhm_stages/rig_math.py` | FK, LBS, Spark-style dual-quaternion skinning, quaternions (numpy, shared) |
+| `modal_motion.py` | GPU app `previz-stage-motion`: HY-Motion 1.0 text-to-motion on an L40S (`stage()` CPU, `generate()` GPU), run once for the library |
+| `motion_library.py` | CLI: generate clips, build seamless loops (`motion-library/`), upload them to the Volume |
+| `motion-library/` | The built motion library every actor ships with (`motion-library.json` + `motion-clips.bin`, 160 KB) |
 | `lhm_stages/recovery.py` | Receipts, Volume checkpoint manifests, verified download (port of Orbis `lhm_recovery.py`) |
 | `lhm_stages/weights.py` | Pinned revisions, weight URLs, Volume layout |
-| `tests/` | pytest for motion, packaging and recovery; `make_synthetic_actor.py` makes a synthetic actor |
+| `tests/` | pytest for motion, packaging, recovery and the rig / motion library; `make_synthetic_actor.py` makes a synthetic actor |
 
 ## Setup
 
@@ -45,6 +54,9 @@ python3 worker/run_actor.py --stage     # one time: ~22 GB into Volume previz-st
 python3 worker/run_actor.py --check     # auth + CUDA image build + LHM imports + weight audit; no GPU
 python3 worker/run_actor.py --image ref.png --out DIR [--mask m.png] [--frames 48] [--talk-frames 24] [--fps 12]
 python3 worker/run_actor.py --recover DIR/recovery-receipt.json   # re-download; never re-runs inference
+python3 worker/run_actor.py --rig DIR [DIR ...]   # add the runtime rig to finished actors (no inference)
+python3 worker/motion_library.py --generate | --build [--review] | --upload    # the shared clips (once)
+python3 worker/lhm_stages/rig_build.py DIR      # rebuild DIR/sequence/rig* from DIR/rig-canonical.npz
 modal deploy worker/modal_lhm.py        # optional: run_actor then uses the deployed function
 cd worker && python3 -m pytest -q tests
 ```
@@ -76,10 +88,18 @@ The last stdout line is always `RESULT {json}`. Exit codes: 0 ok, 1 failed, 2 us
    That keeps a reference shot from slightly above from producing a leaning actor.
 6. **Frames.** Frozen pose, then `--frames` idle frames and `--talk-frames` talk frames, each
    through `model.animation_infer_gs` (LHM's native SMPL-X LBS).
-7. **Package.** `package_actor.py` writes `sequence/`; the volume checkpoint manifest is
-   finalized and committed before the receipt returns.
+7. **Package.** `package_actor.py` writes `sequence/`.
+8. **Runtime rig.** `rig_export.py` + `rig_build.py` write `sequence/rig.json` and
+   `rig-splats.bin` (and `rig-canonical.npz`, kept in the Volume), copy the motion library from
+   `/cache/motion-library` and point `sequence.json` at both. A failure here is logged in
+   `result.json` (`rig.error`) and leaves a complete baked actor. The volume checkpoint manifest
+   is finalized and committed before the receipt returns.
 
-### Why procedural motion
+### Why procedural motion (the baked fallback)
+
+This is the motion baked into the PLY sequence, which the browser plays only for actors without a
+runtime rig (older builds, or a rig that fails to load). Rigged actors perform the HY-Motion
+library instead ("Performance motion" below).
 
 LHM's sample motions (`motion_video.tar`, 3.5 GB at
 `https://virutalbuy-public.oss-cn-hangzhou.aliyuncs.com/share/aigc3d/data/LHM/motion_video.tar`
@@ -104,14 +124,16 @@ DIR/recovery-manifest.json          volume manifest snapshot (sizes + SHA-256 of
 DIR/sequence/sequence.json          see below
 DIR/sequence/frame_000.ply …        avatar-local gaussian frames (idle first, then talk)
 DIR/sequence/motion.u16             wander.person-motion/1 track (motion.f32 with --lossless)
+DIR/sequence/rig.json, rig-splats.bin   runtime rig (canonical splats + skin + skeleton), see "Formats"
+DIR/sequence/motion-library.json, motion-clips.bin   the shared motion library (copied per actor)
 DIR/frozen.ply                      frozen avatar, same frame as the sequence
 DIR/result.json, modal-run.json     timings, VRAM, cost estimate, revisions, mask report, root delta
 DIR/inference.log, mask.png, observed-mask.png, pose-input.png, estimated-joints.png,
 DIR/model-input.png, head-input.png, source.png, source-pose.json, cache-links.json
 ```
 
-`raw/` (the LHM camera-frame frames, Orbis-equivalent `person-posed.ply`) and
-`canonical-state.pt` stay in the Volume. Download them with `--include-raw` to repackage locally
+`raw/` (the LHM camera-frame frames, Orbis-equivalent `person-posed.ply`), `canonical-state.pt`
+and `rig-canonical.npz` stay in the Volume. Download them with `--include-raw` to repackage locally
 (`python3 worker/lhm_stages/package_actor.py DIR/raw DIR/sequence --idle 48 --talk 24`).
 
 ### PLY frames
@@ -177,6 +199,184 @@ dominates on a slow link). Receipts estimate `seconds × (L4 $0.000222 + 4 CPU �
 isn't timed. One-time staging is CPU-only: priors 2,127 s (~$0.075), model + aux 108 s
 (~$0.004).
 
+## Performance motion (investigation, 2026-10-24)
+
+Goal: actors that *perform* (gestures while talking, a listening idle, sitting, walking to a
+mark) instead of the baked 6 s breathing/talk loops, without getting slower or jankier.
+
+### Findings
+
+**(i) Runtime skinning is feasible.** LHM-500M animates with plain linear blend skinning
+(`SMPLXVoxelMeshModel.transform_to_posed_verts_from_neutral_pose` at `4f88aaeb`): each of the
+40,000 gaussians is one subdivided SMPL-X vertex with fixed per-vertex weights over the 55 SMPL-X
+joints (`skinning_weight`; the voxel-queried weights are computed but not used). A gaussian is
+warped neutral "大 pose" -> zero pose (blend of `transform_mat_neutral_pose`), gets the shape
+blendshape offset, then zero pose -> target with `batch_rigid_transform` on the shaped zero-pose
+joints. No pose correctives, no per-frame appearance (which is why the motion track exists at
+all: colour/opacity/scale are bit-identical across frames). So the browser can reproduce LHM's
+animation from: the canonical zero-pose splats, top-4 bone indices + weights per splat, and the
+55-joint rest skeleton + parents. The worker already keeps `canonical-state.pt` (attrs, query
+points, neutral transforms, betas) in the Volume, so MAYA and LEO can get a rig without
+re-running inference (a ~1 min GPU job that loads the model for its SMPL-X buffers). Differences
+from LHM: top-4 / 8-bit weights, dual-quaternion instead of linear blending (Spark's LBS mode
+needs `covSplats`), and LHM's "constrain body" prior (a subset whose rotation is never posed) is
+approximated. The export validates itself against `animation_infer_gs` (error report in
+`rig.json`).
+
+Spark 2.4 `SplatSkinning`: 4 bones per splat (RGBA16UI: 8-bit weight | bone << 8), up to 256
+bones, dual quaternions evaluated on the GPU in the splat generator. Per frame the CPU only runs
+FK for 55 joints and uploads a 4x55 float texture. Caveat found in the source:
+`setBoneQuatPos` composes `rest^-1 * quat` and translates by `pos - restPos` (a rotation about the
+origin), so we keep identity rests and pass the full rigid skinning transform `A_j` per bone.
+
+**(ii) Motion source: HY-Motion 1.0, once, as a shared library.** HY-Motion 1.0 (Tencent, Dec
+2025; 1.0 B DiT flow matching, Qwen3-8B + CLIP-L text encoders; weights 4.2 + 16.4 + 1.7 GB,
+not gated, community licence: Tencent claims no rights in outputs, territory excludes EU/UK/KR)
+outputs SMPL body rotations: root + 21 joints as 6D, root translation, 30 fps. Those 22 joints are
+SMPL-X's first 22 joints in the same order, so local rotations transfer with no IK; only the root
+translation is rescaled by leg length. It needs >= 26 GB VRAM, so it runs on an L40S. MoMask /
+MotionGPT / MotionLCM generate HumanML3D joint *positions* (263-d features); getting SMPL-X
+rotations needs SMPLify-style fitting per clip (minutes, wrist/foot twist artefacts) - more
+friction for worse rotations. AMASS / Motion-X are better curated but sit behind registration
+forms (no unattended download). LHM's `motion_video.tar` is dance. Because SMPL-X parameters are
+body-agnostic, ~6 clips are generated once (listen idle, two talk loops, sit idle, sit talk, walk
+cycle), post-processed into seamless loops, cached in the Volume and under
+`data/motion-library/`, and shared by every actor. Per-actor GPU cost stays one LHM pass.
+
+**(iii) Budget, measured before any change** (scene 0 of `fixtures/screenplay.fountain` with the
+library city-street world (500k), library MAYA and LEO's avatar as THEO, GPU Chromium on an
+M-series Mac):
+
+| | Laptop 1280x720 | Phone page 844x390 |
+| --- | --- | --- |
+| fps median / 1% low, 12 s take | 59.9 / 59.5 (vsync cap) | 59.9 / 59.5 (vsync cap) |
+| main thread busy, CPU throttled 4x | 59% (script 43%) | 65% (script 45%) |
+| actor download | 86 MB (2 x 43 MB) | 86 MB: 37 s at 25 Mbit/s |
+
+Frame rate is not the bottleneck on this GPU; the phone *download* is: a baked actor costs
+13.8 s at 25 Mbit/s on its own (budget: < 10 s), and the baked loop plays at 12 fps with no
+interpolation (visible stepping) and pops when idle <-> talk switches mid-loop.
+
+### Plan chosen: (A) runtime skinning — shipped
+
+**Worker.** `rig_export.py` loads `canonical-state.pt`, reads LHM's own dense SMPL-X buffers and
+writes the zero-pose splats, all 55 skin weights and the shaped skeleton (`canonical.npz`), plus
+LHM's own render of two test poses. `rig_build.py` (numpy) turns that into the browser rig:
+
+- top-4 bones with 8-bit weights summing to 255, in Spark's skin-texture word layout;
+- **rebound at the source pose**: each splat gets the inverse of its own source-pose dual-quaternion
+  transform applied to LHM's exact source-pose output, so the runtime reproduces the frozen
+  avatar exactly at the source pose and only drifts from LHM's 55-weight LBS as the pose moves
+  away from it. Measured on MAYA / LEO (native mm, p99): source 0 / 0, talking gesture 6.6 / 7.3,
+  walking stride 10 / 11, seated 28 / 40, T-pose 11 / 11. The numpy re-implementation of LHM's
+  posing itself agrees with `animation_infer_gs` to 0.0003 mm / 0.00003°. Top-4 / 8-bit weights
+  alone cost ≤ 3 mm; the rest is dual-quaternion vs linear blending (DQ keeps volume at elbows
+  and hips, which is what the residual measures). `validation` in `rig.json` records all of it;
+- the "constrain body" prior (2.7 % of splats, never rotated by LHM) is matched at the source
+  pose and then rotates with its bones.
+
+New actors get the rig in the same GPU call (+3.5 s, the model is already loaded; measured on a
+real L4 run: $0.034 for 12 + 6 baked frames and the rig). Existing actors: `run_actor.py --rig
+DIR` runs a ~50 s L4 job (~$0.02, no inference) or rebuilds locally for free from a downloaded
+`rig-canonical.npz`. MAYA (`data/actors-library/maya`) and the bus-stop project's MAYA / LEO have
+rigs installed; every pre-rig sequence keeps working unchanged.
+
+**Motion library.** `modal_motion.py` runs HY-Motion 1.0 once on an L40S: 6 prompts x 4 seeds in
+85 s (load 20 s, ~10 s per prompt for 4 seeds, peak 24.9 GB VRAM, ~$0.06), plus one re-run of two
+prompts (~$0.03). `motion_library.py` makes each seed a loop: heading canonicalised to +Z; the
+window whose end matches its start (pose and velocity) cut out and its seam cross-faded over
+0.6 s; heading drift removed; **root motion re-derived from the feet** (foot locking: contacts are
+low *and* slow in the world, the root moves opposite their velocity), which removes the
+generator's own foot skate (raw HY-Motion walks skate 0.2–0.9 m/s in contact; the shipped walk
+cycle 0.04 m/s); the walk keeps its forward speed separately. Seeds were reviewed on MAYA
+(contact sheets per seed) and pinned in `PICK`:
+
+| Clip | Prompt gist | Loop | Seed |
+| --- | --- | --- | --- |
+| `idle-listen` | stands listening, small nods and weight shifts | 6.7 s | 11 |
+| `talk-1` | talks, both hands gesturing in front of the body | 6.3 s | 41 |
+| `talk-2` | talks, opens both palms as if asking, lowers them | 5.0 s | 11 |
+| `sit-idle` | seated, hands on thighs, looking around | 4.2 s | 41 |
+| `sit-talk` | seated upright, talking with both hands | 5.2 s | 11 |
+| `walk` | relaxed walk, one gait cycle (1.0 m/s source) | 1.2 s | 37 |
+
+The built library (160 KB) is committed in `worker/motion-library/`, cached in
+`data/motion-library/` (with every raw seed) and uploaded to the Volume (`/cache/motion-library`)
+where `actor()` copies it into each new actor's `sequence/`.
+
+**Viewer** (`web/src/viewer/actors/rig.ts`, pure and unit-tested; `skinned-actor.ts`): one
+`SplatMesh` + `SplatSkinning` (dual quaternions). Every render frame: sample the clip (nlerp
+between 30 fps frames), cross-fade 0.25 s with smoothstep, entering the new clip at its frame
+closest to the current pose (no pops), damp the clip's own head turning by 60 % while there is a
+look target and add the look yaw (heads turn to the speaker), open the jaw with the voice level,
+FK, then ground the lowest foot joint. Silent → `idle-listen`; speaking → `talk-1` / `talk-2`
+alternating per line; `setPose('sitting')` → the seated pair; `setPose('walking')` → the actor
+waits 2.4 m behind its mark (along its facing) until the scene clock runs, then walks in at
+~1.2 m/s (cycle x1.2 ≈ 120 steps/min), decelerating over the last 0.6 m, with the cycle's clip
+time locked to the distance walked (no sliding at any speed) and phased so it arrives on the
+passing frame, then settles into the idle over 0.45 s. Scene-clock driven, so laptop and phone
+agree. If any rig file fails to load or verify, the baked sequence plays.
+
+### Formats
+
+`sequence.json` gains `rig: {schema: "previz.actor-rig/1", file: "rig.json", sha256, clips:
+"motion-library.json", clipsSha256, clipNames}`; nothing else changes (Orbis readers ignore it).
+
+`rig.json`: `splats`, `bones` (55), `joints` (SMPL-X names), `parents`, `rest` (zero-pose joints,
+SMPL-X frame: +Y up, faces +Z, native metres), `sourcePose` (root/body/jaw/hands axis-angle; the
+viewer keeps the hands and jaw of the reference photo), `measure` (`nativeHeight` in the zero pose,
+`soleY`, `footJointMinY`, `legLength`), `files.splats` (`rig-splats.bin`: bytes, sha256, layout),
+`validation`. `rig-splats.bin` is struct-of-arrays, little-endian, 44 B/splat: centre f32x3, quat
+int16x4 (x,y,z,w x 32767), scale f32x3 (linear), RGBA u8x4, skin u16x4 (weight | bone << 8).
+
+`motion-library.json`: `schema` `previz.motion-library/1`, `fps` 30, `joints` 22, `file`,
+`bytes`, `sha256`, `clips[]` (`name`, `pose` standing/sitting/walking, `speaking`, `frames`,
+`offset`, `speed` m/s, `legLength`, provenance). Per clip at `offset`: frames x 22 x int16 [x,y,z,w]
+local rotations (SMPL-X joints 0–21; joint 0 = global orientation), then frames x f32 [x,y,z]
+in-place root offset. The viewer rescales root travel by the actor's leg length.
+
+### Self-review gate (2026-10-24): ship
+
+Same build, same take (scene 0 of `fixtures/screenplay.fountain`: library city-street world 500k,
+library MAYA, LEO's avatar as THEO, the 4 dialogue lines), same camera, GPU Chromium (Metal) on an
+M-series Mac; "before" = the baked sequences, "after" = the same actors with rigs.
+
+| | Before (baked) | After (rig) |
+| --- | --- | --- |
+| Laptop 1280x720: fps median / 1% low | 59.9 / 59.5 | 59.9 / 59.5 |
+| Phone page 844x390: fps median / 1% low | 59.9 / 59.5 | 59.9 / 59.5 |
+| Laptop at 2x DPR + orbiting camera | 59.9 / 59.5 | 59.9 / 59.5 |
+| Main thread busy, laptop / phone page | 28 % / 27 % (script 20 / 19 %) | 15 % / 15 % (script 3 / 4 %) |
+| ... with the CPU throttled 4x | 47 % / 49 % (script 34 / 35 %) | 27 % / 18 % (script 5 / 5 %) |
+| Actor pose updates per second | 12 (frame stepping) | 60 (render rate) |
+| Download, two actors | 86.3 MB | 4.1 MB (2.05 MB per actor) |
+| Phone at 25 Mbit/s: actor files done | 37.0 s (33.7 s window) | 10.5 s, before the 3D view is ready (10.6 s) |
+| Motion | 6 s breathing + 2 s talk loop, standing only | 6 clips, gestures, listening, seated, walk-in |
+
+Frame rate was already at the vsync cap on this GPU and stays there; the CPU cost per frame drops
+5-7x (no 40,000-splat decode and repack per frame: Spark skins on the GPU from a 55-bone texture)
+and the download drops 21x, which is what took the phone from 34 s to under the 10 s budget per
+actor (~0.7 s per actor on an idle 25 Mbit/s link). Visual review (contact sheets at 1 fps, 50 ms
+strips of every transition, close-ups of every clip, front / side / three-quarter):
+
+- loop seams: the wrap step equals an ordinary frame step for every clip; no pops at idle ⇄ talk
+  (pose-matched entry + smoothstep fade, `docs/images/perf-motion-transitions.png`);
+- feet: planted in idle and talk (foot-locked roots, lowest foot grounded every frame); the walk
+  is distance-locked and stops on the passing frame (`perf-motion-walk-stop.png`);
+- no jitter (render-rate interpolation; no single-frame spikes in any clip), no tearing at joints;
+- gestures read as conversation; heads stay on the partner.
+
+Evidence: `docs/images/perf-motion-{before,after}-{laptop,phone}.png` (12 frames, 1 fps),
+`perf-motion-{before,after}-phone.webm`, `perf-motion-walk-to-mark.png` / `perf-motion-walk.webm`,
+`perf-motion-walk-stop.png`, `perf-motion-transitions.png`, `perf-motion-library.png`.
+
+Caveats: a long coat (LEO) stretches into fuzz at the hips when seated: LHM skins clothing to
+the body, and the seated clips bend the hips 90° (MAYA's hip-length jacket is clean). Seated
+actors sit on nothing; the walk-in path ignores the collider (an actor can start inside a wall);
+the jaw opens with voice amplitude, not visemes; the phone GPU itself was not measured (only the
+844x390 page on the Mac); the motion clips come from HY-Motion's community licence (Tencent claims
+no rights in outputs; the licence excludes the EU, UK and South Korea).
+
 ## Verification status
 
 - **Verified on a real L4** (4 runs, 2026-10-24): rembg mask (portrait box, 25% area); Multi-HMR
@@ -192,5 +392,9 @@ isn't timed. One-time staging is CPU-only: priors 2,127 s (~$0.075), model + aux
 - Also verified: Modal auth and the CUDA image build; `--check`; weight staging; packaging,
   motion and recovery under pytest; the synthetic-sequence browser check
   (`npx tsx scripts/actor-browser-check.ts`).
-- Not verified: phone (iOS Safari) frame rate with 40,000-splat actors; the sitting/walking poses
-  for splat actors (they use the standing idle loop).
+- **Runtime rig, verified:** export on a real L4 for MAYA and LEO (no inference) and inside a new
+  actor run; LHM-exactness of the reference posing; the rig, motion library and viewer under
+  pytest / vitest; the browser check on a rigged avatar
+  (`npx tsx scripts/actor-browser-check.ts --sequence data/actors-library/maya --gpu`); the gate
+  above.
+- Not verified: phone (iOS Safari) frame rate with 40,000-splat actors.
