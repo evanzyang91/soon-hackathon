@@ -195,12 +195,22 @@ async function stagedFigures(
   geo: StagingGeometry,
   staged: readonly Pick<StagedCharacter, 'characterId' | 'position' | 'pose'>[],
   marks: Mark[],
+  characters: readonly Character[],
 ): Promise<ScaleFigure[]> {
   const ys = await groundHeights(worldDir, asset, geo, staged.map((c) => [c.position[0], c.position[2]] as const));
   return staged.map((c, i) => {
     const sitting = c.pose === 'sitting';
     const y = sitting ? (nearestMark(marks, c.position[0], c.position[2])?.mark.y ?? 0) : ys[i]!;
-    return { x: c.position[0], z: c.position[2], y, label: c.characterId, tint: PALETTE[i % PALETTE.length]!, ...(sitting ? { pose: 'sitting' as const } : {}) };
+    const tall = characters.find((ch) => ch.id === c.characterId)?.heightMeters;
+    return {
+      x: c.position[0],
+      z: c.position[2],
+      y,
+      label: c.characterId,
+      tint: PALETTE[i % PALETTE.length]!,
+      ...(tall ? { heightMeters: tall } : {}),
+      ...(sitting ? { pose: 'sitting' as const } : {}),
+    };
   });
 }
 
@@ -300,7 +310,7 @@ export async function stageScene(o: StageOptions): Promise<StagingReport> {
       let content: Anthropic.Beta.BetaContentBlockParam[] = [...blocks(images, 1), { type: 'text', text: baseText }];
       if (prev?.answer) {
         const shown = prev.staged ?? [];
-        const figures = await stagedFigures(o.worldDir, asset, geo, shown, marks);
+        const figures = await stagedFigures(o.worldDir, asset, geo, shown, marks, o.characters);
         const preview = [{ name: 'preview-main', caption: 'your previous answer from the main camera, mannequins on its marks', jpeg: await renderer.shot(shotOf(asset, view, { figures, format: 'jpeg' })) }];
         const sv = sides[0];
         const side = sv && shown.length ? sideView(geo, shown.map((c) => [c.position[0], c.position[2]] as const), sv.side, { fovDeg: 84 }) : null;
@@ -381,22 +391,36 @@ export async function readStaging(sceneDir: string): Promise<StagingReport | und
 
 export const writeStaging = (sceneDir: string, report: StagingReport) => writeJsonAtomic(join(sceneDir, STAGING_FILE), report);
 
-/** The report still applies to this world and scene (a different calibration factor is fine). */
-export function stagingCurrent(report: StagingReport, o: { worldId?: string; scene: ScenePlan; characters: Character[] }): boolean {
-  return report.version === STAGING_VERSION && report.worldId === o.worldId && report.inputsHash === stagingInputsHash(o);
+/**
+ * A calibration factor this much off the one the marks were staged at means staging again: the
+ * spots, distances and framing were judged at the wrong scale. Below it the marks are rescaled.
+ */
+export const RESTAGE_FACTOR_CHANGE = 0.1;
+
+/**
+ * The report still applies to this world and scene; with `factor` (the world's current
+ * calibration), also to its scale within RESTAGE_FACTOR_CHANGE.
+ */
+export function stagingCurrent(
+  report: StagingReport,
+  o: { worldId?: string; scene: ScenePlan; characters: Character[]; factor?: number },
+): boolean {
+  if (report.version !== STAGING_VERSION || report.worldId !== o.worldId || report.inputsHash !== stagingInputsHash(o)) return false;
+  return o.factor === undefined || Math.abs(o.factor / (report.factor > 0 ? report.factor : 1) - 1) <= RESTAGE_FACTOR_CHANGE;
 }
 
 /**
  * The blocking a manifest should carry: the staged marks when the report is current and staged,
- * rescaled from the factor they were staged at to the world's current one; else undefined (keep
- * the planner's).
+ * rescaled from the factor they were staged at to the world's current one (within
+ * RESTAGE_FACTOR_CHANGE); else undefined (keep the planner's until it is staged again).
  */
 export function stagedBlocking(
   report: StagingReport | undefined,
   o: { asset: WorldAsset; scene: ScenePlan; characters: Character[] },
 ): Blocking[] | undefined {
-  if (!report || report.status !== 'staged' || !stagingCurrent(report, { worldId: o.asset.worldId, scene: o.scene, characters: o.characters })) return undefined;
-  const k = calibrationFactor(o.asset) / (report.factor > 0 ? report.factor : 1);
+  const factor = calibrationFactor(o.asset);
+  if (!report || report.status !== 'staged' || !stagingCurrent(report, { worldId: o.asset.worldId, scene: o.scene, characters: o.characters, factor })) return undefined;
+  const k = factor / (report.factor > 0 ? report.factor : 1);
   if (Math.abs(k - 1) < 1e-9) return report.blocking;
   return report.blocking.map((b) => ({ ...b, position: [round3(b.position[0] * k), b.position[1], round3(b.position[2] * k)] as Vec3 }));
 }
@@ -476,7 +500,8 @@ export async function renderStagingBeforeAfter(worldDir: string, report: Staging
     // a seated body's feet are on the floor beside the seat (the ground there is the seat itself)
     const sitting = b.pose === 'sitting';
     const y = sitting ? (nearestMark(report.marks, x, z)?.mark.y ?? 0) : yOf(b);
-    return { x, z, y, yaw: b.yaw, label, tint, ...(sitting ? { pose: 'sitting' as const } : {}) };
+    const tall = o.characters?.find((c) => c.id === b.characterId)?.heightMeters;
+    return { x, z, y, yaw: b.yaw, label, tint, ...(tall ? { heightMeters: tall } : {}), ...(sitting ? { pose: 'sitting' as const } : {}) };
   };
   const ring = (b: Blocking, label: string, color: string): ScaleMark => {
     const [x, z] = at(b);

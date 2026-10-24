@@ -263,7 +263,7 @@ describe('stageScene', () => {
     expect(report.blocking).toEqual(scene().blocking);
   });
 
-  it('rescales staged marks to a later calibration factor and drops them when the scene changed', () => {
+  it('rescales staged marks to a slightly different calibration factor; a big change, another scene or world drops them', () => {
     const report = {
       schema: 'previz.staging/1',
       version: 1,
@@ -273,8 +273,10 @@ describe('stageScene', () => {
       inputsHash: stagingInputsHash({ worldId: 'w-1', scene: scene(), characters }),
       blocking: [{ characterId: 'maya', position: [-1, 0, -3], yaw: 0, pose: 'standing' }],
     } as unknown as StagingReport;
-    const asset = { worldId: 'w-1', scaleCalibration: { factor: 1.2 } } as WorldAsset;
-    expect(stagedBlocking(report, { asset, scene: scene(), characters })![0]!.position).toEqual([-1.2, 0, -3.6]);
+    const asset = { worldId: 'w-1', scaleCalibration: { factor: 1.05 } } as WorldAsset;
+    expect(stagedBlocking(report, { asset, scene: scene(), characters })![0]!.position).toEqual([-1.05, 0, -3.15]);
+    // a bigger correction (the rooftop's x0.778) means staging again: until then, the planner's
+    expect(stagedBlocking(report, { asset: { ...asset, scaleCalibration: { factor: 0.778 } } as WorldAsset, scene: scene(), characters })).toBeUndefined();
     expect(stagedBlocking(report, { asset, scene: scene({ action: 'rewritten' }), characters })).toBeUndefined();
     expect(stagedBlocking(report, { asset: { ...asset, worldId: 'w-2' }, scene: scene(), characters })).toBeUndefined();
   });
