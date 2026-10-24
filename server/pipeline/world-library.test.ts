@@ -87,4 +87,19 @@ describe('copyLibraryWorld', () => {
     expect(await readFile(join(out, 'world_500k.spz'), 'utf8')).toBe('bytes of world_500k.spz');
     expect(JSON.parse(await readFile(join(out, ASSET_FILE), 'utf8'))).toEqual(asset);
   });
+
+  it('carries the ground field; a missing ground.json only drops the reference', async () => {
+    const ground = { file: 'ground.json', cell: 0.25, covered: 90, cells: 100 };
+    const dir = await writeLibraryWorld(lib, 'rooftop-dusk', { ...LIBRARY_ASSET, ground });
+    await writeFile(join(dir, 'ground.json'), '{"field":1}');
+    const out = join(lib, 'project', 'scene-1', 'world');
+    const asset = await copyLibraryWorld((await findLibraryWorld(lib, 'ext-rooftop-dusk'))!, out);
+    expect(asset.ground).toEqual(ground);
+    expect(await readFile(join(out, 'ground.json'), 'utf8')).toBe('{"field":1}');
+
+    const bare = await writeLibraryWorld(lib, 'kitchen-morning', { ...LIBRARY_ASSET, ground });
+    expect(existsSync(join(bare, 'ground.json'))).toBe(false);
+    const found = await findLibraryWorld(lib, 'int-kitchen-morning');
+    expect(found?.asset).toEqual(LIBRARY_ASSET);
+  });
 });
