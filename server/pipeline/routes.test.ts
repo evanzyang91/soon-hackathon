@@ -123,3 +123,41 @@ describe('pipeline routes', () => {
     expect(await (await fetch(`${base}/api/rooms/new`)).text()).toBe('not found');
   });
 });
+
+describe('localOnlySpend', () => {
+  it('refuses POSTs that come through a proxy or tunnel; local POSTs and GETs pass', async () => {
+    const guarded = createPipelineHandler(() => store, { localOnlySpend: true });
+    const srv = createServer(async (req, res) => {
+      if (await guarded(req, res, new URL(req.url ?? '/', 'http://x'))) return;
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const b = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+      const viaTunnel = await fetch(b + api.projects, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.7' },
+        body: JSON.stringify({ screenplay: FIXTURE }),
+      });
+      expect(viaTunnel.status).toBe(403);
+      const forwarded = await fetch(b + api.projects, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '192.168.1.40' },
+        body: '{}',
+      });
+      expect(forwarded.status).toBe(403);
+      // Local: reaches validation (400), not the guard.
+      const local = await fetch(b + api.projects, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(local.status).toBe(400);
+      const read = await fetch(b + api.projects, { headers: { 'x-forwarded-for': '192.168.1.40' } });
+      expect(read.status).toBe(200);
+    } finally {
+      await new Promise((r) => srv.close(r));
+    }
+  });
+});

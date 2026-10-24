@@ -17,6 +17,8 @@ export const env = {
   calibrate: process.env.CALIBRATE !== '0',
   /** The Claude-vision half of calibration (renders + 2 requests, ~$0.1/world); CALIBRATE_VISION=0 skips it. */
   calibrateVision: process.env.CALIBRATE_VISION !== '0',
+  /** Let phones / tunnels start paid pipeline work (POST /api/projects/…); off by default. */
+  allowRemoteSpend: flag(process.env.ALLOW_REMOTE_SPEND),
   keys: {
     marble: process.env.WLT_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',
@@ -33,7 +35,8 @@ export const env = {
     process.env.WORLD_LIBRARY_DIR ?? fileURLToPath(new URL('../data/marble/', import.meta.url)),
   /** Pre-built LHM avatars reused by live projects (server/pipeline/actor-library.ts). */
   actorsLibraryDir:
-    process.env.ACTORS_LIBRARY_DIR ?? fileURLToPath(new URL('../data/actors-library/', import.meta.url)),
+    process.env.ACTORS_LIBRARY_DIR ??
+    fileURLToPath(new URL('../data/actors-library/', import.meta.url)),
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */

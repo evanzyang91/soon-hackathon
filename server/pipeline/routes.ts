@@ -2,6 +2,7 @@
 // path; we return false for anything that is not ours so it can 404.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
+import { env } from '../env.ts';
 import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
@@ -81,10 +82,23 @@ function validate<T>(schema: z.ZodType<T>, data: unknown): T {
   return r.data;
 }
 
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * True for a request made on this machine. A tunnel (cloudflared, ngrok) also connects from
+ * loopback, so a forwarding header marks the request as remote.
+ */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  const h = req.headers;
+  if (h['x-forwarded-for'] || h['cf-connecting-ip'] || h['forwarded']) return false;
+  return LOOPBACK.has(req.socket.remoteAddress ?? '');
+}
+
 /** Builds a handler bound to a store (tests use their own; the server uses the env default). */
 export function createPipelineHandler(
   getStore: () => ProjectStore,
-  opts: { resume?: boolean } = {},
+  /** localOnlySpend: POSTs (which can call paid providers) are refused unless isLocalRequest. */
+  opts: { resume?: boolean; localOnlySpend?: boolean } = {},
 ) {
   let resumed: Promise<unknown> | undefined;
   return async function handle(
@@ -95,6 +109,11 @@ export function createPipelineHandler(
     // ['api', 'projects', id?, 'retry'?] or ['api', 'projects', id, 'actors', characterId, 'rebuild']
     const parts = url.pathname.replace(/\/+$/, '').split('/').slice(1);
     if (parts[0] !== 'api' || parts[1] !== 'projects') return false;
+    // Phones and tunnels share the LAN origin; only the laptop itself may start paid work.
+    if (opts.localOnlySpend && req.method === 'POST' && !isLocalRequest(req)) {
+      send(res, 403, { error: 'paid actions are only allowed from the laptop running the server' });
+      return true;
+    }
     // GET / PUT /api/projects/:id/scenes/:n/edits (look + scene edits, server/pipeline/edits.ts)
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
     // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
@@ -158,7 +177,10 @@ export function createPipelineHandler(
   };
 }
 
-export const handlePipelineRequest = createPipelineHandler(defaultStore, { resume: true });
+export const handlePipelineRequest = createPipelineHandler(defaultStore, {
+  resume: true,
+  localOnlySpend: !env.mock && !env.allowRemoteSpend,
+});
 
 /**
  * Optional: call once at boot so interrupted pipelines (e.g. a Marble job mid-poll) resume
