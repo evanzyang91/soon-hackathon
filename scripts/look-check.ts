@@ -5,6 +5,7 @@
 //   npx tsx scripts/look-check.ts <check> --base https://localhost:5411 --project <id> [--scene 0]
 //     [--before https://localhost:5412]  (identity: a server running the pre-look commit)
 //     [--out dir] [--docs]               (--docs also writes docs/images/look-*.png)
+//     [--exe <chromium executable>]      (default: Playwright's own Chromium)
 //
 // checks:
 //   identity  default look vs the pre-change build (--before) and vs the forced post pass:
@@ -504,7 +505,13 @@ async function main() {
   const docs = o.docs === '1';
   // --uncapped: no vsync / frame-rate limit, so fps shows the real headroom instead of 60
   const extra = o.uncapped === '1' ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : [];
-  const browser = await chromium.launch({ channel: 'chromium', headless: true, args: [...GPU_ARGS, ...extra] });
+  // --exe: a specific Chromium build (e.g. ~/Library/Caches/ms-playwright/chromium-1243/...)
+  const browser = await chromium.launch({
+    ...(o.exe ? { executablePath: o.exe } : { channel: 'chromium' }),
+    headless: true,
+    args: [...GPU_ARGS, ...extra],
+  });
+  console.error(`chromium ${browser.version()}`);
   const results: Record<string, unknown> = {};
   try {
     const run = (c: string) => check === 'all' || check === c;
