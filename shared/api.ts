@@ -52,6 +52,12 @@
 //
 // Manifest URL shape: /projects/<id>/scene-<index>/manifest.json
 // Edits file:         /projects/<id>/scene-<index>/edits.json
+// POST   /api/projects/:id/uploads  also accepts model/gltf-binary (.glb, 'glTF' magic) ≤ 25 MB → { file: "uploads/<sha16>.glb" }
+// POST   /api/projects/:id/props/generate       body { prompt, sceneIndex } → 202 PropJob (shared/schema.ts PropJob):
+//                                                     an image of the object (OpenAI image) → image-to-3D on Modal → props/<jobId>/model.glb;
+//                                                     MOCK / no keys: a bundled sample .glb after a short delay
+// GET    /api/projects/:id/props/:jobId          → PropJob (status pending | running | done | failed, model when done)
+// Prop files:         /projects/<id>/props/<jobId>/model.glb · /projects/<id>/uploads/<sha16>.glb
 // GET    /api/projects/:id/scenes/:n/shots            → ShotList (shared/shots.ts); 200 with defaults when absent
 // PUT    /api/projects/:id/scenes/:n/shots            body ShotList (revision must match, else 409 with the current list)
 // PUT    /api/projects/:id/scenes/:n/shots/:shotId/frame   raw image/jpeg ≤ 600 KB → ShotList (that shot's `frame` set)
@@ -70,6 +76,9 @@ export const api = {
   plan: (id: string) => `/projects/${id}/plan.json`,
   editsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/edits.json`,
   /** Shot list (shared/shots.ts): GET → ShotList (defaults when absent) · PUT body ShotList (revision-checked, 409 on mismatch). */
+  /** POST { prompt, sceneIndex } → 202 PropJob; GET propJob(id, jobId) polls it. */
+  propsGenerate: (id: string) => `/api/projects/${id}/props/generate`,
+  propJob: (id: string, jobId: string) => `/api/projects/${id}/props/${encodeURIComponent(jobId)}`,
   shots: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/shots`,
   shotsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/shots.json`,
   /** PUT raw image/jpeg ≤ SHOT_FRAME_MAX_BYTES → the ShotList with `frame` set on that shot; the file is served at shotFrameFile. */
