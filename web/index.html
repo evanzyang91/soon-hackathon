@@ -15,7 +15,7 @@
         class="top-icon"
         data-testid="drawer-toggle"
         aria-expanded="true"
-        title="Show / hide the projects drawer: new project, every project and its scenes ( [ )"
+        title="Show / hide the projects drawer: the project chat, every project and its scenes ( [ )"
       >
         ☰
       </button>
@@ -46,32 +46,8 @@
     </header>
 
     <aside id="left" class="panel drawer" aria-label="Projects">
-      <section class="card">
-        <h2>New project</h2>
-        <input id="pp-title" placeholder="Title (optional)" data-testid="title" title="Project title (optional)" />
-        <textarea
-          id="pp-screenplay"
-          rows="10"
-          spellcheck="false"
-          placeholder="Paste a screenplay (Fountain or plain text)…"
-          data-testid="screenplay"
-        ></textarea>
-        <div class="row">
-          <button id="pp-sample" type="button" title="Fill in the sample screenplay (The Last Bus)">Sample</button>
-          <span class="spacer"></span>
-          <button
-            id="pp-generate"
-            class="primary"
-            type="button"
-            data-testid="generate"
-            title="Plan the scenes, then build their worlds, actors and voices"
-          >
-            Generate
-          </button>
-        </div>
-        <div id="pp-status" class="muted small"></div>
-      </section>
-      <section class="card grow">
+      <!-- the project chat (chat-panel.ts) docks above this list while a scene is open -->
+      <section id="pp-card" class="card grow projects-card">
         <h2>Projects</h2>
         <div id="pp-list" data-testid="projects"></div>
       </section>
@@ -90,7 +66,7 @@
       </div>
       <div id="hud-empty" class="hud-center">
         <h1>Previz Stage</h1>
-        <p>Paste a screenplay in the projects drawer (☰) and press Generate, or open a ready scene.</p>
+        <p>Open a ready scene from the projects drawer (☰), or start a new project in the chat.</p>
       </div>
       <div id="hud-loading" class="hud-center small" hidden></div>
       <div id="pip-frame" hidden><span id="pip-label"></span></div>

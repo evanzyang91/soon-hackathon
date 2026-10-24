@@ -297,6 +297,16 @@ button.icon {
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.project-head:hover strong {
+  color: var(--accent);
+}
+/* the project whose thread the chat shows */
+.project.chatting {
+  box-shadow: inset 2px 0 0 var(--accent);
+  padding-left: 6px;
 }
 .project-head strong {
   flex: 1;

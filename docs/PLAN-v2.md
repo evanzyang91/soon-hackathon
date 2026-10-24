@@ -58,6 +58,55 @@ are strictly more accurate. Scope: SwiftUI + ARKit app that joins the same relay
 shared, and offers re-centre / shutter / record. Generated with xcodegen; **compiles only once Xcode is
 installed** (pending the macOS upgrade); until then it ships as reviewed source.
 
+## 5. Project chat
+
+The screenplay box is the first message of a conversation about the project (contract:
+`shared/chat.ts`, routes in `shared/api.ts`). **Send** plans it as a draft (only the parse stage runs,
+nothing is spent) and the assistant answers with a plan card; the director amends it in words, attaches
+photos of the people and places, and starts the build with **Generate**. After generation the same
+thread continues: changes rebuild an actor, re-voice lines, or wait for a confirmed world regeneration.
+
+**Where it lives.** With no scene open the chat fills the viewport (big and readable; it is the first
+thing a new director sees). Once a scene opens it docks in the projects drawer above the project list,
+and the drawer widens to 452 px over the viewport while the chat is in use (the canvas keeps its size, so
+the splats are not re-laid out on every keystroke). Clicking the viewport or a right-hand tab narrows it
+again. The same DOM node moves between the two places, so a half-typed message, its photos and the
+scroll position survive the move. The four right tabs, the drawer toggle `[` and every viewport
+shortcut keep working. The shortcuts are ignored while typing in the chat.
+
+| Part | What it shows / does |
+| --- | --- |
+| Thread | User bubbles (the screenplay collapsed to its first lines, photo thumbnails captioned with their target); assistant bubbles with the reply, the planner (`mock` / `claude`) and its cost |
+| Plan card | Title; the cast (photo or initial, height, voice, description); the scenes (Marble thumbnail or the set photo, heading, time of day, world prompt, stage chips once generating; a ready scene opens on click); a prominent **Generate N scenes** while the project is a draft. Only the latest plan card is drawn in full; older ones collapse to a line |
+| Action cards | One per `ChatAction`: kind, status chip (applied / needs confirm / running / done / failed / skipped), summary, `before → after` of a plan patch, effect, note, cost, the photo it used; **Confirm** on needs-confirm (POST chat/confirm) and **Not now** (`decline: true` → skipped) |
+| Composer | Auto-growing box. A new project's screenplay takes Enter as a newline (⌘Enter sends); in a thread Enter sends and Shift+Enter adds a newline. Attach button, drag-and-drop and paste of images; chips with a thumbnail, the prepared size and a target picker (none / each character / each scene → the request's `hint`: `character:<id>`, `scene:<0-based index>` labelled “Scene 1…”); Sample; **Send** and **Generate** (first message: the pre-chat Generate, everything at once; later: POST /generate after sending what was typed) |
+| States | "Thinking" / "Uploading photo 1 of 2" placeholder while a request runs, composer read-only; errors inline with the message given back to the composer; "Reading the screenplay" while the draft parses |
+
+Images are decoded, downscaled to ≤ 1600 px on the long side and re-encoded as PNG in the browser
+before upload (inputs over 40 MB are refused before decoding, results over the server's 12 MB limit
+after). Photos attached to the very first message are uploaded once the draft exists and sent as the
+second message, after the plan is read: uploads need a project id. Their character targets, picked from
+the screenplay's cue names before any plan existed, are mapped to the plan's ids.
+
+The thread is server state: a draft's thread is seeded by the server (screenplay + plan card), and every change, action status included, bumps `ProjectStatus.chatRevision`; the laptop refetches when it changes, polled with the project
+list (every 1.5 s while the draft parses, a request or an action runs). A project without a thread (created
+by the pre-chat Generate) still gets the screenplay bubble and its plan card from `plan.json`; the
+server's messages win whenever there are any. Opening a scene
+switches the chat to that scene's project. So does clicking a project's name in the list, and **+ New**
+starts another. A draft in progress comes back after a reload.
+
+`?fakechat=1` runs the chat on an in-memory server (`web/src/laptop/chat-fake.ts`): the MOCK planner
+rules, the real offline parser, simulated generation and regeneration; real projects stay listed and can
+be chatted with without anything reaching the server. The evidence below is that fake in headless
+Chromium (`tests/e2e/chat.spec.ts` drives the same flow against the real MOCK server).
+
+![empty state](images/chat-empty.png)
+![plan card after Send](images/chat-plan.png)
+![applied plan changes](images/chat-applied.png)
+![attachment target picker](images/chat-attach-target.png)
+![world regeneration waiting for Confirm](images/chat-confirm.png)
+![docked next to an open scene, widened while in use](images/chat-docked.png)
+
 ## Work packages
 
 | WP | Scope | Owns |
@@ -67,3 +116,4 @@ installed** (pending the macOS upgrade); until then it ships as reviewed source.
 | H ux | Direct manipulation, panel shell/IA, onboarding, keyboard | `web/src/laptop/**` shell, `web/src/viewer/manipulate/**` |
 | I arkit | iOS app source (xcodegen), pose bridge, docs | `ios/**` |
 | E2 verify | e2e for look parity + scoped edits (mock planner), real-key smoke, fresh-clone gate | tests |
+| WP6 chat UI | Project chat on the laptop: thread, plan card, action cards, composer with photo targets, fake chat server | `web/src/laptop/chat-*.ts`, `chat-panel.css`, `projects-panel.ts`, `tests/e2e/chat.spec.ts` |
