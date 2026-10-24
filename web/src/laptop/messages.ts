@@ -70,13 +70,16 @@ export interface CameraPose {
 }
 
 /**
- * Where the phone camera is in the world: the attached drop camera's position plus the handheld
- * nudge; orientation comes straight from the phone (already world frame after re-center).
+ * Where the phone camera is in the world: the attached drop camera's position plus the phone's
+ * joystick walk offset plus the handheld nudge; orientation comes straight from the phone
+ * (already world frame after re-center). Drives the gizmo, the PiP and "View from phone".
  */
 export function phoneCameraPose(pose: PhonePose, anchor: Vec3): CameraPose {
   const fov = Number.isFinite(pose.fovDeg) ? Math.min(120, Math.max(5, pose.fovDeg)) : 60;
+  const o = pose.offset ?? [0, 0, 0];
+  const n = pose.nudge;
   return {
-    position: [anchor[0] + pose.nudge[0], anchor[1] + pose.nudge[1], anchor[2] + pose.nudge[2]],
+    position: [anchor[0] + o[0] + n[0], anchor[1] + o[1] + n[1], anchor[2] + o[2] + n[2]],
     quaternion: normalizeQuat(pose.q),
     fovDeg: fov,
   };

@@ -48,6 +48,8 @@ export function bindUi() {
     glCanvas,
     vfCanvas,
     stage: $('stage'),
+    joystick: { zone: $('joystick'), base: $('joy-base'), knob: $('joy-knob') },
+    height: { zone: $('height'), knob: $('height-knob') },
 
     startError(msg: string) {
       $('start-error').textContent = msg;
@@ -83,6 +85,11 @@ export function bindUi() {
     },
     setAttitude(text: string) {
       $('attitude').textContent = text;
+    },
+    /** How far the joystick has walked the camera from its anchor ('' hides it). */
+    setWalkReadout(text: string) {
+      const el = $('walk-readout');
+      if (el.textContent !== text) el.textContent = text;
     },
     setRecording(on: boolean) {
       recBtn.setAttribute('aria-pressed', String(on));
