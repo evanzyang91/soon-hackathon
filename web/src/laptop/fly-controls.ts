@@ -1,10 +1,15 @@
-// Director fly camera: WASD + QE, Shift = fast, right-drag or pointer-lock (double-click) to look,
-// wheel = field of view. Orientation is kept as YXZ Euler so roll from a dropped camera survives.
+// Director fly camera: WASD + QE, Shift = fast, right-drag, left-drag on empty space or
+// pointer-lock (double-click) to look, wheel = field of view. Orientation is kept as YXZ Euler so
+// roll from a dropped camera survives. A left press that `claimLeft` claims (an object or handle
+// under the pointer: viewer/manipulate) is not a look; a left drag that looked swallows its click,
+// so click tools (select, pick focus) do not fire at the end of a look.
 import * as THREE from 'three';
 import { isTyping } from './dom';
 
 const KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight'] as const;
 const PITCH_LIMIT = THREE.MathUtils.degToRad(89);
+/** A left press becomes a look after moving this far (px); shorter is a click. */
+const LEFT_DRAG_PX = 4;
 
 interface Flight {
   from: THREE.Vector3;
@@ -23,9 +28,15 @@ export class FlyControls {
   lookSensitivity = 0.0025;
   enabled = true;
   onChange: (() => void) | null = null;
+  /** True when a left press belongs to someone else (the manipulator's objects and handles). */
+  claimLeft: ((e: PointerEvent | MouseEvent) => boolean) | null = null;
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly down = new Set<string>();
   private dragging = false;
+  /** Button that started the look drag (0 left, 2 right). */
+  private dragButton = -1;
+  private leftArmed: { id: number; x: number; y: number } | null = null;
+  private swallowClick = false;
   private flight: Flight | null = null;
   private readonly cleanup: (() => void)[] = [];
 
@@ -54,19 +65,68 @@ export class FlyControls {
     on(window, 'blur', () => this.down.clear());
     on(dom, 'contextmenu', (e) => e.preventDefault());
     on(dom, 'pointerdown', (e) => {
-      if (!this.enabled || e.button !== 2) return;
-      this.dragging = true;
-      dom.setPointerCapture(e.pointerId);
+      this.swallowClick = false;
+      if (!this.enabled) return;
+      if (e.button === 2) {
+        this.dragging = true;
+        this.dragButton = 2;
+        dom.setPointerCapture(e.pointerId);
+      } else if (e.button === 0 && !e.altKey && !this.claimLeft?.(e)) {
+        this.leftArmed = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      }
     });
     on(dom, 'pointerup', (e) => {
-      if (e.button !== 2) return;
-      this.dragging = false;
+      if (e.button === 0) {
+        if (this.dragButton === 0) {
+          this.dragging = false;
+          this.dragButton = -1;
+          this.swallowClick = true;
+        }
+        this.leftArmed = null;
+      } else if (e.button === 2 && this.dragButton === 2) {
+        this.dragging = false;
+        this.dragButton = -1;
+      } else return;
       if (dom.hasPointerCapture(e.pointerId)) dom.releasePointerCapture(e.pointerId);
     });
+    on(dom, 'pointercancel', () => {
+      this.dragging = false;
+      this.dragButton = -1;
+      this.leftArmed = null;
+    });
     on(dom, 'pointermove', (e) => {
+      const arm = this.leftArmed;
+      if (arm && !this.dragging) {
+        if (!(e.buttons & 1)) {
+          this.leftArmed = null;
+          return;
+        }
+        if (Math.hypot(e.clientX - arm.x, e.clientY - arm.y) < LEFT_DRAG_PX) return;
+        this.dragging = true;
+        this.dragButton = 0;
+        try {
+          dom.setPointerCapture(arm.id);
+        } catch {
+          // the pointer is gone; the drag still looks while it lasts
+        }
+      }
       if (this.dragging || document.pointerLockElement === dom) this.look(e.movementX, e.movementY);
     });
-    on(dom, 'dblclick', () => {
+    // the click that ends a left look-drag is not a click (capture on window: before any tool)
+    on(
+      window,
+      'click',
+      (e) => {
+        if (!this.swallowClick || e.target !== dom) return;
+        this.swallowClick = false;
+        e.stopPropagation();
+        e.preventDefault();
+      },
+      { capture: true },
+    );
+    on(dom, 'dblclick', (e) => {
+      // a double-click on an object is the manipulator's, not mouselook
+      if (this.claimLeft?.(e)) return;
       // the promise rejects if the user dismisses the lock; that is not an error worth logging
       if (this.enabled && document.pointerLockElement !== dom)
         Promise.resolve(dom.requestPointerLock?.()).catch(() => {});
