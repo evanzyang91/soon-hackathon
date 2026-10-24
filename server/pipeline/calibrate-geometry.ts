@@ -74,9 +74,13 @@ export interface FrameInfo {
   opencvFrame?: boolean;
 }
 
-/** Raw collider triangles → world metres with the viewer's transform (× `factor`). */
+/**
+ * Raw collider triangles → world metres with the viewer's transform (× `factor`), always in
+ * Marble's declared floor frame: a stored floorOffsetMeters is ignored, so measuring a world again
+ * finds the same offset instead of zero.
+ */
 export function metricTriangles(raw: Float32Array, frame: FrameInfo, factor = 1): Float32Array {
-  const t = worldTransform({ ...frame, scaleCalibration: { factor } });
+  const t = worldTransform({ ...frame, scaleCalibration: { factor }, floorOffsetMeters: 0 });
   const out = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i += 3) {
     const p = applyWorldTransform(t, [raw[i]!, raw[i + 1]!, raw[i + 2]!]);
