@@ -12,11 +12,14 @@
 //   pnpm tsx server/pipeline/cli.ts calibrate <worldDir> [--write] [--no-vision] [--interior|--exterior]
 //                                  [--before-after out.png] [--views dir] [--reuse]
 //       Measures the world's real scale (collider references + Claude vision with 1.70 m
-//       mannequins, see calibrate.ts) and the visible splat ground (floorOffsetMeters, at the
-//       blocking marks of ../manifest.json when there is one) and prints the report. --write
-//       stores both in world-asset.json, the world-library copy with the same world id and
-//       ../manifest.json. --reuse takes the last scale-calibration.json instead of measuring the
-//       scale (no Claude call); the splat ground is always measured again (local, ~2 s).
+//       mannequins, see calibrate.ts), the visible splat ground (floorOffsetMeters, at the
+//       blocking marks of ../manifest.json when there is one) and the ground height field
+//       (calibrate-ground.ts) and prints the report. --write stores all three in world-asset.json
+//       (+ ground.json), the world-library copy with the same world id and ../manifest.json.
+//       --reuse takes the last scale-calibration.json instead of measuring the scale (no Claude
+//       call); the splat ground and the field are always measured again (local, ~2 s). So
+//       `calibrate <project>/scene-<n>/world --reuse --no-vision --write` refreshes an existing
+//       scene's ground (ground.json + its manifest) offline.
 //   generate-world / run also calibrate the new world unless --no-calibrate (or CALIBRATE=0).
 //   pnpm tsx server/pipeline/cli.ts stage <projectDir> <sceneIndex> [--write] [--reuse]
 //                                  [--before-after out.png] [--views dir] [--report out.json]
@@ -40,6 +43,7 @@ import {
   withGround,
   writeCalibration,
 } from './calibrate.ts';
+import { describeField, groundField } from './calibrate-ground.ts';
 import { readJson } from './fsutil.ts';
 import { ScreenplayPlan } from '../../shared/schema.ts';
 import {
@@ -181,10 +185,16 @@ async function main() {
       console.log(formatReport(report, dir));
       const views = str(flags.views);
       if (views) await writeFile(resolve(views, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+      let written = asset;
       if (flags.write === true) {
-        await writeCalibration(worldDir, report, { libraryDir: env.worldLibraryDir, manifest: true, log });
-        log(`wrote scaleCalibration ×${report.calibration.factor} (${report.calibration.confidence}), floorOffsetMeters ${report.floorOffsetMeters ?? '—'} to ${dir}`);
+        written = await writeCalibration(worldDir, report, { libraryDir: env.worldLibraryDir, manifest: true, log, marks });
+        log(`wrote scaleCalibration ×${report.calibration.factor} (${report.calibration.confidence}), floorOffsetMeters ${report.floorOffsetMeters ?? '—'}, ground ${written.ground ? `${written.ground.file} (${written.ground.covered}/${written.ground.cells} cells)` : '—'} to ${dir}`);
       }
+      const field = await groundField(worldDir, written, { marks }).catch((e: Error) => {
+        log(`ground field not measured: ${e.message}`);
+        return null;
+      });
+      console.log(describeField(field, written, marks));
       const ba = str(flags['before-after']);
       if (ba) {
         // --reuse: the stored decision (old rule) on the left, the re-decided one on the right
