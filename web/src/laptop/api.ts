@@ -1,5 +1,6 @@
 import { api } from '@shared/api';
-import type { ActorDetail, ProjectStatus } from '@shared/schema';
+import type { Attachment, ChatRequest, ChatResponse, ProjectChat } from '@shared/chat';
+import type { ActorDetail, ProjectStatus, ScreenplayPlan } from '@shared/schema';
 
 export interface Health {
   ok: boolean;
@@ -49,3 +50,49 @@ export const newRoom = (keep?: string) =>
   fetch(keep ? `${api.newRoom}?room=${encodeURIComponent(keep)}` : api.newRoom).then((r) =>
     json<{ room: string; phoneUrl: string }>(r),
   );
+
+// ---- project chat (shared/chat.ts; chat-client.ts wraps these with image preparation) -----------
+
+/** JSON or a readable error: the server's `error` text when it sent one, plus the HTTP status. */
+async function call<T>(url: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    throw new Error('The server is not reachable.');
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    const why = body?.error ?? (res.status === 404 ? 'not found' : res.statusText || 'request failed');
+    throw new Error(`${why} (HTTP ${res.status})`);
+  }
+  return (await res.json()) as T;
+}
+
+const postJson = <T>(url: string, body: unknown) =>
+  call<T>(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+/**
+ * draft: only the parse stage runs until /generate (the chat-first flow); the server seeds the
+ * thread with the screenplay and the plan card. Photos follow as the next chat message.
+ */
+export const createDraftProject = (screenplay: string, title?: string) =>
+  postJson<ProjectStatus>(api.projects, { screenplay, draft: true, ...(title ? { title } : {}) });
+
+/** The ScreenplayPlan, once parse is done (it does not exist before). */
+export const getPlan = (id: string) => call<ScreenplayPlan>(api.plan(id));
+
+/** Raw image upload (PNG / JPEG / WebP body, ≤ 12 MB) → Attachment (201). */
+export const uploadAttachment = (id: string, body: Blob, name: string) =>
+  call<Attachment>(`${api.uploads(id)}?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: { 'content-type': body.type || 'image/png' },
+    body,
+  });
+
+export const getChat = (id: string) => call<ProjectChat>(api.chat(id));
+export const sendChat = (id: string, req: ChatRequest) => postJson<ChatResponse>(api.chat(id), req);
+/** Runs a needs-confirm action, or with `decline` marks it skipped. */
+export const confirmChatAction = (id: string, messageId: string, actionId: string, decline = false) =>
+  postJson<ChatResponse>(api.chatConfirm(id), { messageId, actionId, ...(decline ? { decline } : {}) });
+export const generateProject = (id: string) => postJson<ProjectStatus>(api.generate(id), {});

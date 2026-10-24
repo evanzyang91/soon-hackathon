@@ -31,7 +31,8 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   const tall = Object.fromEntries(s.actors.map((a) => [a.id, a.heightMeters ?? 0]));
   expect(tall.theo).toBeGreaterThan(tall.maya! + 0.05);
   await expect(page.getByTestId('actor-height')).toHaveCount(2);
-  await expect(page.getByTestId('scene-row')).toHaveCount(3);
+  // (this project's rows: specs that run earlier, e.g. chat.spec, leave projects in the list)
+  await expect(page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`)).toHaveCount(3);
   await expect(page.locator('#hud-title')).toHaveText('EXT. CITY STREET - NIGHT');
 
   // frames keep coming at 1280x720; report the software-GL frame rate
