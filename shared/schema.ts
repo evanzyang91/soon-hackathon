@@ -124,9 +124,16 @@ export const WorldAsset = z.object({
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 
+/**
+ * Set on assets produced by an offline/free fallback (mannequin, beep audio) while real keys were
+ * present, so the pipeline knows a retry may upgrade them and never caches them as final.
+ */
+const Fallback = { fallback: z.boolean().optional() };
+
 export const ActorAsset = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('splat-sequence'),
+    ...Fallback,
     characterId: z.string(),
     /** Directory containing sequence.json (Orbis wander.person-motion/1 compatible) + PLY frames. */
     sequenceDir: z.string(),
@@ -137,7 +144,9 @@ export const ActorAsset = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('glb-humanoid'),
+    ...Fallback,
     characterId: z.string(),
+    /** GLB path, or the marker `procedural:mannequin` for the built-in browser mannequin. */
     glb: z.string(),
     /** Animation clip names inside the GLB. */
     clips: z.object({ idle: z.string(), talk: z.string(), walk: z.string().optional() }),
@@ -147,6 +156,7 @@ export const ActorAsset = z.discriminatedUnion('kind', [
 export type ActorAsset = z.infer<typeof ActorAsset>;
 
 export const LineAudio = z.object({
+  ...Fallback,
   lineId: z.string(),
   url: z.string(), // mp3/wav relative to project root
   durationSeconds: z.number().nonnegative(),
