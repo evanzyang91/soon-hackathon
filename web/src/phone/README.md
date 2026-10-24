@@ -10,25 +10,46 @@ or a 2D viewfinder when 3D is unavailable. Pose streaming never depends on the 3
 | --- | --- |
 | move / turn the phone | pan, tilt, roll (orientation sensors) + handheld sway (accelerometer) |
 | **joystick** (bottom left, drag with the left thumb) | walk: up = forward, sideways = strafe, along the camera's heading (level, whatever the tilt); dead zone, eases up to 1.5 m/s |
-| double-tap the joystick | back to the attached camera (walk offset → 0) |
+| double-tap the joystick | back to the attached shot (walk offset → 0) |
 | **height slider** (right, next to the shutter) | drag up / down: raise / lower the camera, up to 0.5 m/s, ±2 m (never below 0.15 m) |
-| pinch | lens (24–90° vertical fov, "35mm" labels) |
-| **ACTION** / **CUT** (top right) | laptop "Play scene" (dialogue in order + scene clock) / stop it; shows CUT while the laptop runs the scene |
-| **Line ›** | laptop plays the line after the last one played (wraps to the first) |
-| **Recenter** | current heading → the attached camera's heading (keeps the walk offset) |
-| **Shutter**, **Record**, **Cam ›** | laptop frame (PNG), laptop take, next shot in the shot list (resets the walk offset) |
+| pinch | lens (24–90° vertical fov; the label shows the nearest prime, "35 mm") |
+| **camera button** (`#cam`, right edge, bottom) | the camera popover (below) |
+| swipe the label sideways | next (left) / previous (right) shot: `select-camera` |
+| **play** (`#play`, top right) | tap: laptop "Play scene" (dialogue in order + scene clock) / stop it, the icon shows pause while the laptop runs the scene; hold (550 ms): the laptop plays the line after the last one played (`next-line`, wraps to the first) |
+| **recenter** (crosshair icon) | current heading → the attached shot's heading (keeps the walk offset) |
+| **Shutter**, **Record** | laptop frame (PNG), laptop take |
 | `?sim=1`: drag, wheel, W A S D / arrows, Q / E (or Page Down / Up) | look, lens, walk, height |
+
+**The camera popover** (anchored to the camera button; a tap outside or Esc closes it, and that
+tap does nothing else): the scene's shots from `SceneState.cameras` in order, each as number ·
+name · lens (`shotNumber(sceneIndex, i)`, the camera name without its `1B · ` prefix,
+`lensLabel(fovDeg)`), the one the phone is on marked (the label leaves out a name that is only
+`Shot 1B`: `1B · 35 mm`); then
+**Handheld (free)** and **Add shot from here**. A shot sends `{ cmd: 'select-camera', cameraId }`,
+Handheld `cameraId: null`, Add shot `{ cmd: 'add-shot' }`; the popover closes on the pick and the
+laptop answers with the next `SceneState`. The laptop selects a picked shot as if its Shots row was
+clicked, and adds the phone's current view (its shot ⊕ walk offset, sway and orientation, at its
+lens) as the next shot through its own Add shot, which also puts the phone on it; the phone says
+`Shot 1F added` when that SceneState arrives. Handheld keeps the view where it is: the walk
+offset is re-based on the scene's start camera (the handheld anchor) with the heading and lens
+unchanged.
 
 The walk offset (metres, world frame) goes out in every pose as `PhonePose.offset`; phone camera
 = attached camera + offset + nudge, on the phone and on the laptop (gizmo, PiP, View from phone,
-stills). It resets to zero whenever the anchor camera changes (Cam ›, the laptop switching the
-active camera, another scene), and survives Recenter.
+stills). It resets to zero whenever the anchor camera changes to another shot (the popover, the
+laptop switching the active camera, another scene), is re-based when the phone goes handheld, and
+survives Recenter.
 
-HUD: room + link (top left); camera name, lens and scene clock (`▶ 0:04` / `⏸ 0:04`, top
-centre); ACTION + Line › (top right); the line being spoken (bottom centre); how far the
-joystick has walked (`↔ 2.3 m · ↑ 0.5 m from Cam 1`, above the joystick); render rate + governor
-level (`48 fps · full`, `3D paused`, `loading 3D…`, `2D viewfinder`, bottom right). A scene that
-finishes loading while paused shows "Laptop: press Play or tap ACTION to start the scene" for 2 s.
+HUD: one label top centre, the shot's number · name · lens (`1B · Two-shot · 35 mm`; off a shot
+`Handheld · 35 mm`; the lens follows the pinch), with the connection dot inside it (green: relay
+open and the laptop there; amber: connecting, reconnecting (blinking) or waiting for the laptop;
+red: closed; a toast when it changes after the start-up, and "Waiting for the laptop…" if it is
+not there after 4 s); the red time badge next to it while recording; play top right; recenter,
+shutter, record and the camera button down the right edge; the joystick and height slider without
+captions; the line being spoken (bottom centre); the rotate prompt in portrait. Toasts show under
+the label. The drag / pinch hint is a toast the first time manual look turns on (remembered in
+`localStorage['previz:phone-hint']`). `?perf=1` adds the render rate + governor level (`48 fps ·
+full`, `3D paused`, `loading 3D…`, `2D viewfinder`, bottom right).
 
 **Sound.** The actors speak on the phone too (positional, heard from the phone camera), in sync
 with the laptop's `speakingLineId`. iOS only starts audio inside a user gesture, so "Tap to start"
@@ -51,6 +72,7 @@ speakers are in the same room.
 ?voice=0          mute the actors on the phone (the laptop still plays them)
 ?ws=wss://…/ws    override the relay URL
 ?pose=external    the native ARKit app streams the pose; the page only renders (see below)
+?perf=1           show the render rate + governor level (bottom right)
 ```
 
 ## Native ARKit app (`?pose=external`)
@@ -77,10 +99,10 @@ relay message to the page. The page:
   non-finite fov, malformed `nudge` / `offset`) are dropped.
 - **leaves heading, fov and walk to the app**: a laptop `cmd: recenter` only shows a toast, and a
   new anchor camera does not reset fov / walk or recenter.
-- **hides** `#start`, `#joystick`, `#height`, `#controls`, `#top-right`, `#top-left`,
-  `#walk-readout`, `#hint` and `#rotate` (`body[data-pose="external"]` rules in `phone.html`; the
-  app draws its own overlay there). It keeps `#top-center` (camera, lens, clock, REC), `#caption`,
-  `#perf`, `#toast`, `#flash` and `#attitude`.
+- **hides** `#start`, `#joystick`, `#height`, `#controls`, `#play`, `#cam-menu`, `#conn` and
+  `#rotate` (`[data-pose="external"]` rules in `phone.html`; the app draws its own overlay there).
+  It keeps `#top` (the label: shot and lens; REC), `#caption`, `#toast` and `#flash` (`#perf` with
+  `?perf=1`), and shows no link toasts.
 - **audio**: the app passes `voice=0`. With `voice=1` the first `__previzPose` creates and resumes
   the AudioContext (the web view allows media without a gesture).
 - **page → app**: besides `ready`, it posts `{ type: 'log', message }` when the 3D view or a
@@ -128,7 +150,7 @@ to observe.
 | `walk.ts` / `joystick.ts`             | joystick walk math (heading, dead zone, ramp, height clamp) / its DOM + keys  |
 | `audio.ts`                            | AudioContext unlock inside the start tap, shared with three.js                |
 | `fov.ts` / `throttle.ts`              | pinch zoom (24–90°, "35mm" labels) / ≤ 30 Hz + 4 Hz keepalive                 |
-| `scene-sync.ts`                       | `SceneState` → anchor, caption, scene clock, ACTION / CUT (`DialogueActivity`)|
+| `scene-sync.ts`                       | `SceneState` → anchor, caption, shot list + label, play / pause (`DialogueActivity`) |
 | `relay-client.ts`                     | reconnecting WebSocket client (role-agnostic; the laptop can reuse it)        |
 | `render-governor.ts`                  | steps 3D quality down (down to paused) when rendering starves the pose stream; perf label |
 | `view.ts` / `viewfinder.ts`           | 3D render via `loadScene` / 2D fallback                                       |
@@ -177,7 +199,7 @@ await phone.evaluate(() =>
 | `renderLevel`, `renderMs`, `framesRendered`, `fps`               | governor level (0 full … 4 paused), JS cost per 3D frame, 3D frames drawn, 3D frames / s |
 | `offset`, `heading`, `walk`, `cameraPosition`                    | walk offset (m), walking heading (rad), stick input `{ x, y, rise }`, anchor + offset + nudge |
 | `cameraQuaternion`                                               | rendered camera orientation `[x, y, z, w]` (world frame)                  |
-| `sceneRunning`                                                   | the laptop runs the scene (ACTION shows CUT)                              |
+| `sceneRunning`, `label`                                          | the laptop runs the scene (play shows pause); the HUD label text          |
 | `audio`, `audioPlaying`, `lastLinePlayed`, `audioPeak`, `voice`  | AudioContext state (`'none'` before the tap), a voice playing now, last line voiced, loudest level of it (0..1, > 0 only when sound really flows), `?voice` |
 | `yawOffset`, `recording`, `permission`, `started`, `room`, `sim` | self-explanatory                                                          |
 | `start()`, `recenter()`, `setFov(deg)`, `resetWalk()`            | actions                                                                   |
@@ -190,11 +212,14 @@ test the non-sim permission path, call `context.grantPermissions(['accelerometer
 answers `denied` otherwise. Sim mode never asks.
 
 Without `autostart`, click `#start-button`. Other selectors: `#room-input`, `#recenter`,
-`#shutter`, `#record` (`aria-pressed`), `#next-cam`, `#action` (`aria-pressed` = CUT),
-`#next-line`, `#caption`, `#lens`, `#cam-name`, `#clock` (`data-playing`), `#perf`,
-`#walk-readout`, the joystick `#joystick` (zone; `data-active` while dragged) with `#joy-base` /
-`#joy-knob`, the height slider `#height` / `#height-knob`, and the `#gl` / `#vf` canvases
-(`body[data-view]` says which one is showing).
+`#shutter`, `#record` (`aria-pressed`), `#play` (`aria-pressed` = the laptop runs the scene),
+`#cam` (`aria-expanded`) and its popover `#cam-menu` with `[data-testid=cam-shot]` rows
+(`data-id`, `aria-checked` on the phone's shot), `[data-testid=cam-handheld]` and
+`[data-testid=cam-add]`, the label `#cam-label` (swipe target) with `#conn` (`data-level` ok /
+wait / bad) and `#cam-name` (its text), `#caption`, `#toast`, `#perf` (`?perf=1`), the joystick
+`#joystick` (zone; `data-active` while dragged) with `#joy-base` / `#joy-knob`, the height slider
+`#height` / `#height-knob`, and the `#gl` / `#vf` canvases (`body[data-view]` says which one is
+showing).
 
 Driving the walk controls: pointer events, so `page.mouse` works. Press in the middle of
 `#joystick` and move up by ≥ 48 px for full forward (≥ 56 px on `#height` for full rise); two

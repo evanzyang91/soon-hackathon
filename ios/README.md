@@ -201,10 +201,10 @@ When `pose=external`:
 4. **Optional page → native:** `postMessage({ type: 'cmd', cmd })` for any page button that
    would send a `PhoneCommand` (native forwards it; `recenter` re-centres natively), and
    `postMessage({ type: 'log', message })`.
-5. **HUD:** hide `#start`, `#joystick`, `#height`, `#controls` (Recenter / Shutter / Record /
-   Cam ›), `#top-right` (ACTION / Line ›), `#top-left` (room + connection), `#walk-readout`,
-   `#hint`, `#rotate`. Keep `#top-center` (camera name, lens label from `pose.fovDeg`, clock,
-   rec badge), `#caption`, `#perf`, `#toast`, `#flash`, `#attitude`. The native overlay uses
+5. **HUD:** hide `#start`, `#joystick`, `#height`, `#controls` (recenter / Shutter / Record /
+   camera button), `#play`, `#cam-menu`, `#conn` (the link dot), `#rotate`. Keep `#top` (the
+   label: shot number, name and lens from `pose.fovDeg`; rec badge), `#caption`, `#toast`,
+   `#flash` (and `#perf` with `?perf=1`). The native overlay uses
    top-left (tracking badge, room, connection), top-right (ACTION / CUT), the right edge
    (Recentre, Shutter, Record) and bottom-left (Leave).
 6. **Debug:** `window.__phone` gains `poseSource: 'external'` and a count of external poses
