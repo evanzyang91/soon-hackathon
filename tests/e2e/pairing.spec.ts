@@ -26,7 +26,7 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   // laptop: a smaller viewport keeps SwiftShader fast enough for two live pages
   const laptopCtx = await browser.newContext({
     ignoreHTTPSErrors: true,
-    viewport: { width: 800, height: 450 },
+    viewport: { width: 640, height: 400 },
   });
   const laptop = await laptopCtx.newPage();
   const laptopProblems = watchPage(laptop, 'laptop');
