@@ -36,6 +36,8 @@ describe('regen helpers', () => {
     expect(maskFor('Replace the sky with dark storm clouds')).toBe('sky');
     expect(maskFor('Make it snow: snow on the ground and roofs')).toBe('whole');
     expect(maskFor('turn it into autumn')).toBe('whole');
+    expect(maskFor('Replace only the sky with a dark, stormy night sky, rain falling. Keep the street exactly the same.')).toBe('sky');
+    expect(maskFor('A clear starry sky. Keep the street and the shelter.')).toBe('sky');
   });
   it('keys are stable per method + prompt', () => {
     expect(regenKey({ method: 'text', prompt: 'a' })).toBe(regenKey({ method: 'text', prompt: ' a ' }));

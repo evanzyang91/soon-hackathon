@@ -37,9 +37,15 @@ export const regenKey = (r: Pick<RegenSpec, 'method' | 'prompt'>) =>
 const SKY_ONLY = /\b(sky|skies|clouds?|cloudy|overcast|sunset|sunrise|stars?|starry|moon|aurora|storm clouds)\b/i;
 const GROUND = /\b(snow|ice|icy|frost|wet|puddles?|rain|leaves|autumn|fall|winter|summer|spring|season|desert|sand|grass|flood|ground|street|road|pavement|materials?|walls?|floor)\b/i;
 
-/** Which part of the panorama the edit may change: only the sky, or everything. */
+/**
+ * Which part of the panorama the edit may change: only the sky, or everything. An explicit "only
+ * the sky" wins (the planner starts sky-only instructions with "Replace only the sky"); otherwise
+ * the change clause (before any "Keep …") must name the sky and nothing on the ground.
+ */
 export function maskFor(prompt: string): 'sky' | 'whole' {
-  return SKY_ONLY.test(prompt) && !GROUND.test(prompt) ? 'sky' : 'whole';
+  if (/\b(only the sky|the sky only|sky only|just the sky)\b/i.test(prompt)) return 'sky';
+  const change = prompt.split(/\b(?:keep|preserve|leave)\b/i)[0] ?? prompt;
+  return SKY_ONLY.test(change) && !GROUND.test(change) ? 'sky' : 'whole';
 }
 
 export function imageEditPrompt(change: string): string {
