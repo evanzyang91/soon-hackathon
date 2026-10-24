@@ -424,6 +424,53 @@ export class ProjectStore {
     return structuredClone(st);
   }
 
+  /**
+   * Scoped re-prompt regeneration (server/pipeline/reprompt/regen.ts). Shows the scene's world
+   * stage as running with `label`, runs `produce` (under the Marble job cap) to build a new world
+   * directory, then moves scene-<n>/world/ to world.prev-<k>/, puts the new one in its place,
+   * calibrates it like any new world and rewrites the manifest (actors and audio unchanged). When
+   * `produce` fails the current world stays and the stage goes back to done with the error.
+   */
+  async replaceWorld(
+    id: string,
+    sceneIndex: number,
+    label: string,
+    produce: (log: (m: string) => void) => Promise<{ dir: string; note: string }>,
+  ): Promise<{ ok: boolean; note: string }> {
+    const st = await this.load(id);
+    const plan = await this.plan(id);
+    const scene = plan?.scenes[sceneIndex];
+    if (!st || !scene || !st.scenes[sceneIndex]) throw new PipelineError(`no scene ${sceneIndex} in ${id}`, 404);
+    const log = this.logger(id, `[scene ${sceneIndex}] regen: `);
+    const sceneDir = this.sceneDir(id, sceneIndex);
+    const worldDir = join(sceneDir, 'world');
+    await this.setStage(id, sceneIndex, 'world', { status: 'running', note: label });
+    let result: { ok: boolean; note: string };
+    try {
+      const made = await this.worldSem.use(() => produce(log));
+      if (resolve(made.dir) !== resolve(worldDir)) {
+        let k = 1;
+        while (await exists(join(sceneDir, `world.prev-${k}`))) k++;
+        if (await exists(worldDir)) await rename(worldDir, join(sceneDir, `world.prev-${k}`));
+        await rename(made.dir, worldDir);
+        log(`previous world kept in world.prev-${k}/`);
+      }
+      const asset = WorldAsset.parse(await readJson(join(worldDir, ASSET_FILE)));
+      const cal = await this.calibrateStep(st, scene, worldDir, asset, log);
+      await this.worldDone(st, sceneIndex, cal.asset, made.note + cal.note);
+      result = { ok: true, note: made.note + cal.note };
+    } catch (e) {
+      log(`FAILED ${errMsg(e)}; the current world is kept`);
+      await this.setStage(id, sceneIndex, 'world', { status: 'done', note: `regeneration failed: ${errMsg(e)} (current world kept)` });
+      result = { ok: false, note: errMsg(e) };
+    }
+    const job = st.scenes[sceneIndex];
+    if (job) job.stages.manifest = { status: 'pending' };
+    await this.persist(id);
+    await this.maybeManifest(id, sceneIndex);
+    return result;
+  }
+
   /** Picks up unfinished work after a restart (call once at startup). */
   async resumeAll(): Promise<string[]> {
     const resumed: string[] = [];
