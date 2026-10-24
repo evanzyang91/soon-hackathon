@@ -86,6 +86,13 @@ export const SplatRegionEdit = z.object({
   enabled: z.boolean().default(true),
 });
 
+/**
+ * Moves / turns / scales a scene object. The renderer (web/src/viewer/edits/apply.ts) applies
+ * `actor` and `prop` targets on laptop and phone. `light` and `camera` are accepted so a planner
+ * can express them, but they are NOT applied from here: a light's position lives in
+ * `Look.lights[].position` (patch it with a `look` edit) and a dropped camera lives in the
+ * laptop's camera list (SceneState.cameras); the laptop converts such ops on receipt.
+ */
 export const TransformEdit = z.object({
   kind: z.literal('transform'),
   id: z.string(),
@@ -123,8 +130,22 @@ export const EditPlan = z.object({
   scope: EditScope,
   summary: z.string(), // "Recolour the left pillow red (one region, nothing else changes)."
   ops: z.array(SceneEdit).default([]),
-  /** Named objects the planner could not locate; the UI asks the director to click them. */
-  needsTarget: z.array(z.object({ opId: z.string(), label: z.string() })).default([]),
+  /**
+   * Named objects the planner could not locate in 3D; the UI asks the director to click them.
+   * When Claude vision found the object in the submitted view, `box` is its pixel box in the view
+   * (normalised 0–1, origin top-left) so the UI can pre-place the click target, and `confidence` is
+   * the model's own estimate; both absent when no view was sent or the object was not found.
+   */
+  needsTarget: z
+    .array(
+      z.object({
+        opId: z.string(),
+        label: z.string(),
+        box: z.object({ x: unit, y: unit, w: unit, h: unit }).optional(),
+        confidence: unit.optional(),
+      }),
+    )
+    .default([]),
   /** Present only for world-regen: what it costs and the new prompt; applied only after confirm. */
   regen: z
     .object({
