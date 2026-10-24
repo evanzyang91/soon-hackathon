@@ -107,10 +107,11 @@ export class SceneLook implements LookProvider {
 
   /** Per frame: picks up splat meshes that appeared (actors swapped in, a new world quality). */
   update(now = performance.now()) {
-    if (now - this.lastAttach > 500 && !this.splatLights.neutral) {
+    if (this.splatLights.neutral) return;
+    if (now - this.lastAttach > 500) {
       this.lastAttach = now;
       this.splatLights.attachAll(this.scene);
-    }
+    } else this.splatLights.follow();
   }
 
   private applyLights() {
