@@ -1,6 +1,7 @@
 // (c) Project chat on the real MOCK server: Send the screenplay → the plan card (3 scenes, the
 // cast) → amend in words ("make Theo taller") → a reference photo for Maya through the attachment
-// target picker → Generate on the plan card → the scenes build and the first ready scene opens.
+// target picker → Generate on the plan card → the scenes build and the first ready scene opens →
+// on the live project a world change waits for a confirm, and "Not now" declines it.
 // Needs the chat routes (shared/api.ts: uploads, chat, generate); CHAT_E2E=1 turns it on.
 import { expect, test, type Page } from '@playwright/test';
 import { FIXTURE, laptopState, watchPage } from './helpers.ts';
@@ -92,6 +93,16 @@ test('chat: plan → "make Theo taller" → photo for Maya → Generate → the 
   await expect(
     page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`),
   ).toHaveCount(3);
+
+  // live now: a new set for scene 2 waits for a confirm with its cost; "Not now" skips it
+  await page.getByTestId('screenplay').fill('scene 2 is a diner');
+  await page.getByTestId('screenplay').press('Enter');
+  const regen = page.locator('[data-testid=action-card][data-type=regenerate-world]').last();
+  await expect(regen).toHaveAttribute('data-status', 'needs-confirm', { timeout: 20_000 });
+  await expect(regen).toContainText('1,580 Marble credits');
+  await regen.getByTestId('action-decline').click();
+  await expect(regen).toHaveAttribute('data-status', 'skipped');
+  await expect(regen.getByTestId('action-confirm')).toHaveCount(0);
 
   expect(problems).toEqual([]);
 });

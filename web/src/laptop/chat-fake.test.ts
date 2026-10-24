@@ -109,7 +109,11 @@ describe('mock chat planner rules', () => {
     expect(kinds(reply('use this for scene 2', false, [photo()]).actions)).toEqual([
       'world-reference:applied',
     ]);
-    expect(kinds(reply('', true, [photo('scene:3')]).actions)).toEqual([
+    // hints carry the 0-based scene index
+    expect(reply('', false, [photo('scene:0')]).actions).toMatchObject([
+      { type: 'world-reference', sceneIndex: 0 },
+    ]);
+    expect(kinds(reply('', true, [photo('scene:2')]).actions)).toEqual([
       'world-reference:applied',
       'regenerate-world:needs-confirm',
     ]);
@@ -172,5 +176,15 @@ describe('FakeChatApi', () => {
       'running',
     );
     expect(confirmed.status.scenes[1]!.stages.world.status).toBe('running');
+
+    // declining marks the card skipped and bumps the revision
+    const again = await fake.send(draft.id, { text: 'scene 3 is a beach' });
+    const m2 = again.chat.messages.at(-1)!;
+    const ask = m2.actions!.find((a) => a.status === 'needs-confirm')!;
+    const declined = await fake.confirm(draft.id, m2.id, ask.id, true);
+    expect(declined.chat.messages.at(-1)!.actions!.find((a) => a.id === ask.id)!.status).toBe(
+      'skipped',
+    );
+    expect(declined.chat.revision).toBeGreaterThan(again.chat.revision);
   });
 });

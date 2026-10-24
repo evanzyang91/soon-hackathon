@@ -65,8 +65,9 @@ export function scriptOutline(text: string): { characters: string[]; headings: s
 }
 
 /**
- * Attachment targets: none, every character, every scene. With a plan the hints use character ids;
- * before it (the first message) they use the cue names, which the server resolves by name.
+ * Attachment targets: none, every character, every scene ("scene:<0-based index>", labelled with
+ * the director's 1-based number). With a plan the hints use character ids; before it (the first
+ * message) they use the cue names, which the server resolves by name.
  */
 export function targetOptions(plan: ScreenplayPlan | null, screenplay = ''): TargetOption[] {
   const out: TargetOption[] = [{ value: '', label: 'No target' }];
@@ -75,7 +76,7 @@ export function targetOptions(plan: ScreenplayPlan | null, screenplay = ''): Tar
       out.push({ value: `character:${c.id}`, label: displayName(c.name), group: 'character' });
     for (const s of plan.scenes)
       out.push({
-        value: `scene:${s.index + 1}`,
+        value: `scene:${s.index}`,
         label: `Scene ${s.index + 1} · ${s.heading}`,
         group: 'scene',
       });
@@ -89,16 +90,16 @@ export function targetOptions(plan: ScreenplayPlan | null, screenplay = ''): Tar
       group: 'character',
     });
   headings.forEach((hd, i) =>
-    out.push({ value: `scene:${i + 1}`, label: `Scene ${i + 1} · ${hd}`, group: 'scene' }),
+    out.push({ value: `scene:${i}`, label: `Scene ${i + 1} · ${hd}`, group: 'scene' }),
   );
   return out;
 }
 
-/** "Maya" / "Scene 2" for a hint; null when it names nothing in the plan. */
+/** "Maya" / "Scene 2" (for "scene:1") for a hint; null when there is none. */
 export function hintLabel(hint: string | undefined, plan: ScreenplayPlan | null): string | null {
   if (!hint) return null;
   const [kind, ref = ''] = hint.split(':');
-  if (kind === 'scene') return `Scene ${ref}`;
+  if (kind === 'scene') return `Scene ${Number(ref) + 1}`;
   if (kind === 'character') {
     const c = plan ? findCharacter(plan, ref) : undefined;
     return c ? displayName(c.name) : displayName(ref);

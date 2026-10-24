@@ -1,5 +1,5 @@
 import { api } from '@shared/api';
-import type { Attachment, ChatRequest, ProjectChat } from '@shared/chat';
+import type { Attachment, ChatRequest, ChatResponse, ProjectChat } from '@shared/chat';
 import type { ActorDetail, ProjectStatus, ScreenplayPlan } from '@shared/schema';
 
 export interface Health {
@@ -53,12 +53,6 @@ export const newRoom = (keep?: string) =>
 
 // ---- project chat (shared/chat.ts; chat-client.ts wraps these with image preparation) -----------
 
-/** POST chat / chat/confirm answer (shared/api.ts "ChatResponse"). */
-export interface ChatResponse {
-  chat: ProjectChat;
-  status: ProjectStatus;
-}
-
 /** JSON or a readable error: the server's `error` text when it sent one, plus the HTTP status. */
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -78,17 +72,15 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 const postJson = <T>(url: string, body: unknown) =>
   call<T>(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-/** draft: only the parse stage runs until /generate (the chat-first flow). */
-export const createDraftProject = (screenplay: string, title?: string, attachments?: string[]) =>
-  postJson<ProjectStatus>(api.projects, {
-    screenplay,
-    draft: true,
-    ...(title ? { title } : {}),
-    ...(attachments?.length ? { attachments } : {}),
-  });
+/**
+ * draft: only the parse stage runs until /generate (the chat-first flow); the server seeds the
+ * thread with the screenplay and the plan card. Photos follow as the next chat message.
+ */
+export const createDraftProject = (screenplay: string, title?: string) =>
+  postJson<ProjectStatus>(api.projects, { screenplay, draft: true, ...(title ? { title } : {}) });
 
-/** plan.json sits in the project root with every other built asset (/projects/:id/**). */
-export const getPlan = (id: string) => call<ScreenplayPlan>(api.upload(id, 'plan.json'));
+/** The ScreenplayPlan, once parse is done (it does not exist before). */
+export const getPlan = (id: string) => call<ScreenplayPlan>(api.plan(id));
 
 /** Raw image upload (PNG / JPEG / WebP body, ≤ 12 MB) → Attachment (201). */
 export const uploadAttachment = (id: string, body: Blob, name: string) =>
@@ -100,6 +92,7 @@ export const uploadAttachment = (id: string, body: Blob, name: string) =>
 
 export const getChat = (id: string) => call<ProjectChat>(api.chat(id));
 export const sendChat = (id: string, req: ChatRequest) => postJson<ChatResponse>(api.chat(id), req);
-export const confirmChatAction = (id: string, messageId: string, actionId: string) =>
-  postJson<ChatResponse>(api.chatConfirm(id), { messageId, actionId });
+/** Runs a needs-confirm action, or with `decline` marks it skipped. */
+export const confirmChatAction = (id: string, messageId: string, actionId: string, decline = false) =>
+  postJson<ChatResponse>(api.chatConfirm(id), { messageId, actionId, ...(decline ? { decline } : {}) });
 export const generateProject = (id: string) => postJson<ProjectStatus>(api.generate(id), {});
