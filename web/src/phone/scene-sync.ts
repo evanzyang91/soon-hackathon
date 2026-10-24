@@ -65,6 +65,12 @@ export function captionFor(manifest: SceneManifest | null, lineId: string | null
   return { speaker: who?.name ?? line.characterId.toUpperCase(), text: line.text };
 }
 
+/** HUD scene clock: "▶ 0:04" while the laptop plays, "⏸ 1:02" while paused. */
+export function clockLabel(seconds: number, playing: boolean): string {
+  const s = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  return `${playing ? '▶' : '⏸'} ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 /**
  * Whether the laptop is running the scene (clock playing and dialogue under way): what the
  * phone's ACTION button shows as CUT. A line has to have been spoken within `holdMs`, which

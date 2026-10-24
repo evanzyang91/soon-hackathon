@@ -75,6 +75,18 @@ export function bindUi() {
     setLens(label: string) {
       $('lens').textContent = label;
     },
+    /** Scene clock next to the camera name ('' hides it: no scene). */
+    setClock(text: string, playing: boolean) {
+      const el = $('clock');
+      el.hidden = !text;
+      if (el.textContent !== text) el.textContent = text;
+      el.dataset.playing = String(playing);
+    },
+    /** Bottom-right render fps + governor level. */
+    setPerf(text: string) {
+      const el = $('perf');
+      if (el.textContent !== text) el.textContent = text;
+    },
     setCaption(text: string) {
       const el = $('caption');
       el.textContent = text;
