@@ -38,6 +38,27 @@ export interface FrameOptions {
 
 const DRAW: FrameOptions = { draw: true, paused: false };
 
+/**
+ * When the laptop's line ends, the phone (which started it a little later) gets this long to
+ * finish its own copy before it is cut; a CUT from the laptop also stops it within this time.
+ */
+const LINE_TAIL_MS = 600;
+
+export interface PhoneViewOptions {
+  /** Play the actors' voices on the phone (positional, heard from the phone camera). */
+  voice?: boolean;
+}
+
+/** What the phone's actors are saying right now (debug / e2e). */
+export interface VoiceState {
+  /** Characters whose voice is playing. */
+  playing: string[];
+  /** Line id of a voice that is playing (null when silent). */
+  lineId: string | null;
+  /** Loudest voice now, 0..1 (only non-zero when audio really flows: context running). */
+  level: number;
+}
+
 /** Mobile-friendly Spark settings (WP A defaults are tuned for the laptop), applied at load. */
 export const MOBILE_SPARK: SparkOptions = {
   maxStdDev: 2, // √4: the low end of Spark's acceptable range
@@ -59,11 +80,15 @@ export class PhoneView {
   private readonly vf: CanvasRenderingContext2D | null;
   private glFailed = false;
   private shownMode: ViewMode = 'viewfinder';
+  /** One listener for every scene, riding on the phone camera so voices are positional. */
+  private listener: THREE.AudioListener | null = null;
+  private stopLinesAt: number | null = null;
 
   constructor(
     private readonly glCanvas: HTMLCanvasElement,
     private readonly vfCanvas: HTMLCanvasElement,
     private readonly quality: SplatQuality = 'k500',
+    private readonly opts: PhoneViewOptions = {},
   ) {
     this.vf = vfCanvas.getContext('2d');
     try {
@@ -95,8 +120,15 @@ export class PhoneView {
     this.loadingUrl = manifestUrl;
     this.status = 'loading scene…';
     try {
+      // created here, not earlier: by now the start tap has handed three.js its unlocked context
+      if (!this.listener) {
+        this.listener = new THREE.AudioListener();
+        this.listener.setMasterVolume(this.opts.voice === false ? 0 : 1);
+        this.camera.add(this.listener);
+      }
       const rt = await loadScene(manifestUrl, {
         renderer: this.viewport.renderer,
+        listener: this.listener,
         quality: this.quality,
         spark: MOBILE_SPARK,
         onStatus: (m) => {
@@ -107,11 +139,11 @@ export class PhoneView {
         rt.dispose();
         return;
       }
-      rt.listener.setMasterVolume(0); // the laptop plays the dialogue; avoid echo
       this.viewport.setScene(rt.scene);
       this.runtime?.dispose();
       this.runtime = rt;
       this.lastSpeaking = null;
+      this.stopLinesAt = null;
       this.mode = 'webgl';
       this.status = rt.placeholder ? 'placeholder world' : 'ready';
     } catch (err) {
@@ -196,10 +228,34 @@ export class PhoneView {
     if (Math.abs(rt.time - clock.time) > 0.3) rt.setTime(clock.time);
     if (clock.speakingLineId !== this.lastSpeaking) {
       this.lastSpeaking = clock.speakingLineId;
-      // Muted on the phone; this only drives the actors' talk animation.
-      if (clock.speakingLineId) rt.playLine(clock.speakingLineId).catch(() => {});
-      else rt.stopLines();
+      // the actor speaks (voice + talk animation + caption) as the laptop's line starts
+      if (clock.speakingLineId) {
+        this.stopLinesAt = null;
+        rt.playLine(clock.speakingLineId).catch(() => {});
+      } else this.stopLinesAt = performance.now() + LINE_TAIL_MS;
     }
+    if (this.stopLinesAt !== null && performance.now() >= this.stopLinesAt) {
+      this.stopLinesAt = null;
+      rt.stopLines();
+    }
+  }
+
+  /** Whose voice is playing on the phone right now. */
+  voiceState(): VoiceState {
+    const out: VoiceState = { playing: [], lineId: null, level: 0 };
+    for (const actor of this.runtime?.actors.values() ?? []) {
+      let playing = false;
+      actor.object.traverse((o) => {
+        if (o instanceof THREE.PositionalAudio && o.isPlaying) playing = true;
+      });
+      if (playing) {
+        out.playing.push(actor.characterId);
+        out.lineId ??= (actor.object.userData.speakingLine as string | null) ?? null;
+      }
+      const d = actor.object.userData.debug as { level?: number } | undefined;
+      out.level = Math.max(out.level, d?.level ?? 0);
+    }
+    return out;
   }
 
   private drawViewfinder(pose: CameraPose, note: string) {
