@@ -15,8 +15,6 @@ const CreateBody = z.object({
   screenplay: z.string().min(1, 'screenplay is required'),
   /** Chat-first project: parse only, the rest waits for POST /generate. */
   draft: z.boolean().optional(),
-  /** Upload ids the screenplay message carries. */
-  attachments: z.array(z.string().max(64)).max(12).optional(),
 });
 const RetryBody = z.object({
   sceneIndex: z.number().int().nonnegative().default(0),

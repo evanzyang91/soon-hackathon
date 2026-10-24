@@ -3,7 +3,7 @@
 // the bytes' sha256, so the same picture uploaded twice is one attachment and a reference to it
 // (Character.referenceImage, ScenePlan.worldReference) never dangles because of a re-upload.
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Attachment } from '../../../shared/chat.ts';
 import { exists, readJson, writeFileAtomic, writeJsonAtomic } from '../fsutil.ts';
@@ -85,38 +85,4 @@ export async function readAttachment(
   const raw = await readJson(join(projectDir, UPLOADS_DIR, `${id}.json`)).catch(() => undefined);
   const parsed = Attachment.safeParse(raw);
   return parsed.success ? parsed.data : undefined;
-}
-
-/**
- * Copies an upload another project holds into `projectDir` (same id: the bytes are the same).
- * POST /api/projects may name attachments before the new project exists; the laptop uploads them
- * to the project it has open, and they are content-addressed, so any copy is the same picture.
- */
-export async function adoptUpload(
-  dataDir: string,
-  projectDir: string,
-  id: string,
-): Promise<Attachment | undefined> {
-  const own = await readAttachment(projectDir, id);
-  if (own) return own;
-  if (!isUploadId(id)) return undefined;
-  let projects: string[] = [];
-  try {
-    projects = (await readdir(dataDir, { withFileTypes: true }))
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return undefined;
-  }
-  for (const p of projects) {
-    const other = join(dataDir, p);
-    if (other === projectDir) continue;
-    const a = await readAttachment(other, id);
-    if (!a || !(await exists(join(other, a.file)))) continue;
-    await mkdir(join(projectDir, UPLOADS_DIR), { recursive: true });
-    await copyFile(join(other, a.file), join(projectDir, a.file));
-    await writeJsonAtomic(join(projectDir, UPLOADS_DIR, `${id}.json`), a);
-    return a;
-  }
-  return undefined;
 }
