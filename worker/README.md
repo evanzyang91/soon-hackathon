@@ -7,7 +7,8 @@ Output is a frozen gaussian PLY, a looping idle/talk PLY sequence (the fallback 
 always play, `web/src/viewer/actors/splat-actor.ts`) and a **runtime rig**: the canonical splats
 with skin weights and the SMPL-X skeleton, which the browser animates on the GPU from a shared
 library of text-to-motion clips (`web/src/viewer/actors/skinned-actor.ts`; see
-"Performance motion" below).
+"Performance motion" below). `--detail high` swaps in LHM-1B-HF and fine-tunes the avatar
+against its reference before any of those outputs are written ("High detail" below).
 
 | File | Role |
 | --- | --- |
@@ -15,7 +16,8 @@ library of text-to-motion clips (`web/src/viewer/actors/skinned-actor.ts`; see
 | `modal_lhm_stage.py` | CPU-only app `previz-stage-lhm-setup`: `stage_weights()` (one-time, resumable), `audit()`, `check()` |
 | `lhm_image.py` | The CUDA image, shared by both apps (exactly Orbis's pins) |
 | `run_actor.py` | Local CLI used by `server/pipeline/actors.ts` |
-| `lhm_stages/lhm_actor.py` | Runs inside the GPU container. Port of Orbis `lhm_person.py`: rembg mask → Multi-HMR pose → LHM canonical inference → frozen + animated frames → packaging |
+| `lhm_stages/lhm_actor.py` | Runs inside the GPU container. Port of Orbis `lhm_person.py`: rembg mask → Multi-HMR pose → LHM canonical inference (→ fine-tune, high detail) → frozen + animated frames → packaging |
+| `lhm_stages/finetune_actor.py` | High detail: photometric fine-tune of the canonical gaussians against the reference at the source pose / camera (torch; the camera geometry is pure numpy and unit tested) |
 | `lhm_stages/idle_motion.py` | Procedural SMPL-X idle/talk loop (numpy) |
 | `lhm_stages/package_actor.py` | Raw LHM PLYs → avatar-local frames + `sequence.json` + motion track (numpy, no plyfile) |
 | `lhm_stages/rig_export.py` | Runs inside the GPU container: canonical-state.pt + LHM's dense SMPL-X buffers → `canonical.npz` (zero-pose splats, 55-joint weights, skeleton) + LHM reference poses |
@@ -51,8 +53,10 @@ CPU-only setup app, so they work without one.
 
 ```sh
 python3 worker/run_actor.py --stage     # one time: ~22 GB into Volume previz-stage-lhm-cache (CPU only)
+python3 worker/run_actor.py --stage-high   # + LHM-1B-HF (6.85 GB, 48 s, ~$0.002) for --detail high
 python3 worker/run_actor.py --check     # auth + CUDA image build + LHM imports + weight audit; no GPU
 python3 worker/run_actor.py --image ref.png --out DIR [--mask m.png] [--frames 48] [--talk-frames 24] [--fps 12]
+                            [--detail high] [--no-finetune] [--finetune-iters 600] [--finetune-seconds 100]
 python3 worker/run_actor.py --recover DIR/recovery-receipt.json   # re-download; never re-runs inference
 python3 worker/run_actor.py --rig DIR [DIR ...]   # add the runtime rig to finished actors (no inference)
 python3 worker/motion_library.py --generate | --build [--review] | --upload    # the shared clips (once)
@@ -62,7 +66,8 @@ cd worker && python3 -m pytest -q tests
 ```
 
 The last stdout line is always `RESULT {json}`. Exit codes: 0 ok, 1 failed, 2 usage,
-3 = the checkpoint is still running (call `--recover` again later; `actors.ts` polls).
+3 = the checkpoint is still running, or a network error interrupted the download of a finished
+one (call `--recover` again later; `actors.ts` polls; inference is never resubmitted).
 
 `--stage` downloads the Volume layout below, and every phase writes a receipt under
 `/cache/setup-receipts/`:
@@ -71,6 +76,7 @@ The last stdout line is always `RESULT {json}`. Exit codes: 0 ok, 1 failed, 2 us
 | --- | --- |
 | `data/pretrained_models/`, `data/gfpgan/` | LHM prior archive, 18.8 GB uncompressed tar on Alibaba OSS. Stream-extracted with pinned Range + If-Match, so a rerun resumes instead of restarting. Measured 2026-10-24: 2,127 s (~9 MB/s), ~$0.075 CPU |
 | `huggingface/hub/models--3DAIGC--LHM-500M-HF` | `snapshot_download` at the pinned revision |
+| `huggingface/hub/models--3DAIGC--LHM-1B-HF` | `--stage-high`: Orbis's `larger_model` checkpoint at `92372582`, same architecture with 15 instead of 5 transformer layers |
 | `torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth`, `gfpgan/weights/GFPGANv1.3.pth`, `data/gfpgan/weights/{detection_Resnet50_Final,parsing_parsenet}.pth` | Same auxiliary weights Orbis stages |
 | `u2net/u2net.onnx` | rembg person matte (used when no mask is sent) |
 
@@ -173,6 +179,7 @@ Fields added for Previz Stage:
 | `nativeHeight` | `bounds.opaqueHeight`. Faint floaters cannot set the stature. `actors.ts` re-measures it from frame_000.ply for the manifest |
 | `loops` | `{idle:{start:0,count:N}, talk:{start:N,count:M}}` (talk is absent when `--talk-frames 0`) |
 | `motionSource`, `rootPose`, `lowerBodyProvenance` | provenance text |
+| `detail`, `model`, `finetune` | `"standard"` / `"high"`, the checkpoint, and for high the fine-tune summary (applied, iterations, source-view metrics). `actor-library.ts` reads `detail` so a refreshed library copy is reused as high detail |
 
 Size at the defaults (48 + 24 frames, 40,000 splats, measured): 2.72 MB per PLY, 226 MB for
 `sequence/` in the Volume. By default `run_actor` downloads only `sequence.json`,
@@ -198,6 +205,69 @@ dominates on a slow link). Receipts estimate `seconds × (L4 $0.000222 + 4 CPU �
 64 GiB × $0.00000222)` ≈ $0.00042/s, which runs ~10% under the bill because container start
 isn't timed. One-time staging is CPU-only: priors 2,127 s (~$0.075), model + aux 108 s
 (~$0.004).
+
+## High detail (`--detail high`): LHM-1B + a fine-tune against the reference
+
+The laptop's per-character **High detail (~5 min per actor)** button (`POST
+/api/projects/:id/actors/:characterId/rebuild {detail: 'high'}`) runs this into
+`<project>/actors/<id>/high/`; the standard build stays until the new one is ready. The outputs
+are the standard ones (frozen PLY, baked sequence + motion track, runtime rig, motion library), so
+the viewer needs no change.
+
+**The two levers.** (1) LHM-1B-HF instead of LHM-500M-HF, as Orbis's `modal_lhm.py
+larger_model`: identical config except 15 transformer layers (still 40,000 gaussians, same
+SMPL-X skinning, so the rig export is unchanged); 15.0 GB peak VRAM on the L4 (500M: 11.9 GB).
+Orbis rejected 1B for *video* likeness ("more invented facial detail is not more likeness"); here
+the second lever ties the detail back to the reference. (2) A short fine-tune
+(`lhm_stages/finetune_actor.py`), after Orbis's `scripts/finetune_gsplat.py` (masked L1 + 0.2
+D-SSIM, quadratic tether to the initial values, hard clamp on displacement, no densify/prune),
+adapted to one view:
+
+- *Where.* LHM's posed output is in the Multi-HMR camera frame, so rendering it with Multi-HMR's
+  own intrinsics (fov 60 on the 20 %-padded, 896-px letterboxed reference, mapped back with LHM's
+  j2d formula) overlays the reference: silhouette IoU 0.93 on LEO with no correction (a
+  similarity fix from the silhouette boxes is applied when IoU < 0.9; below 0.6 nothing is
+  changed). The render window is centred on the principal point because the rasteriser assumes it.
+- *What.* The canonical attributes LHM predicted: rgb, opacity (logit), log-scale (shrink only),
+  and the canonical offset (±1 cm). Posing is affine in the offset (fixed LBS weights), so
+  `d posed / d offset` is measured once by finite differences through `animation_infer_gs`
+  (residual 5e-7) and the loop never calls LHM: 600 Adam steps take 10 s on the L4 with LHM's own
+  diff-gaussian-rasterization. The updated attributes go back into `canonical-state.pt`, and
+  frozen, frames and rig are produced from them as usual.
+- *Only what the photo shows.* The first version optimised every splat in the frustum: the
+  reference view went from 16.1 to 29.6 dB, but turn views showed rainbow speckles on the back and
+  arms (barely visible splats took arbitrary colours) and white streaks where edge splats learned
+  the studio background (`docs/images/actor-detail-finetune-turns.png` shows the shipped version).
+  Shipped: a splat may change only if it is the front-most surface at its pixel (camera z within
+  3 cm of the rendered depth), lands inside the reference mask eroded by 4 px, and faces the
+  camera (local-PCA normal, weight fading from |cos| 0.25 to 0.6); SMPL-X hand splats are excluded
+  (a photo's hand pose never matches the fingers, which painted pale streaks); the background is a
+  random colour each step, so edge splats must turn transparent instead of white; colours have a
+  tether too. Head pixels weigh ×3.
+
+**Measured (LEO, `the-last-bus` reference, L4):**
+
+| Run | L4 worker s | Wall (submit → verified download) | Estimated cost | Fine-tune | Reference view PSNR / SSIM | Back view change |
+| --- | --- | --- | --- | --- | --- | --- |
+| dev 1, unconstrained | 153 | 210 s | $0.064 | 600 steps, 10 s, all 40k splats | 16.1 → 29.6 dB / 0.74 → 0.95 | 0.045 (speckles) |
+| dev 3, shipped | 133 | 193 s | $0.055 | 600 steps, 10 s, 12.3k splats | 16.1 → 20.2 dB / 0.74 → 0.89 | 0.0016 |
+| **real, through the route** | **123** | download cut by a network outage; recovered on retry in 7 s (no second GPU run) | **$0.051** | same as dev 3 | 16.1 → 20.2 dB / 0.74 → 0.89 | 0.0016 |
+
+Real-run split: mask 4 s, Multi-HMR 18 s, LHM-1B load 44 s (6.85 GB from the Volume), canonical
+inference 23 s, fine-tune 12 s, 72 frames 12 s, packaging 4 s, rig 3 s. Receipts run ~10 % under
+the bill, so expect about **$0.06 and 3–4 minutes per actor** with a warm image (the button says
+~5 min and ~$0.20: conservative, covering a cold image pull and a slow download). Total Modal spend
+for building and verifying this: about $0.23 (1B staging $0.002, three dev runs, the real run).
+
+**Result** (`docs/images/actor-detail-standard-vs-high.png`, same camera and frozen pose in the
+bus-stop scene): visible. The face, hair and stubble are sharper and now match the reference photo
+(LHM-1B alone invents a different face), and the coat's wet creases, belt and shoes come through.
+The cost: front texture seen from far to the side (~60° off the reference view) shows pale
+streaks at the ear and cheek and faint ones on the trousers; the back is untouched. The reference
+| LHM-1B | fine-tuned triptych is `actor-detail-finetune-source.png`; ±35° and back views, LHM-1B over
+fine-tuned, are `actor-detail-finetune-turns.png`. The real build is installed in
+`data/projects/the-last-bus-abcb17/actors/leo/high/` and its manifest ("use standard" in the
+project panel switches back without the GPU).
 
 ## Performance motion (investigation, 2026-10-24)
 
@@ -397,4 +467,7 @@ no rights in outputs; the licence excludes the EU, UK and South Korea).
   pytest / vitest; the browser check on a rigged avatar
   (`npx tsx scripts/actor-browser-check.ts --sequence data/actors-library/maya --gpu`); the gate
   above.
+- **High detail, verified:** LHM-1B staging; three real L4 runs plus one through the rebuild route
+  (above); the fine-tune's camera geometry under pytest (`tests/test_finetune.py`); the network
+  retry path for real (a DNS outage during the download → retry recovered the checkpoint).
 - Not verified: phone (iOS Safari) frame rate with 40,000-splat actors.
