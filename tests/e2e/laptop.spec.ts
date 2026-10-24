@@ -24,7 +24,8 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   expect(s.actors.map((a) => a.id).sort()).toEqual(['maya', 'theo']);
   // the mock world has no collider: blocking is used as written
   expect(s.actors.every((a) => !a.placementCorrected && a.kind === 'mannequin')).toBe(true);
-  await expect(page.getByTestId('scene-row')).toHaveCount(3);
+  // (this project's rows: specs that run earlier, e.g. chat.spec, leave projects in the list)
+  await expect(page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`)).toHaveCount(3);
   await expect(page.locator('#hud-title')).toHaveText('EXT. CITY STREET - NIGHT');
 
   // frames keep coming at 1280x720; report the software-GL frame rate
