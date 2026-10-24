@@ -58,9 +58,10 @@ screenplay.txt/.fountain
 - `metric_scale_factor` converts units → meters; floor world-y = `-ground_plane_offset / metric_scale_factor`
   before the scale is applied (`web/src/viewer/transform.ts`). We scale the world object so 1 unit = 1 m
   and translate so the floor sits at y = 0.
-- Actors are placed with feet on y = 0; blocking positions are meters in the world frame, origin at
-  Marble's source camera. Each actor stands `Character.heightMeters` tall (head top; 1.7 m when the
-  plan has none): every ActorAsset carries it and the viewer scales every body kind to it.
+- Actors are placed with feet on the visible ground at their own spot (the ground field below; y = 0
+  without one); blocking positions are meters in the world frame, origin at Marble's source camera.
+  Each actor stands `Character.heightMeters` tall (head top; 1.7 m when the plan has none): every
+  ActorAsset carries it and the viewer scales every body kind to it.
 - `WorldAsset.scaleCalibration.factor` (server/pipeline/calibrate.ts) multiplies Marble's scale
   (S = factor × msf, ty = factor × gpo, floor still at y = 0). It is measured after download from
   collider references and Claude vision with 1.70 m mannequins; outdoors, where the collider has no
@@ -69,6 +70,17 @@ screenplay.txt/.fountain
 - `WorldAsset.floorOffsetMeters` (same step, from the splats at the actors' marks; the collider
   sits ~0.1 m below the splats outdoors and is not used) raises the world by factor × offset so
   the visible ground is at y = 0 where the actors stand.
+- `WorldAsset.ground` → `ground.json` (`previz.ground-field/1`, shared/ground.ts; measured by
+  server/pipeline/calibrate-ground.ts) is the visible ground per 0.25 m cell: heights relative to
+  Marble's declared plane at Marble's scale (factor 1, no raise), so a median floor is at
+  -floorOffsetMeters. One median is not enough: the city street's kerb runs through the blocking
+  area (13 cm), the rooftop's walkway is 24 cm above its tar deck, the bus stop's street falls away.
+  The viewer (web/src/viewer/ground.ts) puts an actor's feet at `factor × (h + floorOffsetMeters)`
+  with h sampled at scene (x, z) / factor, and at y = 0 where the field has no ground. Actor
+  heights are stored relative to it: a blocking position's y and an actor `transform` edit's y
+  mean "this far above the ground at (x, z)", 0 = standing on it (every existing edits.json keeps
+  its meaning). Placement, the collider nudge, drags, re-prompt transforms, body swaps and the
+  walking body's approach all stand on it; floorOffsetMeters stays the world raise and fallback.
 
 ### Phone pose model (browser PWA)
 
