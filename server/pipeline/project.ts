@@ -852,20 +852,6 @@ export class ProjectStore {
     });
   }
 
-  // WP4 stub — replaced by WP5 at merge
-  // (rebuildActor(…, 'standard') refuses MOCK projects, so the stub redoes the actors stage of the
-  // first scene with the character instead: it rebuilds from the current plan in MOCK and live.)
-  async rebuildActorFromPlan(id: string, characterId: string): Promise<ProjectStatus> {
-    const scene = (await this.plan(id))?.scenes.find((s) => s.characterIds.includes(characterId));
-    if (!scene) throw new PipelineError(`no character ${characterId} in ${id}`, 404);
-    return this.retry(id, scene.index, 'actors');
-  }
-
-  async regenerateWorld(id: string, sceneIndex: number): Promise<ProjectStatus> {
-    return this.retry(id, sceneIndex, 'world');
-  }
-  // end WP4 stub
-
   /**
    * A cached offline fallback (mannequin / beeps) is not final in a live project once the keys
    * that could replace it are present: it is rebuilt on the next run or retry instead.
