@@ -4,7 +4,8 @@
 //   click            select it: a ring on the floor, a rotate ring, a scale / radius knob, a focus
 //                    point for a camera with depth of field, and a floating toolbar
 //   drag             move on the floor plane (actors slide along walls: the collider decides,
-//                    viewer/placement.ts); Shift+drag raises / lowers; the ring turns (Shift snaps
+//                    viewer/placement.ts, and stand on the visible ground wherever they go,
+//                    viewer/ground.ts); Shift+drag raises / lowers; the ring turns (Shift snaps
 //                    15°); the knob scales a prop or sets a light's radius; the focus point slides
 //                    along the camera's view axis
 //   arrows           nudge 5 cm (Shift 50 cm) along the world axis the view faces most
@@ -66,6 +67,7 @@ import {
   type V2,
   type V3,
 } from './math';
+import { aboveGround, markY, onGround } from '../ground';
 import { allTargets, pickTarget, targetInfo, toScreen, type TargetContext, type TargetInfo } from './targets';
 import { Toolbar, type ToolbarModel, type ToolItem } from './toolbar';
 import type { UndoStack } from './undo';
@@ -652,8 +654,14 @@ export class Manipulator {
       // a moving prop's transform shifts its path: the stored position is the moved path start
       return transformOf(this.host.edits.current(), info.ref).position ?? [...info.element.path[0]!];
     }
-    return v3(info.object?.position ?? info.anchor);
+    const p = info.object ? ([info.object.position.x, markY(info.object), info.object.position.z] as V3) : v3(info.anchor);
+    // an actor stores its height above the ground (viewer/ground.ts): a floor drag keeps it, so
+    // the actor lands on the ground at every spot it passes (a kerb, a slope); Shift raises it
+    return info.ref.type === 'actor' ? aboveGround(p, this.groundY) : p;
   }
+
+  /** The visible ground's y at scene (x, z) (0 without a scene or a ground field). */
+  private readonly groundY = (x: number, z: number) => this.rt?.groundY(x, z) ?? 0;
 
   private before(info: TargetInfo): Before {
     if (info.light) {
@@ -877,7 +885,8 @@ export class Manipulator {
     const rt = this.rt;
     // without WP G's applier (no sceneEdits runtime) the object is moved directly
     if (rt && !rt.sceneEdits && info.object) {
-      if (fields.position) info.object.position.set(...fields.position);
+      if (fields.position)
+        info.object.position.set(...(info.ref.type === 'actor' ? onGround(fields.position, this.groundY) : fields.position));
       if (fields.yaw !== undefined) info.object.rotation.y = fields.yaw;
       if (fields.scale !== undefined) info.object.scale.setScalar(fields.scale);
     }

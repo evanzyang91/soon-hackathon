@@ -24,6 +24,9 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   expect(s.actors.map((a) => a.id).sort()).toEqual(['maya', 'theo']);
   // the mock world has no collider: blocking is used as written
   expect(s.actors.every((a) => !a.placementCorrected && a.kind === 'mannequin')).toBe(true);
+  // its ground field (flat floor at 0) loaded, and every actor stands on the ground at its spot
+  expect(s.ground?.cell).toBe(0.25);
+  expect(s.actors.every((a) => Math.abs(a.position[1]! - a.groundY) < 1e-6 && Math.abs(a.groundY) < 0.02)).toBe(true);
   // each mannequin stands at its character's height (mock planner: THEO is "tall")
   const tall = Object.fromEntries(s.actors.map((a) => [a.id, a.heightMeters ?? 0]));
   expect(tall.theo).toBeGreaterThan(tall.maya! + 0.05);
