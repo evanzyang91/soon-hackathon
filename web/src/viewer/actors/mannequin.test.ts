@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildMannequin } from './mannequin';
 import { wantsGlbFile, PROCEDURAL_GLB } from './index';
-import { tintFor } from './tint';
+import { tintFor } from '@shared/tint';
 import { projectCandidates } from './common';
 
 const box = (o: THREE.Object3D) => {

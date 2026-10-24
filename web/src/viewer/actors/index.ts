@@ -11,7 +11,7 @@ import type { ActorAsset, Character } from '@shared/schema';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { buildMannequin, type Pose } from './mannequin';
 import { loadSplatBody } from './splat-actor';
-import { tintFor } from './tint';
+import { tintFor } from '@shared/tint';
 
 export interface ActorHandle {
   object: THREE.Object3D;
