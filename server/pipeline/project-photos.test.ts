@@ -125,7 +125,10 @@ const manifest = async (id: string, n: number) =>
     JSON.parse(await readFile(join(dataDir, id, `scene-${n}`, 'manifest.json'), 'utf8')),
   );
 
-describe("director's photos in a live project", () => {
+// whole projects through the store (3 scenes, worlds, ground fields): slow on a loaded machine
+const STORE_TEST = { timeout: 30_000 };
+
+describe("director's photos in a live project", STORE_TEST, () => {
   it('builds the actor from the photo and the world from the place photo — never from the libraries', async () => {
     // libraries holding a Maya and the city street: a photo must win over both
     const lib = join(dataDir, '..', `${dataDir.split('/').pop()}-lib`);
@@ -246,6 +249,9 @@ describe("director's photos in a live project", () => {
     const { s, id } = await photoProject(live);
     expect(calls).toHaveLength(3);
     const before = await manifest(id, 0);
+    // the three scenes' first worlds are generated concurrently: scene 0's is any of w-1..w-3
+    const first = before.world.worldId!;
+    expect(first).toMatch(/^w-[123]$/);
     await editsStoreFor(s).update(id, 0, (cur) => ({
       ...cur,
       look: { ...cur.look, exposure: 0.5 },
@@ -285,7 +291,7 @@ describe("director's photos in a live project", () => {
     await s2.regenerateWorld(id, 0); // idempotent while it runs
     await s2.idle();
     expect(calls).toHaveLength(4);
-    expect(calls[3]).toMatch(/scene-0\/regen\/[0-9a-f]{12}\/world$/);
+    expect(calls.at(-1)).toMatch(/scene-0\/regen\/[0-9a-f]{12}\/world$/);
     const st = (await s2.getProject(id))!;
     expect(st.scenes[0]!.stages.world).toEqual({
       status: 'done',
@@ -297,7 +303,7 @@ describe("director's photos in a live project", () => {
     expect(
       JSON.parse(await readFile(join(dataDir, id, 'scene-0/world.prev-1/world-asset.json'), 'utf8'))
         .worldId,
-    ).toBe('w-1');
+    ).toBe(first);
     const edits = SceneEdits.parse(
       JSON.parse(await readFile(join(dataDir, id, 'scene-0/edits.json'), 'utf8')),
     );
@@ -316,7 +322,7 @@ describe("director's photos in a live project", () => {
     await s3.regenerateWorld(id, 0);
     await s3.idle();
     expect(calls).toHaveLength(4);
-    expect((await manifest(id, 0)).world.worldId).toBe('w-1');
+    expect((await manifest(id, 0)).world.worldId).toBe(first);
     expect((await s3.getProject(id))!.scenes[0]!.stages.world.note).toMatch(
       /already generated from your photo \(world\.prev-1\/\) is back: no Marble call/,
     );
@@ -327,7 +333,7 @@ describe("director's photos in a live project", () => {
   });
 });
 
-describe('MOCK project: the chat-called methods run offline', () => {
+describe('MOCK project: the chat-called methods run offline', STORE_TEST, () => {
   it('regenerateWorld swaps a new mock world in; a scene not generated yet needs nothing', async () => {
     const { s, id } = await photoProject((deps) => store({ deps: { ...fakes().deps, ...deps } }));
     await s.regenerateWorld(id, 0);
