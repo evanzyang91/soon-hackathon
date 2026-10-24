@@ -59,6 +59,11 @@ export function bindUi() {
       hud.hidden = false;
       $('room').textContent = room;
     },
+    /** Real-wall warning from the room scan (pose=external); '' hides it. */
+    setWall(kind: 'clear' | 'near' | 'outside', text: string) {
+      document.body.dataset.wall = kind;
+      $('wall').textContent = text;
+    },
     /** pose=external: the native overlay replaces the page's own controls (ios/README.md). */
     hideForExternal() {
       const ids = ['joystick', 'height', 'controls', 'top-right', 'top-left', 'walk-readout'];

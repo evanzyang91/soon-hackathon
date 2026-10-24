@@ -6,6 +6,7 @@
 // (web/src/phone/README.md), and two pages sharing SwiftShader starve each other's main thread
 // for seconds at a time. The phone's WebGL rendering is covered by phone-render.spec.ts.
 import { expect, test } from '@playwright/test';
+import { WebSocket } from 'ws';
 import {
   angleDiff,
   createReadyProject,
@@ -149,6 +150,34 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   expect((await laptopState(laptop)).lastStillAt).toBe(0);
   await phone.locator('#shutter').click();
   await expect.poll(async () => (await laptopState(laptop)).lastStillAt).toBeGreaterThan(0);
+
+  // the ARKit app's room scan (a second phone on the relay) is drawn around the phone's anchor
+  const native = new WebSocket(`${new URL(laptop.url()).origin.replace(/^https/, 'wss')}/ws`, {
+    rejectUnauthorized: false,
+  });
+  await new Promise<void>((resolve, reject) => {
+    native.once('open', () => resolve());
+    native.once('error', reject);
+  });
+  native.send(JSON.stringify({ type: 'hello', role: 'phone', room }));
+  native.send(
+    JSON.stringify({
+      type: 'room',
+      source: 'lidar',
+      outline: [
+        [-2, -3],
+        [2, -3],
+        [2, 1],
+        [-2, 1],
+      ],
+      floorY: -1.4,
+      area: 16,
+    }),
+  );
+  await expect
+    .poll(async () => (await laptopState(laptop)).roomScan)
+    .toEqual({ area: 16, points: 4, drawn: true });
+  native.close();
 
   expect(laptopProblems).toEqual([]);
   expect(phoneProblems).toEqual([]);

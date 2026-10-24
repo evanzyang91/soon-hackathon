@@ -30,11 +30,14 @@ final class ARTracker: NSObject, ARSessionDelegate {
   private var lastOrientation = InterfaceOrientation.portrait
 
   static var isSupported: Bool { ARWorldTrackingConfiguration.isSupported }
+  /// LiDAR phones (scene reconstruction) get depth-assisted, near-instant plane detection.
+  static var hasLiDAR: Bool { ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) }
 
   func start() {
     let config = ARWorldTrackingConfiguration()
     config.worldAlignment = .gravity  // +Y up, −Z = initial heading (the default, stated for clarity)
-    config.planeDetection = []
+    // Horizontal planes for the room scan (floor + ceiling); classification needs A12 or newer.
+    config.planeDetection = [.horizontal]
     config.isLightEstimationEnabled = false
     session.delegate = self  // delegateQueue nil = main queue
     session.run(config, options: [.resetTracking, .removeExistingAnchors])
@@ -43,6 +46,26 @@ final class ARTracker: NSObject, ARSessionDelegate {
 
   func pause() {
     session.pause()
+  }
+
+  /// Horizontal planes detected so far, boundary in ARKit world coordinates (for RoomFootprint).
+  func detectedPlanes() -> [DetectedPlane] {
+    guard let anchors = session.currentFrame?.anchors else { return [] }
+    return anchors.compactMap { anchor in
+      guard let plane = anchor as? ARPlaneAnchor, plane.alignment == .horizontal else { return nil }
+      let kind: DetectedPlane.Kind =
+        switch plane.classification {
+        case .floor: .floor
+        case .ceiling: .ceiling
+        default: .otherHorizontal
+        }
+      let m = plane.transform
+      let boundary = plane.geometry.boundaryVertices.map { v -> SIMD3<Double> in
+        let w = m * SIMD4<Float>(v.x, v.y, v.z, 1)
+        return SIMD3(Double(w.x), Double(w.y), Double(w.z))
+      }
+      return DetectedPlane(kind: kind, boundary: boundary)
+    }
   }
 
   // MARK: - ARSessionDelegate (called on the main queue: delegateQueue is nil)

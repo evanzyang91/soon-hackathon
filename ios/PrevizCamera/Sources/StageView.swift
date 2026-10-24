@@ -38,6 +38,12 @@ struct StageView: View {
             Pill(text: hint)
           }
           if let banner = model.banner { Pill(text: banner, tint: .red) }
+          if model.scanning {
+            Pill(
+              text: model.roomArea.map { String(format: "Scanning · %.1f m² of floor · tap Done", $0) }
+                ?? "Scanning · point at the floor and walk the room",
+              tint: .cyan)
+          }
         }
         Spacer()
         Button(model.scenePlaying ? "CUT" : "ACTION") { model.action() }
@@ -58,6 +64,9 @@ struct StageView: View {
     .padding(16)
     .overlay(alignment: .trailing) {
       VStack(spacing: 18) {
+        Button(model.scanning ? "Done" : "Scan room") { model.toggleScan() }
+          .buttonStyle(CapsuleStyle())
+          .accessibilityHint("Scans the real room's floor so the laptop can see it")
         Button("Recentre") { model.recentre() }
           .buttonStyle(CapsuleStyle())
         Button { model.shutter() } label: {

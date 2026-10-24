@@ -175,6 +175,7 @@ export interface LaptopState {
   phones: number;
   lastPose: { phoneId?: string; q: number[]; aspect?: number } | null;
   gizmo: { visible: boolean; position: number[]; quaternion: number[] };
+  roomScan: { area: number; points: number; drawn: boolean } | null;
   pip: { visible: boolean; label: string; frames: number };
   mainFrames: number;
   lastStillAt: number;
@@ -199,4 +200,5 @@ export interface PhoneState {
   cameraPosition: number[];
   poseSource: 'external' | 'sensors';
   externalPoses: number;
+  wall: null | 'clear' | 'near' | 'outside';
 }

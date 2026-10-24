@@ -250,6 +250,17 @@ Node, and zod-validate the argument with `PhonePose` / `ServerMessage`.
   means reconnect), a stall guard (> 60 unacknowledged sends means reconnect), and an immediate
   reconnect when the app returns to the foreground.
 
+## Room scan
+
+**Scan room** (right edge) collects ARKit's horizontal planes (depth-assisted on LiDAR phones)
+every 0.5 s; **Done** turns them into a `RoomScan` (`shared/protocol.ts`) with
+`PrevizCore/RoomFootprint`: the floor height (classified floor planes, else the lowest horizontal
+planes), the convex hull of the floor seen, simplified to ≤ 32 points, the ceiling height when a
+ceiling plane was seen, and the area. Points are mapped with `PoseTracker.toScene`, the same rigid
+map the camera gets, so the outline is in the pose `offset` frame. The app sends it to the relay
+(cached per room for laptops that join later), to its own page (wall warning), again after every
+Recentre or camera switch, and again when the relay reconnects.
+
 ## Debugging
 
 - Tap the tracking badge for the in-app debug overlay (JSON).

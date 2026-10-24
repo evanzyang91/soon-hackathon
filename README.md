@@ -164,6 +164,14 @@ room as a phone with true 6DoF tracking. Walking moves the camera 1:1 (`PhonePos
 Xcode to build; `cd ios/PrevizCore && swift test` runs its pose and protocol tests without Xcode.
 Setup, certificate pairing, the pose math and the web contract are in `ios/README.md`.
 
+**Scan room** (in the app) maps the real room you are filming in: walk it while pointing at the
+floor, then tap Done. The laptop draws the room as a dashed cyan box (`REAL ROOM 12.4 m²`) around
+the phone's attached camera, exactly where the phone walks, so you can block actors inside the
+space you actually have; move or rotate that drop camera to place the room in the world. The phone
+outlines its view in red with `Wall 0.3 m` before you walk into a real wall, and says when you are
+outside the scanned room. The outline is the convex hull of the floor ARKit found (an L-shaped
+room comes out as its hull).
+
 ## Controls
 
 **Laptop**

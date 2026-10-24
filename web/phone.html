@@ -459,8 +459,22 @@
       #height[data-active] {
         border-color: rgba(255, 255, 255, 0.5);
       }
-      #walk-readout:empty {
+      #walk-readout:empty,
+      #wall:empty {
         display: none;
+      }
+      /* pose=external + a room scan: near a real wall / outside the scanned room */
+      #wall {
+        border-color: #36d6e7;
+      }
+      body[data-wall='near'] #wall,
+      body[data-wall='outside'] #wall {
+        border-color: #ff4040;
+        background: rgba(120, 0, 0, 0.65);
+      }
+      body[data-wall='near'] #stage,
+      body[data-wall='outside'] #stage {
+        box-shadow: inset 0 0 0 6px rgba(255, 64, 64, 0.7);
       }
       #toast {
         position: absolute;
@@ -571,6 +585,7 @@
       <div id="bottom-left">
         <span id="hint" class="pill"></span>
         <span id="walk-readout" class="pill"></span>
+        <span id="wall" class="pill"></span>
         <span id="attitude"></span>
       </div>
       <div id="joystick" aria-label="Walk: drag to move, double-tap to return to the camera">

@@ -3,7 +3,7 @@
 // window.__previzPose / __previzMessage, post `ready` to the native handler, and never open the
 // relay socket itself (ios/README.md, "Web side contract").
 import { expect, test } from '@playwright/test';
-import type { PhonePose, SceneState } from '../../shared/protocol.ts';
+import type { PhonePose, RoomScan, SceneState } from '../../shared/protocol.ts';
 import { createReadyProject, phoneState, watchPage } from './helpers.ts';
 
 test('pose=external renders native poses, posts ready, never opens the relay', async ({
@@ -96,6 +96,30 @@ test('pose=external renders native poses, posts ready, never opens the relay', a
   // the recording flag in the pose drives the rec badge
   await page.evaluate((p) => window.__previzPose!({ ...p, recording: true }), pose([0, 0, 0], 40));
   await expect(page.locator('#rec-badge')).toBeVisible();
+
+  // the app forwards its room scan: walking near a real wall, then out of the room, warns
+  const room: RoomScan = {
+    type: 'room',
+    source: 'lidar',
+    outline: [
+      [-2, -3],
+      [2, -3],
+      [2, 1],
+      [-2, 1],
+    ],
+    floorY: -1.4,
+    ceiling: 2.5,
+    area: 16,
+  };
+  await page.evaluate((r) => window.__previzMessage!(r), room);
+  await page.evaluate((p) => window.__previzPose!(p), pose([0, 0, -1], 40));
+  await expect.poll(async () => (await phoneState(page))?.wall).toBe('clear');
+  await expect(page.locator('#wall')).toHaveText('Room scanned');
+  await page.evaluate((p) => window.__previzPose!(p), pose([1.7, 0, -1], 40));
+  await expect(page.locator('#wall')).toHaveText('Wall 0.3 m');
+  await expect(page.locator('body')).toHaveAttribute('data-wall', 'near');
+  await page.evaluate((p) => window.__previzPose!(p), pose([2.5, 0, -1], 40));
+  await expect(page.locator('#wall')).toContainText('Outside the scanned room');
 
   expect(await page.evaluate(() => (window as any).__relaySockets)).toEqual([]);
   expect((await phoneState(page))?.posesSent).toBe(0);

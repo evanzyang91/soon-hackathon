@@ -58,6 +58,26 @@ public struct PhonePose: Codable, Sendable, Equatable {
   }
 }
 
+/// `RoomScan`: the physical room, in the pose `offset` frame (see RoomFootprint).
+public struct RoomScan: Codable, Sendable, Equatable {
+  public enum Source: String, Codable, Sendable { case lidar, planes }
+  public var type = "room"
+  public var source: Source
+  /// [[x, z], …] metres, counter-clockwise, not closed (3…64 points).
+  public var outline: [[Double]]
+  public var floorY: Double
+  public var ceiling: Double?
+  public var area: Double
+
+  public init(source: Source, outline: [[Double]], floorY: Double, ceiling: Double?, area: Double) {
+    self.source = source
+    self.outline = outline
+    self.floorY = floorY
+    self.ceiling = ceiling
+    self.area = area
+  }
+}
+
 public struct Hello: Codable, Sendable, Equatable {
   public var type = "hello"
   public var role = "phone"

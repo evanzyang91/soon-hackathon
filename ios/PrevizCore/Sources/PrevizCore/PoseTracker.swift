@@ -110,6 +110,12 @@ public struct PoseTracker: Sendable {
     pendingRecentre = anchorYaw
   }
 
+  /// An ARKit world point in the pose `offset` frame (the same rigid map the camera gets), so
+  /// things measured in the real room (the scanned floor) line up with where the phone walks.
+  public func toScene(_ p: SIMD3<Double>) -> SIMD3<Double> {
+    PoseMath.yawQuaternion(recentreYaw).act(p - origin)
+  }
+
   public mutating func update(_ sample: CameraSample, orientation: InterfaceOrientation) -> TrackedPose {
     guard sample.quality.isGood else {
       if var held = lastGood {

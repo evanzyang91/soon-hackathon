@@ -41,6 +41,10 @@ final class AppModel {
   private(set) var toast: String?
   private(set) var banner: String?
   private(set) var flashCount = 0
+  /// "Scan room" is running: planes are being collected into the room footprint.
+  private(set) var scanning = false
+  /// Floor area of the scanned room so far (m²), nil before any.
+  private(set) var roomArea: Double?
   var showDebug = false {
     didSet { if showDebug { publishDebug() } }
   }
@@ -65,6 +69,11 @@ final class AppModel {
   @ObservationIgnored private var debug = DebugSnapshot()
   @ObservationIgnored private var timers: [Timer] = []
   @ObservationIgnored private var toastTask: Task<Void, Never>?
+  /// The scanned room (ARKit world); re-sent in the offset frame after every Recentre.
+  @ObservationIgnored private var room: RoomFootprint?
+  @ObservationIgnored private var roomSentForRecentre = -1
+  @ObservationIgnored private var lastRoomText: String?
+  @ObservationIgnored private var scanTimer: Timer?
 
   init() {
     hostInput = defaults.string(forKey: "previz.lastHost") ?? ""
@@ -152,6 +161,10 @@ final class AppModel {
     recording = false
     scenePlaying = false
     tracking = .notAvailable
+    room = nil
+    roomArea = nil
+    roomSentForRecentre = -1
+    lastRoomText = nil
 
     let web = WebStage(trust: trust)
     web.onPageMessage = { [weak self] in self?.onPage($0) }
@@ -163,7 +176,11 @@ final class AppModel {
     relay.onState = { [weak self] state in
       guard let self else { return }
       self.conn = state
-      if state == .open { self.banner = nil }
+      if state == .open {
+        self.banner = nil
+        // a scan made while offline (or before a relay restart) still reaches the laptop
+        if let text = self.lastRoomText { self.relay?.send(text) }
+      }
     }
     relay.onText = { [weak self] in self?.onRelay($0) }
     relay.onError = { [weak self] in self?.banner = $0 }
@@ -197,6 +214,7 @@ final class AppModel {
   }
 
   func leave() {
+    stopScan()
     timers.forEach { $0.invalidate() }
     timers = []
     tracker?.pause()
@@ -242,12 +260,59 @@ final class AppModel {
     relay?.send(PhoneCommand(.playScene))
   }
 
+  // MARK: - Room scan
+
+  /// Start: walk the room sweeping the floor; the outline grows. Done: send it to the laptop.
+  func toggleScan() {
+    if scanning {
+      stopScan()
+      updateRoom()
+      if let area = roomArea {
+        sendRoom()
+        show(String(format: "Room scanned: %.1f m²", area))
+      } else {
+        show("No floor found yet. Point the phone at the floor and scan again")
+      }
+    } else {
+      scanning = true
+      show("Walk around the room, pointing at the floor")
+      scanTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        Task { @MainActor in self?.updateRoom() }
+      }
+    }
+  }
+
+  private func stopScan() {
+    scanTimer?.invalidate()
+    scanTimer = nil
+    scanning = false
+  }
+
+  private func updateRoom() {
+    guard let planes = tracker?.detectedPlanes(), let next = RoomFootprint.from(planes) else { return }
+    room = next
+    roomArea = next.area
+  }
+
+  /// The room in the current Recentre's offset frame, to the laptop and to the page.
+  private func sendRoom() {
+    guard let room, !scanning else { return }
+    let msg = room.message(source: ARTracker.hasLiDAR ? .lidar : .planes, toScene: poses.toScene)
+    guard let text = try? Wire.encode(msg) else { return }
+    roomSentForRecentre = poses.recentres
+    lastRoomText = text
+    relay?.send(text)
+    web?.forward(relayText: text)
+  }
+
   // MARK: - Frames → poses
 
   private func onFrame(_ f: FrameData) {
     if tracking != f.sample.quality { tracking = f.sample.quality }
     if interrupted { interrupted = false }
     let pose = poses.update(f.sample, orientation: f.orientation)
+    // a Recentre moved the offset frame: the room follows it
+    if room != nil, poses.recentres != roomSentForRecentre { sendRoom() }
     let size = web?.webView.bounds.size ?? .zero
     let aspect = size.width > 0 && size.height > 0 ? Double(size.width / size.height) : nil
     let fov = Lens.verticalFovDegrees(f.intrinsics, orientation: f.orientation, viewAspect: aspect ?? .nan)
@@ -369,6 +434,7 @@ final class AppModel {
       // A (re)loaded page starts blank: replay what the relay told us so far.
       if let lastPeersText { web?.forward(relayText: lastPeersText) }
       if let lastSceneText { web?.forward(relayText: lastSceneText) }
+      if let lastRoomText { web?.forward(relayText: lastRoomText) }
       if let lastPose { web?.push(lastPose) }
       publishDebug()
     case .cmd(let c):

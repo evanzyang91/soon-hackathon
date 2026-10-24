@@ -10,10 +10,13 @@
 //   once, later ones in the same `poseIntervalMs` window only keep the latest, flushed by tick().
 // - `scene` (laptop → phones) is cached per room so a late-joining phone gets it immediately.
 // - `cmd` goes laptop → phones and phone → laptops.
+// - `room` (phone → laptops) is stamped like `pose` and the latest is cached per room, so a laptop
+//   that joins (or reloads) later still sees the scanned physical room.
 import { randomInt } from 'node:crypto';
 import {
   ClientMessage,
   type PhonePose,
+  type RoomScan,
   type SceneState,
   type ServerMessage,
 } from '../shared/protocol.ts';
@@ -52,6 +55,8 @@ interface Room {
   laptops: Set<PeerId>;
   phones: Set<PeerId>;
   scene: SceneState | null;
+  /** Latest RoomScan from a phone in this room (stamped). */
+  roomScan: RoomScan | null;
   /** Last time the room had a member (or was reserved). */
   lastActive: number;
   reservedUntil: number;
@@ -166,6 +171,11 @@ export class RoomHub {
       }
       case 'cmd':
         return fanOut(peer.role === 'laptop' ? room.phones : room.laptops, msg);
+      case 'room': {
+        if (peer.role !== 'phone') return this.reject(peer, 'room from a laptop');
+        room.roomScan = { ...msg, phoneId: peer.id };
+        return fanOut(room.laptops, room.roomScan);
+      }
     }
   }
 
@@ -249,6 +259,7 @@ export class RoomHub {
     }
     const room = this.rooms.get(code)!;
     if (role === 'phone' && room.scene) out.push({ to: peer.id, msg: room.scene });
+    if (role === 'laptop' && room.roomScan) out.push({ to: peer.id, msg: room.roomScan });
     return out;
   }
 
@@ -272,6 +283,7 @@ export class RoomHub {
         laptops: new Set(),
         phones: new Set(),
         scene: null,
+        roomScan: null,
         lastActive: now,
         reservedUntil: 0,
       };

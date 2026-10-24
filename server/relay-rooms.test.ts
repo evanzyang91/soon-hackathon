@@ -220,6 +220,42 @@ describe('scene + cmd', () => {
   });
 });
 
+describe('room scan', () => {
+  const scan = {
+    type: 'room',
+    source: 'lidar',
+    outline: [
+      [-2, -3],
+      [2, -3],
+      [2, 1],
+      [-2, 1],
+    ],
+    floorY: -1.4,
+    ceiling: 2.5,
+    area: 16,
+  };
+
+  it('forwards a phone scan to laptops (stamped), caches it for a laptop that joins later', () => {
+    const { join, send } = setup();
+    join('L', 'laptop');
+    join('P', 'phone');
+    const out = send('P', { ...scan, phoneId: 'spoofed' });
+    expect(to(out, 'L')).toEqual([{ ...scan, phoneId: 'P' }]);
+    expect(to(out, 'P')).toEqual([]);
+    const late = join('L2', 'laptop');
+    expect(to(late, 'L2')).toContainEqual({ ...scan, phoneId: 'P' });
+  });
+
+  it('rejects a scan from a laptop and malformed outlines', () => {
+    const { join, send, warnings } = setup();
+    join('L', 'laptop');
+    join('P', 'phone');
+    expect(send('L', scan)).toEqual([]);
+    expect(send('P', { ...scan, outline: [[0, 0]] })).toEqual([]);
+    expect(warnings.length).toBe(2);
+  });
+});
+
 describe('idle cleanup', () => {
   it('reports silent peers and removes empty rooms after idleMs', () => {
     const hub = new RoomHub({ idleMs: 30_000, warn: () => {} });
