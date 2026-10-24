@@ -21,7 +21,9 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   expect(s.error).toBeNull();
   expect(s.placeholder).toBe(false); // the mock SPZ really decoded
   expect(s.sceneIndex).toBe(0);
-  expect(s.actors.sort()).toEqual(['maya', 'theo']);
+  expect(s.actors.map((a) => a.id).sort()).toEqual(['maya', 'theo']);
+  // the mock world has no collider: blocking is used as written
+  expect(s.actors.every((a) => !a.placementCorrected && a.kind === 'mannequin')).toBe(true);
   await expect(page.getByTestId('scene-row')).toHaveCount(3);
   await expect(page.locator('#hud-title')).toHaveText('EXT. CITY STREET - NIGHT');
 

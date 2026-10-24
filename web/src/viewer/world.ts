@@ -8,6 +8,7 @@ import { SceneManifest, type Character, type DialogueLine } from '@shared/schema
 import { createActor, type ActorHandle } from './actors';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
+import { colliderTriangles, correctPlacement, yawToward, type V2 } from './placement';
 import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
 
@@ -36,6 +37,12 @@ export interface SceneRuntime {
   /** True when the SPZ could not be loaded and the procedural stand-in is shown. */
   readonly placeholder: boolean;
   readonly collider: THREE.Object3D | null;
+  /**
+   * Resolves once the collider GLB has loaded (null without one). Scene load never waits for it;
+   * when it lands, actors standing inside geometry are moved to free floor (placement.ts) and
+   * `actor.object.userData.placement` records what happened.
+   */
+  readonly colliderReady: Promise<THREE.Object3D | null>;
   readonly grid: THREE.GridHelper;
   readonly actors: Map<string, ActorHandle>;
   readonly dynamics: DynamicsRuntime;
@@ -138,6 +145,7 @@ class LoadedScene implements SceneRuntime {
   splat: SplatMesh | null = null;
   placeholder = false;
   collider: THREE.Object3D | null = null;
+  colliderReady: Promise<THREE.Object3D | null> = Promise.resolve(null);
   dynamics!: DynamicsRuntime;
   quality: SplatQuality;
   time = 0;
@@ -278,6 +286,10 @@ class LoadedScene implements SceneRuntime {
     return true;
   }
 
+  get isDisposed() {
+    return this.disposed;
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
@@ -291,6 +303,42 @@ class LoadedScene implements SceneRuntime {
     disposeObject(this.grid);
     this.spark.dispose();
     this.scene.clear();
+  }
+}
+
+/**
+ * Moves actors whose blocking puts them inside collider geometry to the nearest free floor
+ * (toward the start camera, ≥ 0.5 m from the others), turning a moved actor to face its nearest
+ * partner. Every actor gets `userData.placement = { status, from, to }`.
+ */
+function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
+  const tris = colliderTriangles(collider);
+  if (!tris.length) return;
+  const poses = new Map(rt.manifest.plan.blocking.map((b) => [b.characterId, b.pose]));
+  const start = rt.manifest.startCamera.position;
+  const actors = [...rt.actors.values()];
+  const xz = (o: THREE.Object3D): V2 => [o.position.x, o.position.z];
+  for (const actor of actors) {
+    const from = xz(actor.object);
+    const others = actors.filter((a) => a !== actor).map((a) => xz(a.object));
+    const r = correctPlacement(tris, from[0], from[1], {
+      pose: poses.get(actor.characterId) ?? 'standing',
+      toward: [start[0], start[2]],
+      avoid: others,
+    });
+    actor.object.userData.placement = { status: r.status, from, to: [r.x, r.z] };
+    if (r.status === 'stuck')
+      console.warn(`[placement] ${actor.characterId}: inside geometry, no free spot within 1.5 m`);
+    if (r.status !== 'moved') continue;
+    actor.object.position.x = r.x;
+    actor.object.position.z = r.z;
+    const partner = others.sort(
+      (a, b) => Math.hypot(a[0] - r.x, a[1] - r.z) - Math.hypot(b[0] - r.x, b[1] - r.z),
+    )[0];
+    if (partner) actor.object.rotation.y = yawToward([r.x, r.z], partner);
+    console.info(
+      `[placement] ${actor.characterId}: moved out of geometry (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
+    );
   }
 }
 
@@ -335,27 +383,15 @@ export async function loadScene(
   );
   rt.setWorld(got ? await loadSplat(got.bytes, got.url) : null);
 
-  if (manifest.world.colliderGlb) {
-    try {
-      const gltf = await new GLTFLoader().loadAsync(rt.resolve(manifest.world.colliderGlb));
-      const wire = new THREE.MeshBasicMaterial({
-        color: '#7fd1ff',
-        wireframe: true,
-        transparent: true,
-        opacity: 0.25,
-        depthWrite: false,
-      });
-      gltf.scene.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.material = wire;
-      });
-      gltf.scene.name = 'collider';
-      gltf.scene.visible = false;
-      rt.worldRoot.add(gltf.scene);
-      rt.collider = gltf.scene;
-    } catch (err) {
-      console.warn('collider GLB failed to load', err);
-    }
-  }
+  // the collider (several MB for a real world) loads in the background; actors are corrected
+  // against it when it arrives
+  const colliderGlb = manifest.world.colliderGlb;
+  const colliderLoad = colliderGlb
+    ? new GLTFLoader().loadAsync(rt.resolve(colliderGlb)).catch((err) => {
+        console.warn('collider GLB failed to load', err);
+        return null;
+      })
+    : Promise.resolve(null);
 
   status('placing actors…');
   const blocking = new Map(manifest.plan.blocking.map((b) => [b.characterId, b]));
@@ -387,6 +423,29 @@ export async function loadScene(
 
   rt.dynamics = createDynamics(manifest.plan.dynamics);
   rt.scene.add(rt.dynamics.group);
+  rt.colliderReady = colliderLoad.then((gltf) => {
+    if (!gltf || rt.isDisposed) return null;
+    const wire = new THREE.MeshBasicMaterial({
+      color: '#7fd1ff',
+      wireframe: true,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+    });
+    gltf.scene.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.material = wire;
+    });
+    gltf.scene.name = 'collider';
+    gltf.scene.visible = false;
+    rt.worldRoot.add(gltf.scene); // same Marble → metric transform as the splats
+    rt.collider = gltf.scene;
+    try {
+      correctActorPlacement(rt, gltf.scene);
+    } catch (err) {
+      console.warn('actor placement correction failed', err);
+    }
+    return gltf.scene;
+  });
   status(rt.placeholder ? 'placeholder world (SPZ unavailable)' : 'ready');
   return rt;
 }
