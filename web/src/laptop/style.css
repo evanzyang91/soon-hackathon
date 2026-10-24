@@ -298,6 +298,11 @@ button.icon {
   color: var(--bad);
   cursor: pointer;
 }
+.chip.done.fallback {
+  background: #3d3418;
+  color: #e8c35a;
+  cursor: pointer;
+}
 .chip.skipped {
   background: #2a2a2a;
   color: #6b6b6b;

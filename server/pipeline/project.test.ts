@@ -249,6 +249,72 @@ describe('project pipeline (mock)', () => {
     await expect(s.retry('nope-123', 0, 'world')).rejects.toMatchObject({ status: 404 });
   });
 
+  it('live: a fallback actor cached before a restart is rebuilt when Modal keys are set', async () => {
+    const hang = () => new Promise<never>(() => {});
+    const mannequin = (characterId: string, fallback: boolean): ActorAsset => ({
+      kind: 'glb-humanoid',
+      characterId,
+      glb: 'procedural:mannequin',
+      clips: { idle: 'Idle', talk: 'Talk' },
+      ...(fallback ? { fallback: true } : {}),
+    });
+    const liveKeys = { anthropic: false, marble: false, modal: true, tts: true };
+    // process A: maya falls back (Modal billing), theo never finishes; then A "crashes"
+    const a = store({
+      mock: false,
+      keys: liveKeys,
+      deps: {
+        buildActor: async ({ character }) =>
+          character.id === 'maya' ? mannequin('maya', true) : hang(),
+        synthesizeLine: hang,
+      },
+    });
+    const { id } = await a.createProject({ screenplay: FIXTURE });
+    const mayaJson = join(dataDir, id, 'actors', 'maya', 'actor.json');
+    for (let i = 0; i < 400 && !existsSync(mayaJson); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(JSON.parse(await readFile(mayaJson, 'utf8')).fallback).toBe(true);
+
+    // process B resumes with Modal working: maya is rebuilt instead of reusing the fallback
+    const f = fakeActors();
+    const b = store({ mock: false, keys: liveKeys, deps: f.deps });
+    expect(await b.resumeAll()).toEqual([id]);
+    await b.idle();
+    expect(f.actorCalls.sort()).toEqual(['maya', 'theo']);
+    const m = await readManifest(id, 0);
+    expect(m.actors.map((x) => x.fallback ?? false)).toEqual([false, false]);
+  });
+
+  it('live: retrying tts re-synthesizes fallback beeps too; MOCK projects keep them', async () => {
+    const run = async (mock: boolean) => {
+      const calls: string[] = [];
+      let upgraded = false;
+      const deps: Partial<PipelineDeps> = {
+        ...fakeActors().deps,
+        synthesizeLine: async ({ line, outDir }) => {
+          calls.push(line.id);
+          if (!upgraded && line.id === 's1-l2') throw new Error('tts provider timeout');
+          await writeFile(join(outDir, `${line.id}.wav`), 'wav');
+          const a: LineAudio = { lineId: line.id, url: `${line.id}.wav`, durationSeconds: 1 };
+          return upgraded ? a : { ...a, fallback: true };
+        },
+      };
+      const s = store({ mock, keys: { anthropic: false, marble: false, tts: true }, deps });
+      const { id } = await s.createProject({ screenplay: FIXTURE });
+      await s.idle();
+      const st = (await s.getProject(id))!;
+      expect(st.scenes[0]!.stages.tts.status).toBe('failed');
+      upgraded = true;
+      calls.length = 0;
+      await s.retry(id, 0, 'tts');
+      await s.idle();
+      const m = await readManifest(id, 0);
+      return { calls: calls.sort(), fallbacks: m.audio.filter((x) => x.fallback).length };
+    };
+    expect(await run(false)).toEqual({ calls: ['s1-l1', 's1-l2', 's1-l3', 's1-l4'], fallbacks: 0 });
+    expect(await run(true)).toEqual({ calls: ['s1-l2'], fallbacks: 3 });
+  });
+
   it('end to end with the real (mock-mode) WP D modules and Marble mock', async () => {
     const s = store();
     const { id } = await s.createProject({ screenplay: FIXTURE });
