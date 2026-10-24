@@ -3,9 +3,11 @@
 
     python3 worker/run_actor.py --image ref.png --out DIR [--mask m.png] [--frames 48]
                                 [--talk-frames 24] [--fps 12] [--lossless] [--include-raw]
-                                [--all-frames]
+                                [--all-frames] [--detail standard|high]
+        --detail high: LHM-1B-HF + a bounded fine-tune against the reference (~5 min per actor)
     python3 worker/run_actor.py --check            # Modal auth + CUDA image build + imports, no GPU
     python3 worker/run_actor.py --stage            # one-time weight staging (CPU only, resumable)
+    python3 worker/run_actor.py --stage-high       # + LHM-1B-HF (6.85 GB) for --detail high
     python3 worker/run_actor.py --recover DIR/recovery-receipt.json   # no inference
     python3 worker/run_actor.py --rig DIR [DIR ...]   # runtime rig for finished actors (no inference)
 
@@ -104,6 +106,8 @@ def summarize(dest: Path, manifest: dict) -> dict:
     seq_path = dest / "sequence" / "sequence.json"
     seq = json.loads(seq_path.read_text()) if seq_path.exists() else {}
     run = json.loads((dest / "modal-run.json").read_text()) if (dest / "modal-run.json").exists() else {}
+    ft_path = dest / "finetune.json"
+    ft = json.loads(ft_path.read_text()) if ft_path.exists() else None
     return {
         "status": manifest["status"],
         "problems": manifest["problems"],
@@ -116,6 +120,13 @@ def summarize(dest: Path, manifest: dict) -> dict:
         "gaussiansPerFrame": seq.get("gaussiansPerFrame"),
         "workerSeconds": run.get("seconds"),
         "estimatedComputeUSD": run.get("estimatedComputeUSD"),
+        "detail": run.get("detail", "standard"),
+        "model": run.get("model"),
+        "finetune": (
+            {k: ft.get(k) for k in ("applied", "iterations", "loopSeconds", "sourceView", "turnViewMeanAbsChange", "reason", "error") if k in ft}
+            if ft
+            else None
+        ),
     }
 
 
@@ -240,6 +251,10 @@ def run(a) -> int:
             talk_frames=a.talk_frames,
             fps=a.fps,
             quantize=not a.lossless,
+            detail=a.detail,
+            finetune=a.finetune,
+            finetune_iters=a.finetune_iters,
+            finetune_seconds=a.finetune_seconds,
         )
     print(json.dumps(call_result["report"], indent=2), flush=True)
     import modal
@@ -263,6 +278,10 @@ def main(argv=None) -> int:
     ap.add_argument("--talk-frames", type=int, default=24)
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument("--lossless", action="store_true", help="float32 motion track (default uint16)")
+    ap.add_argument("--detail", choices=("standard", "high"), default="standard", help="high: LHM-1B-HF + fine-tune (~5 min)")
+    ap.add_argument("--finetune", action=argparse.BooleanOptionalAction, default=None, help="force the fine-tune on/off (default: on for --detail high)")
+    ap.add_argument("--finetune-iters", type=int, default=600)
+    ap.add_argument("--finetune-seconds", type=float, default=100.0)
     ap.add_argument("--include-raw", action="store_true", help="also download raw/ LHM frames")
     ap.add_argument(
         "--all-frames",
@@ -271,6 +290,7 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--stage", action="store_true")
+    ap.add_argument("--stage-high", action="store_true", help="stage LHM-1B-HF for --detail high (CPU only)")
     ap.add_argument("--recover")
     ap.add_argument("--rig", nargs="+", metavar="DIR", help="export the runtime rig for finished actor dirs")
     ap.add_argument("--rig-remote", action="store_true", help="re-export on Modal even when DIR/rig-canonical.npz exists")
@@ -283,11 +303,12 @@ def main(argv=None) -> int:
                 report = check.remote()
             print(json.dumps(report, indent=2), flush=True)
             return result(report["imports"], 0 if report["imports"] else 1, check=report)
-        if a.stage:
+        if a.stage or a.stage_high:
             import subprocess
 
+            phase = ["--phase", "model-1b"] if a.stage_high else []
             code = subprocess.call(
-                [sys.executable, "-m", "modal", "run", "--detach", str(HERE / "modal_lhm_stage.py")]
+                [sys.executable, "-m", "modal", "run", "--detach", str(HERE / "modal_lhm_stage.py"), *phase]
             )
             return result(code == 0, code)
         if a.recover:
