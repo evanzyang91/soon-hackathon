@@ -18,6 +18,11 @@ export const Character = z.object({
   name: z.string(), // as written in the screenplay, e.g. "MAYA"
   /** Physical description for the reference image; written by the LLM if the script is silent. */
   description: z.string(),
+  /**
+   * Standing height in metres, read from the description by the planner (a tall man 1.85, a
+   * child 1.3); absent = 1.7. The actor pipeline scales every body kind to it.
+   */
+  heightMeters: z.number().min(0.9).max(2.3).optional(),
   voice: z.object({
     /** Provider voice id, e.g. OpenAI "alloy" / "onyx"; the pipeline picks one per character. */
     id: z.string(),
@@ -47,6 +52,11 @@ export const Blocking = z.object({
   yaw: z.number(),
   /** 'standing' | 'sitting' | 'walking' — picks the motion loop. */
   pose: z.enum(['standing', 'sitting', 'walking']).default('standing'),
+  /**
+   * Why this spot, when the staging step (server/pipeline/staging.ts) moved the mark onto the
+   * visible set: "on the sidewalk by the shelter bench". Absent for the planner's blind guess.
+   */
+  note: z.string().optional(),
 });
 export type Blocking = z.infer<typeof Blocking>;
 
@@ -143,6 +153,22 @@ export const WorldAsset = z.object({
    * actors stand on the visible ground. Absent = 0.
    */
   floorOffsetMeters: z.number().optional(),
+  /**
+   * Ground height field measured from the splats (shared/ground.ts, previz.ground-field/1): the
+   * visible ground's height per xz cell, so each actor's feet land on the ground at ITS spot
+   * (curbs, slopes, steps) instead of at the one median floorOffsetMeters encodes. `file` is a
+   * JSON GroundField, project-root-relative like every other asset path. Absent = flat floor.
+   */
+  ground: z
+    .object({
+      file: z.string(),
+      /** cell size, m */
+      cell: z.number().positive(),
+      /** cells with ground data / cells in the field */
+      covered: z.number().int().nonnegative(),
+      cells: z.number().int().positive(),
+    })
+    .optional(),
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 
@@ -183,6 +209,8 @@ export const ActorAsset = z.discriminatedUnion('kind', [
     /** Animation clip names inside the GLB. */
     clips: z.object({ idle: z.string(), talk: z.string(), walk: z.string().optional() }),
     tint: z.string().optional(), // css hex, distinguishes fallback actors
+    /** Standing height the body is scaled to (Character.heightMeters); absent = 1.7. */
+    heightMeters: z.number().positive().optional(),
   }),
 ]);
 export type ActorAsset = z.infer<typeof ActorAsset>;
