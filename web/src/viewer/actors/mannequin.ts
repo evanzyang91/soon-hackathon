@@ -1,7 +1,10 @@
 // Procedural fallback actor: a stylised mannequin built from primitives on a small joint
-// hierarchy (no GLB to ship). Forward = -Z, feet at y = 0, 1.7 m tall. Idle sway + breathing,
-// talk = head bob + jaw opening driven by the voice's amplitude (AnalyserNode), walk = in-place
-// leg/arm swing, sitting = hips lowered with thighs forward. ~20 low-poly meshes: phone-light.
+// hierarchy (no GLB to ship). Forward = -Z, feet at y = 0, 1.7 m tall. Idle sway + breathing +
+// an occasional weight shift (every 6–10 s, eased over ~1.4 s, feet planted), head turned toward
+// a look target (the speaker / scene partner, see viewer/gaze.ts), talk = head bob + jaw opening
+// driven by the voice's amplitude (AnalyserNode), walk = in-place leg/arm swing, sitting = hips
+// lowered with thighs forward. Everything is slow and eased: alive, never jittery.
+// ~20 low-poly meshes: phone-light.
 import * as THREE from 'three';
 
 export type Pose = 'standing' | 'sitting' | 'walking';
@@ -14,11 +17,45 @@ export interface Mannequin {
   setPose(pose: Pose): void;
   /** 0..1 current jaw opening */
   jawOpen(): number;
+  /**
+   * Turn the head toward a yaw relative to the body (rad, + = left), clamped to ±LOOK_LIMIT;
+   * null = no target (the head idles straight ahead).
+   */
+  setLook(yaw: number | null): void;
+  /** Current (eased) head yaw relative to the body, rad. */
+  lookYaw(): number;
+  /** Current weight shift, -1 (on the left leg) .. +1 (on the right leg). */
+  weightShift(): number;
   dispose(): void;
 }
 
 const PELVIS_Y = 0.96;
 const SIT_PELVIS_Y = 0.52;
+/** How far the head (neck + a little chest) turns from the body, rad (≈ 69°). */
+export const LOOK_LIMIT = 1.2;
+/** Pelvis travel (m) and roll (rad, loaded hip up) at a full weight shift. */
+const SHIFT_X = 0.045;
+const SHIFT_ROLL = 0.06;
+/** Hip → ankle (m), to keep the feet planted while the pelvis moves. */
+const LEG = 0.88;
+const SHIFT_EASE_S = 1.4;
+
+/** Small deterministic PRNG (mulberry32): each mannequin shifts on its own schedule. */
+function rng(seed: string): () => number {
+  let a = 0;
+  for (let i = 0; i < seed.length; i++) a = (Math.imul(a ^ seed.charCodeAt(i), 2654435761) + i) | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const smoothstep = (x: number) => {
+  const k = Math.min(1, Math.max(0, x));
+  return k * k * (3 - 2 * k);
+};
 
 export function buildMannequin(tint: string): Mannequin {
   const geometries: THREE.BufferGeometry[] = [];
@@ -92,6 +129,14 @@ export function buildMannequin(tint: string): Mannequin {
   let pose: Pose = 'standing';
   let jawOpen = 0;
   let talkEnergy = 0;
+  let lookTarget: number | null = null;
+  let look = 0;
+  const rand = rng(tint);
+  let shift = 0;
+  let shiftFrom = 0;
+  let shiftTo = 0;
+  let shiftStart = -Infinity;
+  let nextShiftAt = 2.5 + 3 * rand();
 
   return {
     root,
@@ -100,6 +145,11 @@ export function buildMannequin(tint: string): Mannequin {
       pose = p;
     },
     jawOpen: () => jawOpen,
+    setLook(yaw) {
+      lookTarget = yaw === null || !Number.isFinite(yaw) ? null : Math.max(-LOOK_LIMIT, Math.min(LOOK_LIMIT, yaw));
+    },
+    lookYaw: () => look,
+    weightShift: () => shift,
     animate(dt, t, speaking, level) {
       const breathe = Math.sin((t * Math.PI * 2) / 4);
       const sway = Math.sin((t * Math.PI * 2) / 5.3);
@@ -111,12 +161,39 @@ export function buildMannequin(tint: string): Mannequin {
       jaw.rotation.x = -0.42 * jawOpen;
       chest.rotation.x = 0.02 * breathe;
       spine.rotation.z = 0.025 * sway;
-      neck.rotation.y = 0.18 * Math.sin((t * Math.PI * 2) / 7.1) * (1 - 0.5 * talkEnergy);
+      // head toward the speaker / partner, eased (~0.3 s time constant) so a turn reads as a
+      // deliberate glance; a small idle wander stays on top (wider with nobody to look at)
+      look += ((lookTarget ?? 0) - look) * (1 - Math.exp(-dt * 3.5));
+      const wander = Math.sin((t * Math.PI * 2) / 7.1) * (lookTarget === null ? 0.18 : 0.05);
+      chest.rotation.y = 0.3 * look;
+      neck.rotation.y = 0.7 * look + wander * (1 - 0.5 * talkEnergy);
       neck.rotation.x = talkEnergy * (0.05 * Math.sin(t * 6.3) + 0.04 * jawOpen);
       head.rotation.z = talkEnergy * 0.04 * Math.sin(t * 3.7);
       // a little gesturing while talking (+x rotation = forearm/arm forward, toward -Z)
       arms.r.elbow.rotation.x = talkEnergy * (0.5 + 0.25 * Math.sin(t * 2.6));
       arms.r.shoulder.rotation.x = talkEnergy * 0.25;
+
+      // weight shift: standing only, every 6–10 s, to the other leg (now and then back to even)
+      if (pose === 'standing') {
+        if (t >= nextShiftAt) {
+          shiftFrom = shift;
+          const side = shift > 0.1 ? -1 : shift < -0.1 ? 1 : rand() < 0.5 ? -1 : 1;
+          shiftTo = Math.abs(shift) > 0.1 && rand() < 0.25 ? 0 : side * (0.65 + 0.35 * rand());
+          shiftStart = t;
+          nextShiftAt = t + 6 + 4 * rand();
+        }
+        shift = shiftFrom + (shiftTo - shiftFrom) * smoothstep((t - shiftStart) / SHIFT_EASE_S);
+      } else {
+        shift = shiftFrom = shiftTo = 0;
+      }
+      const roll = SHIFT_ROLL * shift;
+      const dx = SHIFT_X * shift;
+      pelvis.position.x = dx;
+      pelvis.rotation.z = roll;
+      // feet stay planted: each leg leans back under its hip; the torso counter-tilts so the
+      // head stays over the feet
+      legs.l.hip.rotation.z = legs.r.hip.rotation.z = -roll - Math.asin(dx / LEG);
+      spine.rotation.z += -1.2 * roll;
 
       if (pose === 'walking') {
         const w = t * Math.PI * 2 * 0.9;
@@ -140,10 +217,16 @@ export function buildMannequin(tint: string): Mannequin {
         if (talkEnergy < 0.5) arms.r.shoulder.rotation.x = 0.3;
         arms.l.elbow.rotation.x = 0.6;
       } else {
-        pelvis.position.y = PELVIS_Y - 0.004 * (1 + breathe);
+        // the loaded hip rises with the roll: drop the pelvis so that foot stays on the floor
+        pelvis.position.y = PELVIS_Y - 0.004 * (1 + breathe) - 0.09 * Math.sin(Math.abs(roll));
         pelvis.rotation.y = 0;
-        legs.l.hip.rotation.x = legs.r.hip.rotation.x = 0;
-        legs.l.knee.rotation.x = legs.r.knee.rotation.x = 0;
+        // the unloaded leg relaxes: knee a little bent, thigh a little forward
+        const relax = Math.abs(shift);
+        const free = shift > 0 ? legs.l : legs.r;
+        const loaded = shift > 0 ? legs.r : legs.l;
+        loaded.hip.rotation.x = loaded.knee.rotation.x = 0;
+        free.hip.rotation.x = 0.07 * relax;
+        free.knee.rotation.x = -0.14 * relax;
         arms.l.shoulder.rotation.x = 0.04 * sway;
         if (talkEnergy < 0.5) arms.r.shoulder.rotation.x = -0.04 * sway;
         arms.l.elbow.rotation.x = 0.08 + 0.03 * breathe;

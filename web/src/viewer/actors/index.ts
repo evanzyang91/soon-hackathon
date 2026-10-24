@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
+import { headYawToward } from '../gaze';
 import { buildMannequin, type Pose } from './mannequin';
 import { loadSplatBody } from './splat-actor';
 import { tintFor } from '@shared/tint';
@@ -21,6 +22,12 @@ export interface ActorHandle {
   speak(lineId: string, audioUrl: string, durationSeconds: number, text?: string): Promise<void>;
   stopSpeaking(): void;
   setPose(pose: 'standing' | 'sitting' | 'walking'): void;
+  /**
+   * Who to turn the head toward (world position; null = nobody): the speaker or the scene
+   * partner (world.ts decides, viewer/gaze.ts). Only the mannequin turns its head; a splat
+   * avatar's motion is baked.
+   */
+  lookAt?(target: THREE.Vector3 | null): void;
   update(dt: number, sceneTime: number): void;
   dispose(): void;
 }
@@ -32,6 +39,8 @@ interface Body {
   headY: number;
   animate(dt: number, t: number, speaking: boolean, level: number): void;
   setPose(pose: Pose): void;
+  /** Head yaw toward the look target, relative to the body (null = none). */
+  look?(yaw: number | null): void;
   /** small numbers for tests/HUD, mirrored into object.userData.debug every update */
   debug?(): Record<string, number>;
   dispose(): void;
@@ -60,7 +69,8 @@ function mannequinBody(tint: string): Body {
     headY: m.headY,
     animate: (dt, t, speaking, level) => m.animate(dt, t, speaking, level),
     setPose: (p) => m.setPose(p),
-    debug: () => ({ jaw: m.jawOpen() }),
+    look: (yaw) => m.setLook(yaw),
+    debug: () => ({ jaw: m.jawOpen(), look: m.lookYaw(), shift: m.weightShift() }),
     dispose: () => m.dispose(),
   };
 }
@@ -196,6 +206,7 @@ export async function createActor(
 
   let t = 0;
   let speakingLine: string | null = null;
+  let lookTarget: THREE.Vector3 | null = null;
   const handle: ActorHandle = {
     object,
     characterId: character.id,
@@ -225,8 +236,17 @@ export async function createActor(
       headY = body.headY - poseDrop(pose);
       place();
     },
+    lookAt(target) {
+      lookTarget = target ? (lookTarget ?? new THREE.Vector3()).copy(target) : null;
+    },
     update(dt, _sceneTime) {
       t += dt;
+      // actors are children of the scene root: position / rotation.y are world values
+      body.look?.(
+        lookTarget
+          ? headYawToward(object.position.x, object.position.z, object.rotation.y, lookTarget.x, lookTarget.z)
+          : null,
+      );
       const speaking = speech.speaking;
       const level = speech.level();
       body.animate(dt, t, speaking, level);
