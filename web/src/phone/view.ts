@@ -2,7 +2,7 @@
 // phone's pose, falling back to the 2D viewfinder whenever 3D is unavailable. Never throws into the
 // caller — pose streaming must keep running whatever happens here.
 import * as THREE from 'three';
-import { defaultLook, Look } from '@shared/look';
+import { defaultLook, Look, type SceneEdits } from '@shared/look';
 import type { SceneState } from '@shared/protocol';
 import type { Quat, Vec3 } from '@shared/schema';
 import { fetchEdits } from '../viewer/look/edits-client.ts';
@@ -71,6 +71,8 @@ export interface VoiceState {
 export class PhoneLook {
   private key = '';
   private fileLook: Look | null = null;
+  /** The last edits.json document; handed to every runtime it applies to (scene edits, WP G). */
+  private doc: SceneEdits | null = null;
   private fetched = -1;
   private wanted = 0;
   private live: Look | null = null;
@@ -99,6 +101,7 @@ export class PhoneLook {
     if (key !== this.key) {
       this.key = key;
       this.fileLook = null;
+      this.doc = null;
       this.fetched = -1;
       this.live = null;
     }
@@ -117,6 +120,7 @@ export class PhoneLook {
       .then((doc) => {
         if (key !== this.key) return;
         this.fileLook = doc.look;
+        this.doc = doc;
         this.fetched = doc.revision;
         if (this.fetched >= this.wanted) this.live = null;
         const rt = this.runtime();
@@ -140,6 +144,8 @@ export class PhoneLook {
   apply(force = false): void {
     const look = this.look;
     const rt = this.runtime();
+    // a scene loaded after the fetch still gets the document (regions, moves, props)
+    if (rt && this.doc && rt.edits !== this.doc) rt.edits = this.doc;
     const json = JSON.stringify(look);
     if (rt && (force || json !== this.applied)) {
       this.applied = json;
