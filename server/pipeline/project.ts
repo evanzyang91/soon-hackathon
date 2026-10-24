@@ -137,6 +137,7 @@ function initJob(scene: ScenePlan): SceneJob {
   return {
     sceneIndex: scene.index,
     slug: scene.slug,
+    heading: scene.heading,
     stages: {
       parse: { status: 'done' },
       world: { status: 'pending' },
@@ -553,6 +554,9 @@ export class ProjectStore {
       });
       WorldAsset.parse(asset);
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
+      const job = st.scenes[idx];
+      if (job && asset.thumbnail)
+        job.thumbnailUrl = `/projects/${id}/scene-${idx}/world/${asset.thumbnail}`;
       const note =
         asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()

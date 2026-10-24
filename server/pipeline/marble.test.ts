@@ -131,6 +131,7 @@ describe('marble client', () => {
       metricScaleFactor: 1.7,
       groundPlaneOffset: 1.2,
       opencvFrame: true,
+      caption: 'a rainy street',
     });
     for (const f of [
       'world_500k.spz',
