@@ -5,7 +5,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { FIXTURE, laptopState, watchPage } from './helpers.ts';
 
-test.skip(!process.env.CHAT_E2E, 'needs the project chat routes on the server; run with CHAT_E2E=1');
+test.skip(
+  !process.env.CHAT_E2E,
+  'needs the project chat routes on the server; run with CHAT_E2E=1',
+);
 
 /** A small portrait PNG drawn in the page (the upload path decodes and re-encodes it). */
 async function portrait(page: Page): Promise<Buffer> {
@@ -27,7 +30,9 @@ async function portrait(page: Page): Promise<Buffer> {
   return Buffer.from(b64, 'base64');
 }
 
-test('chat: plan → "make Theo taller" → photo for Maya → Generate → the first scene opens', async ({ page }) => {
+test('chat: plan → "make Theo taller" → photo for Maya → Generate → the first scene opens', async ({
+  page,
+}) => {
   const problems = watchPage(page, 'chat');
   await page.goto('/');
   await expect(page.locator('#health')).toHaveText('MOCK');
@@ -57,7 +62,9 @@ test('chat: plan → "make Theo taller" → photo for Maya → Generate → the 
   await expect(theoHeight).toHaveText(taller);
 
   // a reference photo, targeted at Maya with the picker
-  await page.getByTestId('chat-file').setInputFiles({ name: 'maya.png', mimeType: 'image/png', buffer: await portrait(page) });
+  await page
+    .getByTestId('chat-file')
+    .setInputFiles({ name: 'maya.png', mimeType: 'image/png', buffer: await portrait(page) });
   await page.getByTestId('attach-target').click();
   await page.locator('[data-testid=attach-target-option][data-value="character:maya"]').click();
   await expect(page.getByTestId('attach-target')).toContainText('Maya');
@@ -82,7 +89,9 @@ test('chat: plan → "make Theo taller" → photo for Maya → Generate → the 
   // the same thread docks in the drawer next to the open scene; the draft's Generate is gone
   await expect(page.locator('#left [data-testid=chat] [data-testid=plan-card]')).toBeVisible();
   await expect(page.getByTestId('plan-generate')).toHaveCount(0);
-  await expect(page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`)).toHaveCount(3);
+  await expect(
+    page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`),
+  ).toHaveCount(3);
 
   expect(problems).toEqual([]);
 });

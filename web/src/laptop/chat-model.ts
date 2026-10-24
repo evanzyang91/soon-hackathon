@@ -54,7 +54,12 @@ export function scriptOutline(text: string): { characters: string[]; headings: s
       next &&
       (lines[i - 1] ?? '') === ''
     )
-      characters.add(line.replace(/^@/, '').replace(/\s*\(.*\)$/, '').trim());
+      characters.add(
+        line
+          .replace(/^@/, '')
+          .replace(/\s*\(.*\)$/, '')
+          .trim(),
+      );
   }
   return { characters: [...characters], headings };
 }
@@ -69,13 +74,23 @@ export function targetOptions(plan: ScreenplayPlan | null, screenplay = ''): Tar
     for (const c of plan.characters)
       out.push({ value: `character:${c.id}`, label: displayName(c.name), group: 'character' });
     for (const s of plan.scenes)
-      out.push({ value: `scene:${s.index + 1}`, label: `Scene ${s.index + 1} · ${s.heading}`, group: 'scene' });
+      out.push({
+        value: `scene:${s.index + 1}`,
+        label: `Scene ${s.index + 1} · ${s.heading}`,
+        group: 'scene',
+      });
     return out;
   }
   const { characters, headings } = scriptOutline(screenplay);
   for (const name of characters)
-    out.push({ value: `character:${name.toLowerCase()}`, label: displayName(name), group: 'character' });
-  headings.forEach((hd, i) => out.push({ value: `scene:${i + 1}`, label: `Scene ${i + 1} · ${hd}`, group: 'scene' }));
+    out.push({
+      value: `character:${name.toLowerCase()}`,
+      label: displayName(name),
+      group: 'character',
+    });
+  headings.forEach((hd, i) =>
+    out.push({ value: `scene:${i + 1}`, label: `Scene ${i + 1} · ${hd}`, group: 'scene' }),
+  );
   return out;
 }
 
@@ -93,7 +108,10 @@ export function hintLabel(hint: string | undefined, plan: ScreenplayPlan | null)
 
 /** A character by id or name, case-insensitive (how the chat planner resolves names). */
 export function findCharacter(plan: ScreenplayPlan, name: string): Character | undefined {
-  const n = name.trim().toLowerCase().replace(/['’]s$/, '');
+  const n = name
+    .trim()
+    .toLowerCase()
+    .replace(/['’]s$/, '');
   return plan.characters.find((c) => c.id.toLowerCase() === n || c.name.toLowerCase() === n);
 }
 
@@ -140,6 +158,10 @@ export const hasRunning = (chat: ProjectChat | null | undefined) =>
 
 /** A reply that started the generation of a draft (the laptop then opens the first ready scene). */
 export const startedGeneration = (m: ChatMessage | undefined) =>
-  !!m?.actions?.some((a) => a.type === 'generate' && (a.status === 'applied' || a.status === 'running' || a.status === 'done'));
+  !!m?.actions?.some(
+    (a) =>
+      a.type === 'generate' &&
+      (a.status === 'applied' || a.status === 'running' || a.status === 'done'),
+  );
 
 export const fmtUsd = (usd: number) => (usd < 0.01 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(2)}`);
