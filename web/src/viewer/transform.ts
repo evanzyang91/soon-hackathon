@@ -12,6 +12,12 @@
 // A measured scale calibration (WorldAsset.scaleCalibration, server/pipeline/calibrate.ts)
 // multiplies the scale: S = factor × msf. The floor is still raw y = -gpo / msf, so ty becomes
 // factor × gpo and the floor stays at y = 0 while everything above it grows or shrinks.
+//
+// Marble's declared floor is not always where the splats' ground is: outdoors it sits 0.09–0.2 m
+// above the visible ground (measured by calibrate.ts on the collider near the source camera and
+// stored as WorldAsset.floorOffsetMeters, at Marble's scale). The world is raised by that much
+// (× the calibration factor, since the world scales about the declared floor), so the visible
+// ground lands at y = 0 where the actors stand; the collider rides along as a child of the world.
 import type { Vec3, WorldAsset } from '@shared/schema';
 
 export interface WorldTransform {
@@ -23,12 +29,25 @@ export interface WorldTransform {
 type FrameInfo = Pick<WorldAsset, 'metricScaleFactor' | 'groundPlaneOffset'> & {
   opencvFrame?: boolean;
   scaleCalibration?: { factor: number } | null;
+  floorOffsetMeters?: number | null;
 };
+
+/** Never apply a floor shift beyond this (a bad measurement must not bury or float the scene). */
+export const MAX_FLOOR_OFFSET_M = 1;
 
 /** The measured correction on top of Marble's metric scale (1 when absent or invalid). */
 export function calibrationFactor(w: Pick<FrameInfo, 'scaleCalibration'>): number {
   const f = w.scaleCalibration?.factor;
   return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : 1;
+}
+
+/**
+ * How far the visible ground sits below Marble's declared floor, in metres at Marble's scale
+ * (0 when absent, invalid or beyond ±MAX_FLOOR_OFFSET_M).
+ */
+export function floorOffset(w: Pick<FrameInfo, 'floorOffsetMeters'>): number {
+  const f = w.floorOffsetMeters;
+  return typeof f === 'number' && Number.isFinite(f) && Math.abs(f) <= MAX_FLOOR_OFFSET_M ? f : 0;
 }
 
 /** Floor height in the Y-up frame (after the flip, if any), in raw asset units. */
@@ -37,11 +56,12 @@ export function rawFloorY(w: FrameInfo): number {
 }
 
 export function worldTransform(w: FrameInfo): WorldTransform {
-  const scale = w.metricScaleFactor * calibrationFactor(w);
+  const factor = calibrationFactor(w);
+  const scale = w.metricScaleFactor * factor;
   return {
     rotationX: (w.opencvFrame ?? true) ? Math.PI : 0,
     scale,
-    positionY: -rawFloorY(w) * scale,
+    positionY: -rawFloorY(w) * scale + factor * floorOffset(w),
   };
 }
 
