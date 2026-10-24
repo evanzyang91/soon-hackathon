@@ -49,8 +49,11 @@ import { ScreenplayPlan } from '../../shared/schema.ts';
 import {
   applyStagingToManifest,
   formatStaging,
+  groundMarks,
+  measureGroundAtMarks,
   readStaging,
   renderStagingBeforeAfter,
+  stagedBlocking,
   stageScene,
   stagingCurrent,
   writeStaging,
@@ -231,6 +234,11 @@ async function main() {
         await writeStaging(sceneDir, report);
         const m = await applyStagingToManifest(sceneDir, report, log);
         log(`wrote ${sceneDir}/staging.json${m ? ' and plan.blocking in manifest.json' : ' (manifest.json not changed: missing, another world, or nothing staged)'}`);
+        const staged = stagedBlocking(report, { asset, scene, characters: plan.characters });
+        if (staged) {
+          const next = await measureGroundAtMarks(worldDir, asset, groundMarks(staged, scene.blocking), { log, manifest: true });
+          log(`floor offset ${next.floorOffsetMeters ?? '—'} and the ground field re-measured at the staged marks (world-asset.json, ground.json, manifest.json)`);
+        }
       }
       const ba = str(flags['before-after']);
       if (ba) {

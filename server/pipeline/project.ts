@@ -73,6 +73,8 @@ import { slugify } from './geometry.ts';
 import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
 import { parseScreenplay } from './screenplay.ts';
 import {
+  groundMarks,
+  measureGroundAtMarks,
   readStaging,
   stageScene,
   stagedBlocking,
@@ -796,7 +798,7 @@ export class ProjectStore {
   private async groundStep(scene: ScenePlan, outDir: string, asset: WorldAsset, log: (m: string) => void): Promise<WorldAsset> {
     try {
       if (await storedGroundField(outDir, asset)) return asset;
-      const marks = scene.blocking.map((b) => [b.position[0], b.position[2]] as const);
+      const marks = await this.markXZ(scene, outDir, asset);
       // the mock floor is a sparse 0.14 m lattice: 2 splats make a layer there
       const next = await writeGroundField(outDir, asset, { marks, log, minLayer: asset.provider === 'mock' ? 2 : undefined });
       await writeJsonAtomic(join(outDir, ASSET_FILE), next);
@@ -820,7 +822,7 @@ export class ProjectStore {
     log: (m: string) => void,
   ): Promise<{ asset: WorldAsset; note: string }> {
     if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
-    const marks = scene.blocking.map((b) => [b.position[0], b.position[2]] as const);
+    const marks = await this.markXZ(scene, outDir, asset);
     if (asset.scaleCalibration) {
       // carried by a library copy: re-decided from its stored report (no Claude call), with the
       // visible ground measured where this scene's actors stand (local, ~2 s)
@@ -867,6 +869,25 @@ export class ProjectStore {
   }
 
   /**
+   * Where the scene's actors stand (xz, scene metres) for the floor and ground measurements: the
+   * staged marks when scene-<n>/staging.json is current for this world, then the planner's
+   * (staging.ts groundMarks), so a re-run measures where the previous run staged them instead of
+   * flipping back and forth.
+   */
+  private async markXZ(scene: ScenePlan, worldDir: string, asset: WorldAsset): Promise<(readonly [number, number])[]> {
+    const plan = await this.plan(this.projectOf(worldDir)).catch(() => undefined);
+    const staged = plan
+      ? stagedBlocking(await readStaging(join(worldDir, '..')), { asset, scene, characters: plan.characters })
+      : undefined;
+    return groundMarks(staged, scene.blocking);
+  }
+
+  /** The project id a scene world dir belongs to (<dataDir>/<id>/scene-<n>/world). */
+  private projectOf(worldDir: string): string {
+    return relative(this.dataDir, worldDir).split(sep)[0] ?? '';
+  }
+
+  /**
    * Live Marble worlds with a collider and the Anthropic key: stages the scene's actors on the set
    * once (staging.ts) into scene-<n>/staging.json, reused while its inputs are unchanged (a report
    * that kept the planner's blocking is reused too, so a hopeless set is not paid for twice).
@@ -899,6 +920,12 @@ export class ProjectStore {
       });
       const report = await this.deps.stageScene({ worldDir, asset, scene, characters: plan.characters, log });
       await writeStaging(sceneDir, report);
+      // the floor offset and the ground field follow the actors to their new marks
+      const staged = stagedBlocking(report, { asset, scene, characters: plan.characters });
+      if (staged)
+        await measureGroundAtMarks(worldDir, asset, groundMarks(staged, scene.blocking), { log }).catch((e) =>
+          log(`ground not re-measured at the staged marks: ${errMsg(e)}`),
+        );
       return summary(report);
     } catch (e) {
       log(`staging skipped: ${errMsg(e)}; the planner's blocking is kept`);
