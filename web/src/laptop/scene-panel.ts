@@ -182,8 +182,8 @@ export function mountScenePanel(director: Director) {
           h('span', { class: 'muted small' }, `${Math.round(s.fovDeg)}°`),
           h(
             'button',
-            { class: 'icon', 'data-testid': 'shot-add', title: 'Add as camera', onclick: () => director.addShotAsCamera(now()) },
-            '+',
+            { class: 'icon', 'data-testid': 'shot-add', title: 'Add as camera', 'aria-label': 'Add as camera', onclick: () => director.addShotAsCamera(now()) },
+            icon('plus'),
           ),
         ),
       );

@@ -32,18 +32,9 @@
 .edit-question {
   color: var(--warn);
 }
-/* the planner's scope: a quiet tag; a world regen (minutes and credits) in warn */
+/* the planner's scope: a .tag (style.css); a world regen (minutes and credits) in warn */
 .chip[class*='scope-'] {
-  height: 18px;
-  padding: 0 6px;
   margin-right: 2px;
-  border-radius: 4px;
-  font-size: var(--fs-xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  vertical-align: 1px;
-  color: var(--muted);
-  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .chip.scope-regen {
   color: var(--warn);

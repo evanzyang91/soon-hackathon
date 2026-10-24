@@ -81,7 +81,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   // ---- tabs ------------------------------------------------------------------------------------
   // the panels' own tab rows go; the shell's replaces them (same test ids)
   for (const old of right.querySelectorAll('.right-tabs')) old.remove();
-  const nav = h('nav', { class: 'shell-tabs', role: 'tablist', 'aria-label': 'Panels' });
+  const nav = h('nav', { class: 'shell-tabs tabs', role: 'tablist', 'aria-label': 'Panels' });
   const buttons = new Map<Tab, HTMLButtonElement>();
   for (const t of TABS) {
     const b = h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': t.id, 'data-testid': `tab-${t.id}`, title: t.hint, onclick: () => show(t.id) }, t.label);
@@ -176,7 +176,8 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
     lookBadge.hidden = !named;
     if (named && lookBadge.dataset.name !== look.name) {
       lookBadge.dataset.name = look.name;
-      lookBadge.replaceChildren(h('span', { class: 'look-badge-label' }, 'Look'), h('span', { class: 'look-badge-name' }, look.name));
+      // the text stays "look: <name>" (tests and scripts read it); the label part is muted
+      lookBadge.replaceChildren(h('span', { class: 'look-badge-label' }, 'look: '), h('span', { class: 'look-badge-name' }, look.name));
     }
     renderUndo();
   };
