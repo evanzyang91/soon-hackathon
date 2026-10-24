@@ -1,9 +1,12 @@
 // HTTP API between the browsers and server/index.ts. Owned by the lead.
 //
-// POST   /api/projects              body { title?: string, screenplay: string, draft?: boolean,
-//                                           attachments?: string[] (upload ids) }  → ProjectStatus (202)
-//        draft: true runs only the parse stage; the director amends the plan in the project chat
-//        and starts the rest with /generate. Default false: everything runs (as before).
+// POST   /api/projects              body { title?: string, screenplay: string, draft?: boolean }  → ProjectStatus (202)
+//        draft: true runs only the parse stage and seeds the project chat (the screenplay as the
+//        first user message + the assistant's plan card); the director amends the plan in the
+//        chat and starts the rest with /generate. Photos for the first message are uploaded
+//        after the draft exists (uploads need a project id) and sent as the next chat message.
+//        Default false: everything runs (as before).
+// GET    /projects/:id/plan.json     the ScreenplayPlan once parse is done (static)
 // GET    /api/projects               → ProjectStatus[]
 // GET    /api/projects/:id           → ProjectStatus
 // POST   /api/projects/:id/retry     body { sceneIndex: number, stage: StageName } → ProjectStatus
@@ -26,8 +29,9 @@
 //        (plan patches, reference assignments, dialogue → TTS, actor rebuilds), returns expensive
 //        ones (world regeneration: ~5 min + 1,580 credits; re-plan of a live project) as
 //        needs-confirm, and appends the assistant message. Synchronous (5–20 s).
-// POST   /api/projects/:id/chat/confirm  body { messageId, actionId } → ChatResponse
-//        runs one needs-confirm action (the action's status becomes running / done / failed).
+// POST   /api/projects/:id/chat/confirm  body { messageId, actionId, decline?: boolean } → ChatResponse
+//        runs one needs-confirm action (the action's status becomes running / done / failed), or
+//        with decline: true marks it skipped. Every status change bumps the chat revision.
 // POST   /api/projects/:id/generate  → ProjectStatus (202): starts world / actors / tts for a
 //                                    draft project (no-op when already generating).
 // GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts } }
@@ -58,6 +62,7 @@ export const api = {
   newRoom: '/api/rooms/new',
   ws: '/ws',
   manifest: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/manifest.json`,
+  plan: (id: string) => `/projects/${id}/plan.json`,
   editsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/edits.json`,
   edits: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/edits`,
   reprompt: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/reprompt`,
