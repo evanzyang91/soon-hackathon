@@ -1,0 +1,120 @@
+{
+ "schema": "previz.motion-library/1",
+ "fps": 30,
+ "joints": 22,
+ "file": "motion-clips.bin",
+ "bytes": 161492,
+ "sha256": "65c81805b3bf864a265be4585a20abb5f654824ac90844e6cd63ee03a2800cc2",
+ "layout": "per clip at `offset`: frames x 22 x int16 [x,y,z,w]*32767 local rotations (SMPL-X joints 0..21, root = global orientation, +Y up, faces +Z), then frames x float32 [x,y,z] root offset (source metres; x/z in place)",
+ "source": "HY-Motion 1.0 (tencent/HY-Motion-1.0 @620dd559, code @4e426f5a), text guidance 5.0, 50 Euler steps, 30 fps; seamless loops by worker/motion_library.py",
+ "clips": [
+  {
+   "name": "idle-listen",
+   "pose": "standing",
+   "speaking": false,
+   "frames": 202,
+   "offset": 0,
+   "speed": 0.0,
+   "legLength": 0.7795,
+   "seconds": 6.733,
+   "seed": 11,
+   "window": [
+    23,
+    225
+   ],
+   "seamJump": 0.0574,
+   "medianStep": 0.1966,
+   "prompt": "A person stands still, listening to someone, nodding slightly now and then, with relaxed arms and a small shift of weight between the feet."
+  },
+  {
+   "name": "talk-1",
+   "pose": "standing",
+   "speaking": true,
+   "frames": 190,
+   "offset": 37976,
+   "speed": 0.0,
+   "legLength": 0.7795,
+   "seconds": 6.333,
+   "seed": 41,
+   "window": [
+    29,
+    219
+   ],
+   "seamJump": 0.1368,
+   "medianStep": 0.1138,
+   "prompt": "A person stands in place talking to someone, gesturing naturally with both hands in front of the body as they explain something."
+  },
+  {
+   "name": "talk-2",
+   "pose": "standing",
+   "speaking": true,
+   "frames": 151,
+   "offset": 73696,
+   "speed": 0.0,
+   "legLength": 0.7795,
+   "seconds": 5.033,
+   "seed": 11,
+   "window": [
+    85,
+    236
+   ],
+   "seamJump": 0.083,
+   "medianStep": 0.2051,
+   "prompt": "A person stands and talks to someone in front of them, now and then opening both palms outward as if asking a question, then lowering the hands."
+  },
+  {
+   "name": "sit-idle",
+   "pose": "sitting",
+   "speaking": false,
+   "frames": 125,
+   "offset": 102084,
+   "speed": 0.0,
+   "legLength": 0.7795,
+   "seconds": 4.167,
+   "seed": 41,
+   "window": [
+    38,
+    163
+   ],
+   "seamJump": 0.0361,
+   "medianStep": 0.0301,
+   "prompt": "A person sits on a chair, relaxed, hands resting on the thighs, looking around calmly."
+  },
+  {
+   "name": "sit-talk",
+   "pose": "sitting",
+   "speaking": true,
+   "frames": 155,
+   "offset": 125584,
+   "speed": 0.0,
+   "legLength": 0.7795,
+   "seconds": 5.167,
+   "seed": 11,
+   "window": [
+    28,
+    183
+   ],
+   "seamJump": 0.1728,
+   "medianStep": 0.2282,
+   "prompt": "A person sits upright on a chair and talks to someone, moving both hands in front of the chest as they speak."
+  },
+  {
+   "name": "walk",
+   "pose": "walking",
+   "speaking": false,
+   "frames": 36,
+   "offset": 154724,
+   "speed": 1.0028,
+   "legLength": 0.7795,
+   "seconds": 1.2,
+   "seed": 37,
+   "window": [
+    80,
+    116
+   ],
+   "seamJump": 0.4749,
+   "medianStep": 0.399,
+   "prompt": "A person walks forward in a straight line at a relaxed, normal pace."
+  }
+ ]
+}
