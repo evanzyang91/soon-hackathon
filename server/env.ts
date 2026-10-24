@@ -12,6 +12,10 @@ export const env = {
   marbleModel: process.env.MARBLE_MODEL ?? 'marble-1.1',
   /** Log the Marble generate request instead of sending it; the pipeline gets the mock world. */
   marbleDryRun: flag(process.env.MARBLE_DRY_RUN),
+  /** Measure each new Marble world's real scale after download (CALIBRATE=0 turns it off). */
+  calibrate: process.env.CALIBRATE !== '0',
+  /** The Claude-vision half of calibration (renders + 2 requests, ~$0.1/world); CALIBRATE_VISION=0 skips it. */
+  calibrateVision: process.env.CALIBRATE_VISION !== '0',
   keys: {
     marble: process.env.WLT_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',
