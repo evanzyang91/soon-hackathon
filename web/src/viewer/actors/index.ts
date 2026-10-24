@@ -1,5 +1,7 @@
 // WP D: actors in the shared viewer. One ActorHandle per character, any asset kind:
-//   splat-sequence -> LHM gaussian avatar looping idle/talk frames (splat-actor.ts)
+//   splat-sequence -> LHM gaussian avatar. With a runtime rig (sequence.json `rig`) it performs
+//                     from the shared motion library, skinned on the GPU (skinned-actor.ts);
+//                     otherwise it loops the baked idle/talk frames (splat-actor.ts)
 //   glb-humanoid   -> rigged GLB when `glb` is a real .glb/.gltf URL that loads, else the
 //                     procedural mannequin (mannequin.ts); `glb: 'procedural:mannequin'` asks
 //                     for the mannequin directly (what server/pipeline/actors.ts writes).
@@ -12,7 +14,9 @@ import type { ActorAsset, Character } from '@shared/schema';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { headYawToward } from '../gaze';
 import { buildMannequin, type Pose } from './mannequin';
-import { loadSplatBody } from './splat-actor';
+import { loadSequence, loadSplatBody } from './splat-actor';
+import { loadSkinnedBody } from './skinned-actor';
+import type { RigPointer } from './rig';
 import { tintFor } from '@shared/tint';
 
 export interface ActorHandle {
@@ -24,8 +28,8 @@ export interface ActorHandle {
   setPose(pose: 'standing' | 'sitting' | 'walking'): void;
   /**
    * Who to turn the head toward (world position; null = nobody): the speaker or the scene
-   * partner (world.ts decides, viewer/gaze.ts). Only the mannequin turns its head; a splat
-   * avatar's motion is baked.
+   * partner (world.ts decides, viewer/gaze.ts). The mannequin and rigged splat actors turn their
+   * heads; a baked splat sequence cannot.
    */
   lookAt?(target: THREE.Vector3 | null): void;
   update(dt: number, sceneTime: number): void;
@@ -37,8 +41,12 @@ interface Body {
   kind: 'splat' | 'mannequin' | 'glb';
   root: THREE.Object3D;
   headY: number;
-  animate(dt: number, t: number, speaking: boolean, level: number): void;
+  animate(dt: number, t: number, speaking: boolean, level: number, sceneTime: number): void;
   setPose(pose: Pose): void;
+  /** Seated drop the handle applies to label/voice (bodies that really sit report their own). */
+  drop?(pose: Pose): number;
+  /** Body position relative to the mark (actor frame, metres); walking-in moves it. */
+  offset?: THREE.Vector3;
   /** Head yaw toward the look target, relative to the body (null = none). */
   look?(yaw: number | null): void;
   /** small numbers for tests/HUD, mirrored into object.userData.debug every update */
@@ -55,6 +63,8 @@ export const PROCEDURAL_GLB = 'procedural:mannequin';
  */
 export const SIT_DROP_M = 0.45;
 export const poseDrop = (pose: Pose) => (pose === 'sitting' ? SIT_DROP_M : 0);
+/** Head drop of a rigged splat actor playing the seated clips (measured on the library). */
+export const SKINNED_SIT_DROP_M = 0.42;
 
 /** True when `glb` names a loadable file rather than the procedural mannequin. */
 export function wantsGlbFile(glb: string): boolean {
@@ -141,7 +151,31 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
 async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promise<Body> {
   if (asset.kind === 'splat-sequence') {
     try {
-      const s = await loadSplatBody(asset, baseUrl);
+      const loaded = await loadSequence(asset, baseUrl);
+      const rig = (loaded.seq as { rig?: RigPointer }).rig;
+      if (rig?.file && rig.clips) {
+        try {
+          const k = await loadSkinnedBody(asset, loaded.dir, rig);
+          return {
+            kind: 'splat',
+            root: k.root,
+            headY: k.headY,
+            animate: (dt, _t, speaking, level, sceneTime) => k.animate(dt, sceneTime, speaking, level),
+            setPose: (p) => {
+              k.setPose(p);
+              k.root.position.y = k.canSit ? 0 : -poseDrop(p);
+            },
+            drop: (p) => (p === 'sitting' ? (k.canSit ? SKINNED_SIT_DROP_M : SIT_DROP_M) : 0),
+            look: (yaw) => k.look(yaw),
+            offset: k.offset,
+            debug: () => k.debug(),
+            dispose: () => k.dispose(),
+          };
+        } catch (err) {
+          console.warn(`actor ${asset.characterId}: runtime rig failed, playing the baked sequence`, err);
+        }
+      }
+      const s = await loadSplatBody(asset, baseUrl, loaded);
       return {
         kind: 'splat',
         root: s.root,
@@ -202,6 +236,15 @@ export async function createActor(
     caption.sprite.position.y = headY + 0.3;
     speech.audio.position.y = headY;
   };
+  /** label, caption and voice follow a body that walks in from behind its mark */
+  const follow = (o: THREE.Vector3) => {
+    for (const p of [label.sprite.position, caption.sprite.position, speech.audio.position]) {
+      p.x = o.x;
+      p.z = o.z;
+    }
+  };
+  const bodyAt = new THREE.Vector3();
+  const bodyOffset = new THREE.Vector3();
   place();
 
   let t = 0;
@@ -233,23 +276,24 @@ export async function createActor(
     },
     setPose(pose) {
       body.setPose(pose);
-      headY = body.headY - poseDrop(pose);
+      headY = body.headY - (body.drop ? body.drop(pose) : poseDrop(pose));
       place();
     },
     lookAt(target) {
       lookTarget = target ? (lookTarget ?? new THREE.Vector3()).copy(target) : null;
     },
-    update(dt, _sceneTime) {
+    update(dt, sceneTime) {
       t += dt;
       // actors are children of the scene root: position / rotation.y are world values
+      bodyAt.copy(object.position);
+      if (body.offset) bodyAt.add(bodyOffset.copy(body.offset).applyAxisAngle(THREE.Object3D.DEFAULT_UP, object.rotation.y));
       body.look?.(
-        lookTarget
-          ? headYawToward(object.position.x, object.position.z, object.rotation.y, lookTarget.x, lookTarget.z)
-          : null,
+        lookTarget ? headYawToward(bodyAt.x, bodyAt.z, object.rotation.y, lookTarget.x, lookTarget.z) : null,
       );
       const speaking = speech.speaking;
       const level = speech.level();
-      body.animate(dt, t, speaking, level);
+      body.animate(dt, t, speaking, level, sceneTime);
+      if (body.offset) follow(body.offset);
       if (body.debug) object.userData.debug = { ...body.debug(), level, speaking: speaking ? 1 : 0 };
       if (caption.sprite.visible) caption.sprite.position.y = headY + 0.3 + 0.015 * Math.sin(t * 5);
     },
