@@ -10,7 +10,6 @@ import {
   setOpEnabled,
   effectiveProps,
   effectiveTransforms,
-  encodeLookPatch,
   evaluateSpec,
   hueMultiplier,
   isParked,
@@ -31,16 +30,17 @@ const region = (o: Partial<RegionEdit> = {}): RegionEdit =>
 const look = (patch: object, enabled = true) => SceneEdit.parse({ kind: 'look', id: Math.random().toString(36), patch, enabled });
 
 describe('look patches', () => {
-  it('a parsed patch is default-filled; only the set values count', () => {
+  it('a parsed patch holds exactly the set values (no defaults filled in)', () => {
     const e = look({ contrast: 1.2, fog: { density: 0.3 } });
     if (e.kind !== 'look') throw new Error();
-    expect(e.patch.exposure).toBe(0); // zod filled it
-    expect(patchEntries(e.patch)).toEqual({ contrast: 1.2, fog: { density: 0.3 } });
+    expect(e.patch.exposure).toBeUndefined();
+    expect(e.patch).toEqual({ contrast: 1.2, fog: { density: 0.3 } });
+    expect(patchEntries({ contrast: 1.2, fog: {}, lights: [], exposure: undefined })).toEqual({ contrast: 1.2 });
   });
 
   it('look ops are baked into look; switching one off restores what it replaced, on merges it again', () => {
     const base = { ...emptySceneEdits(), look: { ...defaultLook(), exposure: -0.5, contrast: 1.4 } };
-    const warm = look(encodeLookPatch({ temperature: 0.3, contrast: 1.2 }));
+    const warm = look({ temperature: 0.3, contrast: 1.2 });
     const plan = { scope: 'look' as const, summary: 's', ops: [warm], needsTarget: [] };
     const doc = appendOps(base, [warm], { prompt: 'warmer', plan, at: 't' });
     expect(doc.look).toMatchObject({ exposure: -0.5, contrast: 1.2, temperature: 0.3 });
@@ -50,7 +50,7 @@ describe('look patches', () => {
     const later = { ...doc, look: { ...doc.look, exposure: 0.7 } };
     const off = setOpEnabled(later, warm.id, false);
     expect(off.look.contrast).toBe(1.4);
-    expect(Math.abs(off.look.temperature)).toBeLessThan(0.002);
+    expect(off.look.temperature).toBe(0);
     expect(off.look.exposure).toBe(0.7);
     expect(off.edits[0]!.enabled).toBe(false);
     expect(setOpEnabled(off, warm.id, true).look).toMatchObject({ contrast: 1.2, temperature: 0.3, exposure: 0.7 });
@@ -70,17 +70,19 @@ describe('look patches', () => {
   it('nested groups merge per field; lights upsert by id', () => {
     const base = { ...defaultLook(), fog: { color: '#112233', density: 0.1 } };
     const key = { id: 'k', name: 'Key', kind: 'spot' as const, position: [1, 2, 3] as Vec3, color: '#fff', intensity: 2, radius: 6, coneDeg: 40, enabled: true };
-    const merged = mergeLook(base, { fog: { color: '#9aa3ad', density: 0.5 }, lights: [key] });
-    expect(merged.fog).toEqual({ color: '#112233', density: 0.5 }); // the default colour did not count
+    const merged = mergeLook(base, { fog: { density: 0.5 }, lights: [key] });
+    expect(merged.fog).toEqual({ color: '#112233', density: 0.5 }); // only the set field changes
+    expect(mergeLook(base, { fog: { color: '#9aa3ad' } }).fog).toEqual({ color: '#9aa3ad', density: 0.1 }); // a default value is still an instruction
     expect(mergeLook(merged, { lights: [{ ...key, intensity: 5 }] }).lights).toEqual([{ ...key, intensity: 5 }]);
   });
 
-  it('encodeLookPatch keeps a reset-to-default value alive through the parse', () => {
-    const e = look(encodeLookPatch({ exposure: 0, contrast: 1 }));
+  it('a reset-to-default value survives the parse and is applied exactly', () => {
+    const e = look({ exposure: 0, contrast: 1, dof: { enabled: false } });
     if (e.kind !== 'look') throw new Error();
-    const l = mergeLook({ ...defaultLook(), exposure: -1, contrast: 1.6 }, e.patch);
-    expect(Math.abs(l.exposure)).toBeLessThan(0.002);
-    expect(Math.abs(l.contrast - 1)).toBeLessThan(0.002);
+    const l = mergeLook({ ...defaultLook(), exposure: -1, contrast: 1.6, dof: { enabled: true, focusDistance: 5, fStop: 4 } }, e.patch);
+    expect(l.exposure).toBe(0);
+    expect(l.contrast).toBe(1);
+    expect(l.dof).toEqual({ enabled: false, focusDistance: 5, fStop: 4 }); // only `enabled` changed
   });
 });
 

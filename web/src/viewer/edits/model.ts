@@ -8,44 +8,38 @@
 // as a disabled look op with id `<opId>.before` (`lookBefore`). Switching the op off restores them
 // (`revertLookPatch`), switching it on merges it again.
 //
-// Look patches: zod v4 fills every default into `Look.partial()` when a LookEdit is parsed, so a
-// stored patch {contrast: 1.2} comes back as a whole default Look with contrast 1.2. A patch
-// therefore only counts the values that differ from the defaults (`patchEntries`); the server
-// nudges a value that must equal its default by 1e-3 (`encodeLookPatch`) so it survives. Contract
-// proposal: LookEdit.patch as a defaults-free deep partial (plus an optional `before`).
-import { defaultLook, type EditPlan, type Look, type SceneEdit, type SceneEdits } from '@shared/look';
+// Look patches (shared/look.ts LookPatch) are defaults-free deep partials: a stored patch holds
+// exactly the values the edit set, so a value equal to its default (exposure back to 0) is a real
+// instruction and survives the parse. `patchEntries` only drops undefined / empty groups.
+import { defaultLook, type EditPlan, type Look, type LookPatch, type SceneEdit, type SceneEdits } from '@shared/look';
 import type { DynamicElement, Vec3 } from '@shared/schema';
 
 export type RegionEdit = Extract<SceneEdit, { kind: 'splat-region' }>;
 export type TransformEdit = Extract<SceneEdit, { kind: 'transform' }>;
 export type LookEdit = Extract<SceneEdit, { kind: 'look' }>;
 export type PropAddEdit = Extract<SceneEdit, { kind: 'prop-add' }>;
-export type LookPatch = Partial<Look>;
+export type { LookPatch };
 
 const DEFAULT_LOOK = defaultLook();
 const NESTED = ['fog', 'skyTint', 'dof'] as const;
 type Nested = (typeof NESTED)[number];
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-
 // ---------------------------------------------------------------------------------------------
 // Look
 // ---------------------------------------------------------------------------------------------
 
-/** The values of a (possibly default-filled) patch that were really set. */
+/** The values a patch really sets: undefined entries, empty nested groups and an empty lights list are dropped. */
 export function patchEntries(patch: LookPatch): LookPatch {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue;
     if ((NESTED as readonly string[]).includes(k)) {
-      const def = DEFAULT_LOOK[k as Nested] as Record<string, unknown>;
       const inner: Record<string, unknown> = {};
-      for (const [ik, iv] of Object.entries(v as Record<string, unknown>))
-        if (iv !== undefined && !same(iv, def[ik])) inner[ik] = iv;
+      for (const [ik, iv] of Object.entries(v as Record<string, unknown>)) if (iv !== undefined) inner[ik] = iv;
       if (Object.keys(inner).length) out[k] = inner;
     } else if (k === 'lights') {
       if (Array.isArray(v) && v.length) out[k] = v;
-    } else if (!same(v, (DEFAULT_LOOK as Record<string, unknown>)[k])) out[k] = v;
+    } else out[k] = v;
   }
   return out as LookPatch;
 }
@@ -71,8 +65,8 @@ export function mergeLook(base: Look, patch: LookPatch): Look {
 
 /**
  * What `patch` would replace in `look`: the current values of exactly the fields it sets (lights:
- * the current versions of the lights it upserts, none for new ones), encoded so they survive a
- * parse. Stored with the op so switching it off can restore them.
+ * the current versions of the lights it upserts, none for new ones). Stored with the op so
+ * switching it off can restore them.
  */
 export function lookBefore(look: Look, patch: LookPatch): LookPatch {
   const p = patchEntries(patch) as Record<string, unknown>;
@@ -83,9 +77,12 @@ export function lookBefore(look: Look, patch: LookPatch): LookPatch {
       const inner: Record<string, unknown> = {};
       for (const ik of Object.keys(v as object)) inner[ik] = (cur[k] as Record<string, unknown>)[ik];
       out[k] = inner;
-    } else if (k !== 'lights') out[k] = cur[k];
+    } else if (k === 'lights') {
+      const prev = (v as Look['lights']).map((l) => look.lights.find((x) => x.id === l.id)).filter((l) => !!l);
+      if (prev.length) out.lights = prev;
+    } else out[k] = cur[k];
   }
-  return encodeLookPatch(out as LookPatch);
+  return out as LookPatch;
 }
 
 /**
@@ -117,28 +114,6 @@ export function revertLookPatch(look: Look, patch: LookPatch, before: LookPatch)
 
 /** Id of the history op that holds what a look op replaced. */
 export const beforeId = (opId: string) => `${opId}.before`;
-
-const nudge = (v: number) => (v >= 1e-3 ? v - 1e-3 : v + 1e-3);
-
-/** Server: a patch whose every value survives `patchEntries` (defaults nudged by 1e-3). */
-export function encodeLookPatch(patch: LookPatch): LookPatch {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined) continue;
-    if ((NESTED as readonly string[]).includes(k)) {
-      const def = DEFAULT_LOOK[k as Nested] as Record<string, unknown>;
-      const inner: Record<string, unknown> = {};
-      for (const [ik, iv] of Object.entries(v as Record<string, unknown>)) {
-        if (iv === undefined) continue;
-        inner[ik] = typeof iv === 'number' && iv === def[ik] ? nudge(iv) : iv;
-        if (typeof iv === 'string' && iv.toLowerCase() === '#ffffff' && iv === def[ik]) inner[ik] = '#fefefe';
-      }
-      out[k] = inner;
-    } else if (typeof v === 'number' && v === (DEFAULT_LOOK as Record<string, unknown>)[k]) out[k] = nudge(v);
-    else out[k] = v;
-  }
-  return out as LookPatch;
-}
 
 /**
  * `doc` with `ops` applied (no revision bump: the store does that): ops are appended, look ops
