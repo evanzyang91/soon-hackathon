@@ -4,6 +4,10 @@
 // GET    /api/projects               → ProjectStatus[]
 // GET    /api/projects/:id           → ProjectStatus
 // POST   /api/projects/:id/retry     body { sceneIndex: number, stage: StageName } → ProjectStatus
+// POST   /api/projects/:id/actors/:characterId/rebuild  body { detail: 'standard' | 'high' } → ProjectStatus (202)
+//        rebuilds one character at that detail (high ≈ 5 min per actor on Modal) and, when it
+//        succeeds, rewrites every scene manifest to reference the new build; the previous build
+//        stays in place until then.
 // GET    /projects/:id/**            static built assets (manifests, spz, ply, mp3, glb)
 // GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts } }
 // GET    /api/rooms/new              → { room: string, phoneUrl: string }   (relay)
@@ -14,6 +18,8 @@ export const api = {
   projects: '/api/projects',
   project: (id: string) => `/api/projects/${id}`,
   retry: (id: string) => `/api/projects/${id}/retry`,
+  rebuildActor: (id: string, characterId: string) =>
+    `/api/projects/${id}/actors/${encodeURIComponent(characterId)}/rebuild`,
   health: '/api/health',
   newRoom: '/api/rooms/new',
   ws: '/ws',
