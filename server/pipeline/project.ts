@@ -469,7 +469,8 @@ export class ProjectStore {
    * avatar, and the library is not refreshed from it) and rewrites every scene manifest showing
    * the character. Recorded in ProjectStatus.actors[].rebuild ("… from your photo" with a photo).
    * A character that was never built needs nothing (the actors stage reads the current plan); an
-   * actors stage still building it is waited for. Idempotent while a rebuild runs: a plan that
+   * actors stage still building it is waited for. When only heightMeters changed (description and
+   * photo as the manifests show them), the same build is rescaled at once: no new person, no GPU. Idempotent while a rebuild runs: a plan that
    * changed meanwhile is rebuilt once more when it ends. Resumed after a restart (rebuild.json;
    * a submitted Modal call is recovered, never paid twice). MOCK projects rebuild the mannequin.
    */
@@ -494,6 +495,31 @@ export class ProjectStore {
     const entry = st.actors!.find((a) => a.characterId === characterId)!;
     if (entry.rebuild?.status === 'running') return structuredClone(st);
     const startedAt = new Date().toISOString();
+    // the manifests record the character they were written with: when only the height moved, the
+    // same person is rescaled (every actor kind stands at heightMeters) instead of a new LHM build
+    const shown = await this.manifestCharacter(id, plan, characterId);
+    if (
+      built &&
+      shown &&
+      !stages.some((x) => x.status === 'running') &&
+      shown.description === character.description &&
+      (shown.referenceImage ?? null) === (character.referenceImage ?? null) &&
+      (shown.heightMeters ?? null) !== (character.heightMeters ?? null)
+    ) {
+      const cachePath = join(projectDir, 'actors', characterId, 'actor.json');
+      const raw = await readJson<{ referenceSha?: string }>(cachePath).catch(() => undefined);
+      const cached = ActorAsset.safeParse(raw);
+      if (cached.success) {
+        const asset = withHeight(cached.data, character);
+        await writeJsonAtomic(cachePath, { ...asset, ...(raw?.referenceSha ? { referenceSha: raw.referenceSha } : {}) });
+        const n = await this.pointManifestsAt(st, plan, asset, character);
+        const note = `${heightFor(character).toFixed(2)} m — only the height changed: rescaled, no rebuild · ${n} scene manifest(s) updated`;
+        entry.rebuild = { detail: entry.detail, status: 'done', note, startedAt };
+        await this.persist(id);
+        await this.log(id, `rebuild ${characterId} from the plan: ${note}`);
+        return structuredClone(st);
+      }
+    }
     entry.rebuild = { detail: entry.detail, status: 'running', note: 'queued', startedAt };
     await mkdir(actorDirFor(projectDir, characterId), { recursive: true });
     await writeJsonAtomic(join(actorDirFor(projectDir, characterId), REBUILD_FILE), {
@@ -1309,6 +1335,17 @@ export class ProjectStore {
       log('the character changed in the plan while it was being rebuilt; rebuilding from the current plan');
       await this.rebuildActorFromPlan(id, characterId).catch((e) => log(`not rebuilt again: ${errMsg(e)}`));
     }
+  }
+
+  /** The character as the first written manifest showing it has it (what the scene plays now). */
+  private async manifestCharacter(id: string, plan: ScreenplayPlan, characterId: string): Promise<Character | undefined> {
+    for (const scene of plan.scenes) {
+      if (!scene.characterIds.includes(characterId)) continue;
+      const m = SceneManifest.safeParse(await readJson(join(this.sceneDir(id, scene.index), 'manifest.json')).catch(() => undefined));
+      const c = m.success ? m.data.characters.find((x) => x.id === characterId) : undefined;
+      if (c) return c;
+    }
+    return undefined;
   }
 
   /**

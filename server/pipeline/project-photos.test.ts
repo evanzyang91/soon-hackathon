@@ -385,6 +385,21 @@ describe('MOCK project: the chat-called methods run offline', () => {
         glb: 'procedural:mannequin',
       });
     }
+    // "make her taller": the same person rescaled at once, no new build, nothing set aside
+    await amendPlan(id, (p) => (p.characters.find((c) => c.id === 'maya')!.heightMeters = 1.84));
+    const s3 = store({ deps: { ...fakes().deps, buildActor: undefined } });
+    const taller = await s3.rebuildActorFromPlan(id, 'maya');
+    expect(taller.actors!.find((a) => a.characterId === 'maya')!.rebuild).toMatchObject({
+      status: 'done',
+      note: '1.84 m — only the height changed: rescaled, no rebuild · 3 scene manifest(s) updated',
+    });
+    expect(existsSync(join(actor, 'prev-2'))).toBe(false);
+    expect((await manifest(id, 2)).actors.find((a) => a.characterId === 'maya')!.heightMeters).toBe(
+      1.84,
+    );
+    expect(JSON.parse(await readFile(join(actor, 'actor.json'), 'utf8')).referenceSha).toBe(
+      sha(photo),
+    );
     await expect(s2.rebuildActorFromPlan(id, 'nobody')).rejects.toMatchObject({ status: 404 });
   });
 });
