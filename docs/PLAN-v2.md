@@ -11,11 +11,11 @@ same frame the director graded. Everything in a Look is applied at render time; 
 
 | Group | Controls | How it renders |
 | --- | --- | --- |
-| Exposure & grade | exposure, contrast, saturation, temperature, tint, shadows/highlights, lift/gamma/gain | fullscreen post pass (shader) over the composited frame |
+| Exposure & grade | exposure, contrast, saturation, temperature, tint, shadows/highlights | fullscreen post pass (shader) over the composited frame |
 | Film | vignette, grain, bloom, LUT presets (neutral, teal-orange, noir, kodak, bleach) | same post pass |
-| Atmosphere | fog colour + density, haze, sky tint | post pass with depth (Spark `depthWrite`) + splat colour modifier |
+| Atmosphere | fog colour + density, sky tint | per-splat colour program (fog by distance; sky = far + above horizon) + matched three.js fog on meshes |
 | Lens | depth of field (focus distance, f-stop), focal length is the camera's | Spark DOF (`focalDistance`, `apertureAngle`) |
-| Lights | key/fill/practical: point, spot, sun — position, colour, intensity, radius, soft | three.js lights on mesh actors/props + a Spark world modifier that brightens/tints splats by distance/angle to each light (fake relighting; honest limit: a baked splat cannot cast new shadows) |
+| Lights | key/fill/practical: point, spot, sun — position, colour, intensity, radius, cone | three.js lights on mesh actors/props + a Spark world modifier that brightens/tints splats by distance/angle to each light (fake relighting; honest limit: a baked splat cannot cast new shadows) |
 
 "Click to focus": clicking the viewport sets `dof.focusDistance` from the splat raycast hit.
 Looks have presets, undo/redo, and a per-camera override (a dropped camera can carry its own lens settings).
