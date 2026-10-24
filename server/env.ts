@@ -1,0 +1,27 @@
+import 'dotenv/config';
+
+const flag = (v: string | undefined) => v === '1' || v === 'true';
+
+export const env = {
+  port: Number(process.env.PORT ?? 5173),
+  mock: flag(process.env.MOCK),
+  marbleModel: process.env.MARBLE_MODEL ?? 'marble-1.1',
+  keys: {
+    marble: process.env.WLT_API_KEY ?? '',
+    anthropic: process.env.ANTHROPIC_API_KEY ?? '',
+    openai: process.env.OPENAI_API_KEY ?? '',
+    elevenlabs: process.env.ELEVENLABS_API_KEY ?? '',
+    modalTokenId: process.env.MODAL_TOKEN_ID ?? '',
+    modalTokenSecret: process.env.MODAL_TOKEN_SECRET ?? '',
+  },
+  /** Project outputs; served at /projects/<id>/ . */
+  dataDir: process.env.DATA_DIR ?? new URL('../data/projects/', import.meta.url).pathname,
+} as const;
+
+/** Presence only — never the values. Safe to return from /api/health. */
+export const keyPresence = () => ({
+  marble: !!env.keys.marble,
+  modal: !!env.keys.modalTokenId || !!process.env.MODAL_PROFILE,
+  anthropic: !!env.keys.anthropic,
+  tts: !!env.keys.openai || !!env.keys.elevenlabs,
+});
