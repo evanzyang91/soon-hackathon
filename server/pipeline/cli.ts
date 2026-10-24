@@ -9,15 +9,39 @@
 //       Creates a project under DATA_DIR and runs the whole pipeline (honours MOCK).
 //   pnpm tsx server/pipeline/cli.ts make-mock-world
 //       Regenerates fixtures/mock-world/ (world.spz + thumbnail.png).
+//   pnpm tsx server/pipeline/cli.ts calibrate <worldDir> [--write] [--no-vision] [--interior|--exterior]
+//                                  [--before-after out.png] [--views dir] [--reuse]
+//       Measures the world's real scale (collider references + Claude vision with 1.70 m
+//       mannequins, see calibrate.ts) and prints the report. --write stores scaleCalibration in
+//       world-asset.json, the world-library copy with the same world id and ../manifest.json.
+//       --reuse takes the last scale-calibration.json instead of measuring (no Claude call).
+//   generate-world / run also calibrate the new world unless --no-calibrate (or CALIBRATE=0).
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { env } from '../env.ts';
+import {
+  calibrateWorld,
+  formatReport,
+  previousCalibration,
+  readWorldAsset,
+  renderBeforeAfter,
+  writeCalibration,
+} from './calibrate.ts';
 import { generateWorld, marbleModel } from './marble.ts';
 import { MOCK_WORLD_DIR, writeMockWorld } from './mock-world.ts';
 import { defaultStore } from './project.ts';
 import { parseScreenplay, summarizePlan } from './screenplay.ts';
 
-const BOOLEAN_FLAGS = new Set(['mock', 'retry-failed']);
+const BOOLEAN_FLAGS = new Set([
+  'mock',
+  'retry-failed',
+  'write',
+  'no-vision',
+  'interior',
+  'exterior',
+  'reuse',
+  'no-calibrate',
+]);
 
 function args(argv: string[]) {
   const pos: string[] = [];
@@ -36,6 +60,8 @@ function args(argv: string[]) {
   return { pos, flags };
 }
 
+const views0 = (flags: Record<string, string | true>) =>
+  typeof flags.views === 'string' ? resolve(flags.views) : undefined;
 const log = (m: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${m}`);
 const str = (v: string | true | undefined) => (typeof v === 'string' ? v : undefined);
 
@@ -52,7 +78,7 @@ async function main() {
       const mock = flags.mock === true;
       if (!mock && !env.keys.marble) throw new Error('WLT_API_KEY is not set (.env.local / .env)');
       const model = marbleModel(str(flags.model) ?? env.marbleModel);
-      const asset = await generateWorld({
+      let asset = await generateWorld({
         prompt,
         outDir: resolve(outDir),
         name: str(flags.name) ?? `previz ${new Date().toISOString().slice(0, 16)}`,
@@ -61,6 +87,14 @@ async function main() {
         log,
         retryFailed: flags['retry-failed'] === true,
       });
+      if (asset.provider === 'marble' && env.calibrate && flags['no-calibrate'] !== true) {
+        const report = await calibrateWorld(resolve(outDir), {
+          vision: env.calibrateVision && !!env.keys.anthropic,
+          log,
+        });
+        console.log(formatReport(report, outDir));
+        asset = await writeCalibration(resolve(outDir), report, { log });
+      }
       console.log(JSON.stringify(asset, null, 2));
       return;
     }
@@ -79,7 +113,7 @@ async function main() {
     case 'run': {
       const [file] = pos;
       if (!file) throw new Error('usage: run <screenplay.fountain> [--title t]');
-      const store = defaultStore();
+      const store = flags['no-calibrate'] === true ? defaultStore({ calibrate: false }) : defaultStore();
       const status = await store.createProject({
         title: str(flags.title),
         screenplay: await readFile(file, 'utf8'),
@@ -87,6 +121,40 @@ async function main() {
       log(`project ${status.id} in ${store.projectDir(status.id)} (${env.mock ? 'MOCK' : 'live'})`);
       await store.idle();
       console.log(JSON.stringify(await store.getProject(status.id), null, 2));
+      return;
+    }
+    case 'calibrate': {
+      const [dir] = pos;
+      if (!dir)
+        throw new Error(
+          'usage: calibrate <worldDir> [--write] [--no-vision] [--interior|--exterior] [--before-after out.png] [--views dir] [--reuse]',
+        );
+      const worldDir = resolve(dir);
+      const asset = await readWorldAsset(worldDir);
+      let report = flags.reuse === true ? await previousCalibration(worldDir, asset.worldId) : null;
+      if (flags.reuse === true && !report) log('no previous scale-calibration.json for this world; measuring');
+      if (!report) {
+        const vision = flags['no-vision'] !== true && env.calibrateVision;
+        if (vision && !env.keys.anthropic) log('ANTHROPIC_API_KEY not set: geometric measurement only');
+        report = await calibrateWorld(worldDir, {
+          interior: flags.interior === true ? true : flags.exterior === true ? false : undefined,
+          vision: vision && !!env.keys.anthropic,
+          log,
+          saveViewsTo: views0(flags),
+        });
+      }
+      console.log(formatReport(report, dir));
+      const views = str(flags.views);
+      if (views) await writeFile(resolve(views, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+      if (flags.write === true) {
+        await writeCalibration(worldDir, report, { libraryDir: env.worldLibraryDir, manifest: true, log });
+        log(`wrote scaleCalibration ×${report.calibration.factor} (${report.calibration.confidence}) to ${dir}`);
+      }
+      const ba = str(flags['before-after']);
+      if (ba) {
+        await renderBeforeAfter(worldDir, report, resolve(ba), { log });
+        log(`before/after image: ${ba}`);
+      }
       return;
     }
     case 'make-mock-world': {
@@ -98,7 +166,7 @@ async function main() {
     }
     default:
       console.log(
-        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | make-mock-world  (see header of server/pipeline/cli.ts)',
+        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | make-mock-world  (see header of server/pipeline/cli.ts)',
       );
       process.exitCode = cmd ? 1 : 0;
   }
