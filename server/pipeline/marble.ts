@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { WorldAsset } from '../../shared/schema.ts';
@@ -56,7 +56,40 @@ export interface GenerateWorldOptions {
   retryFailed?: boolean;
   /** Log the generate request instead of sending it and return the mock world. Default: env. */
   dryRun?: boolean;
+  /**
+   * Generate from an image instead of the text prompt (scoped re-prompt regeneration: the world's
+   * own panorama, edited): the PNG is uploaded as a Marble media asset and sent as the image
+   * prompt; `prompt` then only names the change (it keys the receipt).
+   */
+  imagePrompt?: ImagePrompt;
   deps?: MarbleDeps;
+}
+
+export interface ImagePrompt {
+  /** Local PNG file. */
+  file: string;
+  /** true for an equirectangular 360° panorama. */
+  isPano: boolean;
+  /** Optional text alongside the image (omitted: Marble captions the image itself). */
+  textPrompt?: string;
+}
+
+/** `POST /marble/v1/media-assets:prepare_upload` body for a PNG. */
+export const prepareUploadBody = (fileName: string) => ({ file_name: fileName, kind: 'image', extension: 'png' });
+
+/** The exact `POST /marble/v1/worlds:generate` body for an uploaded image prompt. */
+export function imageRequestBody(o: { name: string; model?: string; mediaAssetId: string; isPano: boolean; textPrompt?: string }) {
+  return {
+    display_name: o.name.slice(0, 100),
+    model: marbleModel(o.model),
+    world_prompt: {
+      type: 'image',
+      image_prompt: { source: 'media_asset', media_asset_id: o.mediaAssetId },
+      is_pano: o.isPano,
+      ...(o.textPrompt ? { text_prompt: o.textPrompt, disable_recaption: true } : {}),
+    },
+    permission: { public: false },
+  };
 }
 
 type ReceiptStatus = 'submitting' | 'rejected' | 'submitted' | 'failed' | 'generated' | 'complete';
@@ -68,6 +101,8 @@ export interface MarbleReceipt {
   promptSha256: string;
   operation_id?: string;
   world_id?: string;
+  /** Media asset of an image prompt (re-prompt regeneration from an edited panorama). */
+  media_asset_id?: string;
   error?: string;
   progress?: string;
   files?: Record<string, { bytes: number; sha256: string }>;
@@ -117,8 +152,22 @@ export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAs
   await mkdir(opts.outDir, { recursive: true });
   if (opts.mock) return mockWorld(opts.outDir, opts.log);
   if (opts.dryRun ?? env.marbleDryRun) {
+    const base = opts.deps?.baseUrl ?? BASE_URL;
+    const url = `${base}/marble/v1/worlds:generate`;
+    if (opts.imagePrompt) {
+      const img = opts.imagePrompt;
+      const bytes = (await stat(img.file)).size;
+      const upload = { method: 'POST', url: `${base}/marble/v1/media-assets:prepare_upload`, body: prepareUploadBody(basename(img.file)) };
+      const body = imageRequestBody({ ...opts, ...img, mediaAssetId: '<dry-run: not uploaded>' });
+      await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), {
+        upload: { ...upload, then: `PUT <upload_url> image/png ${bytes} bytes (${img.file})` },
+        generate: { method: 'POST', url, body },
+      });
+      opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not uploaded: POST ${upload.url} ${JSON.stringify(upload.body)} + PUT ${bytes} bytes`);
+      opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
+      return mockWorld(opts.outDir, opts.log);
+    }
     const body = generateRequestBody(opts);
-    const url = `${opts.deps?.baseUrl ?? BASE_URL}/marble/v1/worlds:generate`;
     await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), { method: 'POST', url, body });
     opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
     return mockWorld(opts.outDir, opts.log);
@@ -267,7 +316,13 @@ class MarbleRun {
   }
 
   private async submit(prev: MarbleReceipt | undefined): Promise<MarbleReceipt> {
-    const body = generateRequestBody({ ...this.o, model: this.model });
+    // an image prompt is uploaded first (free, no receipt needed: nothing is charged yet)
+    const img = this.o.imagePrompt;
+    const mediaAssetId = img ? await this.uploadImage(img.file) : undefined;
+    const body =
+      img && mediaAssetId
+        ? imageRequestBody({ ...this.o, ...img, model: this.model, mediaAssetId })
+        : generateRequestBody({ ...this.o, model: this.model });
     const t = nowIso();
     let r: MarbleReceipt = {
       schema: 'previz.marble-receipt/1',
@@ -286,6 +341,7 @@ class MarbleRun {
             },
           ]
         : [],
+      ...(mediaAssetId ? { media_asset_id: mediaAssetId } : {}),
       createdAt: t,
       updatedAt: t,
     };
@@ -323,6 +379,33 @@ class MarbleRun {
     r = await this.save(r, { status: 'submitted', operation_id: operationId });
     this.log(`operation ${operationId} submitted`);
     return r;
+  }
+
+  /** prepare_upload + PUT of a PNG; returns the media asset id. */
+  private async uploadImage(file: string): Promise<string> {
+    const data = await readFile(file);
+    const prepared = await this.api<{
+      media_asset?: { id?: string; media_asset_id?: string };
+      upload_info?: { upload_url?: string; upload_method?: string; required_headers?: Record<string, string> };
+    }>('POST', '/marble/v1/media-assets:prepare_upload', prepareUploadBody(basename(file)));
+    const id = prepared.media_asset?.id ?? prepared.media_asset?.media_asset_id;
+    const info = prepared.upload_info;
+    if (typeof id !== 'string' || !id || !info?.upload_url)
+      throw new MarbleError('prepare_upload returned no media asset / upload URL', 'invalid');
+    let res: Response;
+    try {
+      // presigned upload URL: authenticates itself, never send the API key there
+      res = await this.fetch(info.upload_url, {
+        method: info.upload_method ?? 'PUT',
+        headers: { 'content-type': 'image/png', ...(info.required_headers ?? { 'x-goog-content-length-range': '0,104857600' }) },
+        body: data,
+      });
+    } catch {
+      throw new MarbleError(`upload ${safeEndpoint(info.upload_url)} -> network error`, 'network');
+    }
+    if (!res.ok) throw new MarbleError(`upload ${safeEndpoint(info.upload_url)} -> HTTP ${res.status}`, 'http', res.status);
+    this.log(`uploaded ${basename(file)} (${data.length} bytes) as media asset ${id}`);
+    return id;
   }
 
   private async poll(r: MarbleReceipt): Promise<MarbleReceipt> {
