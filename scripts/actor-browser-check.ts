@@ -3,7 +3,10 @@
 // mock TTS WAV and asserts: no console errors, the promise resolves after ~duration, the jaw
 // follows the audio, the splat actor switches to its talk loop, both stand ~1.7 m with feet on 0.
 //
-//   npx tsx scripts/actor-browser-check.ts [--headed] [--shots DIR]
+//   npx tsx scripts/actor-browser-check.ts [--headed] [--shots DIR] [--sequence ACTOR_DIR] [--gpu]
+//     --sequence ACTOR_DIR  check a real packaged avatar (a dir holding sequence/, e.g.
+//                           data/actors-library/maya) instead of the synthetic one
+//     --gpu                 Metal ANGLE instead of SwiftShader (a real 40k-splat avatar)
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,7 +25,9 @@ const fail = (m: string) => {
 };
 
 async function main() {
-  execFileSync('python3', [join(repo, 'worker/tests/make_synthetic_actor.py'), join(fixtures, 'synth'), '--frames', '12', '--talk', '6', '--splats', '6000'], { stdio: 'inherit' });
+  const realSeq = args.includes('--sequence') ? args[args.indexOf('--sequence') + 1]! : null;
+  if (realSeq) execFileSync('ln', ['-s', realSeq, join(fixtures, 'synth')]);
+  else execFileSync('python3', [join(repo, 'worker/tests/make_synthetic_actor.py'), join(fixtures, 'synth'), '--frames', '12', '--talk', '6', '--splats', '6000'], { stdio: 'inherit' });
   // --audio FILE --seconds S plays a real TTS file instead of the mock beeps
   const text = 'Did you hear that? Somebody is on the stairs.';
   const real = args.includes('--audio') ? args[args.indexOf('--audio') + 1]! : null;
@@ -53,7 +58,7 @@ async function main() {
   });
   await server.listen();
   const url = server.resolvedUrls!.local[0]!;
-  const launch = { headless: !args.includes('--headed'), args: ['--autoplay-policy=no-user-gesture-required', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] };
+  const launch = { headless: !args.includes('--headed'), args: ['--autoplay-policy=no-user-gesture-required', ...(args.includes('--gpu') ? ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'])] };
   // fall back to the installed Google Chrome when Playwright's bundled build isn't downloaded
   const browser = await chromium.launch(launch).catch((err: Error) => {
     if (!/Executable doesn't exist/.test(err.message)) throw err;
@@ -70,7 +75,9 @@ async function main() {
     await page.waitForFunction(() => 'actorHarnessReady' in window || (window as any).__harness, null, { timeout: 60_000 });
     const ids = await page.evaluate(() => (window as any).__harness.ready());
     if (ids.join() !== 'raj,maya') fail(`actors mounted: ${ids}`);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(4000);
+    const fps = await page.evaluate('new Promise((r) => { let n = 0; const t0 = performance.now(); function f() { n++; if (performance.now() - t0 < 2000) requestAnimationFrame(f); else r(n / 2); } requestAnimationFrame(f); })');
+    console.log(`render loop ~${fps} fps`);
     const kinds = await page.evaluate(() => ['raj', 'maya'].map((id) => (window as any).__harness.debug(id).kind));
     if (kinds.join() !== 'mannequin,splat') fail(`actor kinds ${kinds} (splat path fell back?)`);
     for (const id of ['raj', 'maya']) {
@@ -84,7 +91,10 @@ async function main() {
       idleFrames.add(await page.evaluate(() => (window as any).__harness.debug('maya').frame));
       await page.waitForTimeout(120);
     }
-    if (idleFrames.size < 3 || [...idleFrames].some((f) => f >= 12)) fail(`splat idle loop not advancing within 0..11: ${[...idleFrames]}`);
+    const seqJson = JSON.parse(readFileSync(join(fixtures, 'synth/sequence/sequence.json'), 'utf8'));
+    const idleN = seqJson.loops.idle.count;
+    const talkR = seqJson.loops.talk;
+    if (idleFrames.size < 3 || [...idleFrames].some((f) => f >= idleN)) fail(`splat idle loop not advancing within 0..${idleN - 1}: ${[...idleFrames]}`);
     if (shots) await page.screenshot({ path: join(shots, 'actors-idle.png') });
 
     // ---- speak: mannequin (amplitude-driven jaw) ----------------------------------------------
@@ -120,11 +130,11 @@ async function main() {
     }
     const tookMaya = await speakMaya;
     console.log(`maya.speak resolved after ${tookMaya.toFixed(2)} s; talk frames ${[...talkFrames].sort((a, b) => a - b)}`);
-    if ([...talkFrames].some((f) => f < 12 || f > 17) || talkFrames.size < 2) fail(`splat talk loop not used: ${[...talkFrames]}`);
+    if ([...talkFrames].some((f) => f < talkR.start || f >= talkR.start + talkR.count) || talkFrames.size < 2) fail(`splat talk loop not used: ${[...talkFrames]}`);
     if (Math.abs(tookMaya - seconds) > 1.0) fail(`maya.speak resolved after ${tookMaya}s`);
     await page.waitForTimeout(400);
     const back = await page.evaluate(() => (window as any).__harness.debug('maya'));
-    if (back.frame >= 12) fail('splat actor did not return to its idle loop');
+    if (back.frame >= idleN) fail('splat actor did not return to its idle loop');
 
     const harnessErrors = await page.evaluate(() => (window as any).__harness.errors);
     const errors = [...consoleErrors, ...harnessErrors];
@@ -133,6 +143,7 @@ async function main() {
   } finally {
     await browser.close();
     await server.close();
+    if (realSeq) rmSync(join(fixtures, 'synth'), { force: true }); // the symlink, not the library
     rmSync(fixtures, { recursive: true, force: true });
   }
 }
