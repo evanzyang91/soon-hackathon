@@ -122,6 +122,8 @@ export function installDebugHook(director: Director) {
           kind: String(a.object.userData.actorKind ?? ''),
           position: a.object.position.toArray(),
           yaw: a.object.rotation.y,
+          /** Line id whose bubble this actor is showing right now (null = name label). */
+          speakingLine: (a.object.userData.speakingLine ?? null) as string | null,
           placementCorrected: placement?.status === 'moved',
           placement,
         };

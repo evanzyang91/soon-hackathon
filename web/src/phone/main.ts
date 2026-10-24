@@ -99,6 +99,8 @@ const debug = {
   renderLevel: 0,
   framesRendered: 0,
   viewStatus: '',
+  /** Per actor, the line id whose bubble is showing (null = name label). */
+  actors: {} as Record<string, string | null>,
   yawOffset: 0,
   anchor,
   /** The laptop is running the scene (clock + dialogue): the ACTION button shows CUT. */
@@ -545,6 +547,7 @@ function frame(now: number) {
       }
       debug.viewMode = view.shown;
       debug.viewStatus = view.status;
+      debug.actors = view.actorsSpeaking();
       ui.setViewMode(view.shown);
     } catch (err) {
       console.warn('[phone] view frame failed', err);
