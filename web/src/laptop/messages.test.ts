@@ -10,6 +10,8 @@ import {
   phoneAnchor,
   phoneCameraPose,
   phoneCommand,
+  pipRectFor,
+  poseAspect,
   poseIsFresh,
   reducePhoneLink,
   sceneStateKey,
@@ -132,6 +134,74 @@ describe('phone pose handling', () => {
     s = reducePhoneLink(s, { type: 'peers', laptop: true, phones: 0 }, 6000);
     expect(s.lastPose).toBeNull();
     expect(poseIsFresh(s, 6000)).toBe(false);
+  });
+});
+
+describe('several phones', () => {
+  const from = (phoneId: string, t: number) => pose({ phoneId, t });
+  const feed = (steps: [string, number][]) =>
+    steps.reduce((s, [id, at]) => reducePhoneLink(s, from(id, at), at), initialPhoneLink());
+
+  it('follows the first phone while it keeps streaming', () => {
+    const s = feed([
+      ['A', 0],
+      ['A', 100],
+      ['A', 200],
+    ]);
+    expect(s.followId).toBe('A');
+    expect(s.lastPose?.t).toBe(200);
+  });
+
+  it('a newly joined phone takes over, and the old one no longer moves the gizmo', () => {
+    const s = feed([
+      ['A', 0],
+      ['B', 50],
+      ['A', 100],
+      ['A', 150],
+    ]);
+    expect(s.followId).toBe('B');
+    expect(s.lastPose?.t).toBe(50);
+    expect(s.seen).toEqual(['A', 'B']);
+  });
+
+  it('falls back to another phone once the followed one goes quiet', () => {
+    let s = feed([
+      ['A', 0],
+      ['B', 50],
+    ]);
+    s = reducePhoneLink(s, from('A', 500), 500); // B silent 450 ms: still followed
+    expect(s.followId).toBe('B');
+    s = reducePhoneLink(s, from('A', 1200), 1200); // B silent > 1 s: A takes over
+    expect(s.followId).toBe('A');
+    expect(s.lastPose?.t).toBe(1200);
+  });
+
+  it('accepts unstamped poses (older relay) and forgets phones when the room empties', () => {
+    let s = reducePhoneLink(initialPhoneLink(), pose({ t: 1 }), 0);
+    expect(s.lastPose?.t).toBe(1);
+    expect(s.followId).toBeNull();
+    s = reducePhoneLink(s, from('A', 2), 10);
+    s = reducePhoneLink(s, { type: 'peers', laptop: true, phones: 0 }, 20);
+    expect(s.seen).toEqual([]);
+    expect(s.followId).toBeNull();
+  });
+});
+
+describe('phone framing', () => {
+  it('reads the pose aspect, clamped, with a 16:9 default', () => {
+    expect(poseAspect(null)).toBeCloseTo(16 / 9);
+    expect(poseAspect(pose())).toBeCloseTo(16 / 9);
+    expect(poseAspect(pose({ aspect: 2.164 }))).toBeCloseTo(2.164);
+    expect(poseAspect(pose({ aspect: 0.1 }))).toBe(0.4);
+  });
+
+  it('places a PiP of the phone aspect in the bottom-right corner', () => {
+    const wide = pipRectFor(1280, 720, 16 / 9);
+    expect(wide).toEqual({ x: 1280 - 358 - 12, y: 720 - 202 - 12, width: 358, height: 202 });
+    const portrait = pipRectFor(1280, 720, 9 / 16);
+    expect(portrait.height).toBeLessThanOrEqual(720 * 0.4);
+    expect(portrait.width / portrait.height).toBeCloseTo(9 / 16, 1);
+    expect(portrait.x + portrait.width).toBe(1280 - 12);
   });
 });
 
