@@ -1,7 +1,9 @@
 """Previz Stage actor worker: one reference image -> LHM gaussian avatar + idle/talk PLY loop.
 
 A trimmed port of OrbisEngine's ``worker/modal_lhm.py`` (same CUDA image, LHM code revision and
-LHM-500M-HF weights, same checkpoint-to-volume + small-receipt discipline). Differences:
+LHM-500M-HF weights, same checkpoint-to-volume + small-receipt discipline). ``detail="high"``
+swaps in LHM-1B-HF (Orbis's ``larger_model``) and fine-tunes the avatar against the reference
+(``lhm_stages/finetune_actor.py``); the outputs keep the same layout. Differences:
 
 * Input is one generated full-body reference PNG (+ optional mask). Without a mask the worker
   segments the person with ``rembg`` (LHM upstream's own fallback when SAM2 is absent).
@@ -33,6 +35,7 @@ from lhm_stages.weights import (  # noqa: E402
     LHM_REV,
     MODEL_ID,
     MODEL_REV,
+    MODELS,
     VOLUME_NAME,
 )
 
@@ -107,7 +110,13 @@ def actor(
     fps: float = 12.0,
     quantize: bool = True,
     recovery_id: str = "",
+    detail: str = "standard",
+    finetune: bool | None = None,
+    finetune_iters: int = 600,
+    finetune_seconds: float = 100.0,
 ):
+    """One reference -> actor. detail "standard" = LHM-500M-HF; "high" = LHM-1B-HF + a bounded
+    fine-tune against the reference (`finetune` overrides whether it runs, for experiments)."""
     import json
     import os
     import subprocess
@@ -124,6 +133,8 @@ def actor(
     )
 
     start = time.time()
+    model_id, model_rev = MODELS.get(detail, MODELS["standard"])
+    run_finetune = (detail == "high") if finetune is None else bool(finetune)
     checkpoint, out = start_checkpoint("/cache", recovery_id, "actor")
     cache.commit()
     error = None
@@ -131,6 +142,10 @@ def actor(
     try:
         if not 1 <= frames <= 240 or not 0 <= talk_frames <= 240 or not 1 <= fps <= 60:
             raise ValueError("frames/talk_frames/fps outside the bounded experiment range")
+        if detail not in MODELS:
+            raise ValueError(f"unknown detail {detail!r}")
+        if not 1 <= finetune_iters <= 3000 or not 1 <= finetune_seconds <= 300:
+            raise ValueError("finetune_iters/finetune_seconds outside the bounded range")
         from huggingface_hub import snapshot_download
 
         prepared = Path(tempfile.mkdtemp(prefix="actor-"))
@@ -143,7 +158,7 @@ def actor(
         links = link_model_caches()
         (out / "cache-links.json").write_text(json.dumps(links, indent=2))
         os.chdir("/opt/lhm")
-        model = snapshot_download(MODEL_ID, revision=MODEL_REV, local_files_only=True)
+        model = snapshot_download(model_id, revision=model_rev, local_files_only=True)
         command = [
             "python",
             "/root/lhm_stages/lhm_actor.py",
@@ -153,6 +168,12 @@ def actor(
             str(out),
             "--model",
             model,
+            "--model-id",
+            model_id,
+            "--model-revision",
+            model_rev,
+            "--detail",
+            detail,
             "--frames",
             str(frames),
             "--talk-frames",
@@ -166,6 +187,8 @@ def actor(
             command += ["--motion-library", "/cache/motion-library"]
         if quantize:
             command += ["--quantize"]
+        if run_finetune:
+            command += ["--finetune", "--finetune-iters", str(finetune_iters), "--finetune-seconds", str(finetune_seconds)]
         with (out / "inference.log").open("w") as log:
             proc = subprocess.Popen(
                 command,
@@ -205,7 +228,9 @@ def actor(
     report = {
         "seconds": elapsed,
         "error": error,
-        "experiment": "reference-image-procedural-idle",
+        "experiment": "reference-image-procedural-idle" + ("+finetune" if run_finetune else ""),
+        "detail": detail,
+        "finetune": run_finetune,
         "gpu": "L4",
         "cpu": GPU_CPU,
         "memoryGiB": GPU_MEM_GIB,
@@ -214,8 +239,8 @@ def actor(
         * (L4_PER_S + GPU_CPU * CPU_CORE_PER_S + GPU_MEM_GIB * GIB_PER_S),
         "timingScope": "worker setup and inference; excludes final output hashing and volume commit",
         "codeRevision": LHM_REV,
-        "model": MODEL_ID,
-        "modelRevision": MODEL_REV,
+        "model": model_id,
+        "modelRevision": model_rev,
         "frames": frames,
         "talkFrames": talk_frames,
         "fps": fps,

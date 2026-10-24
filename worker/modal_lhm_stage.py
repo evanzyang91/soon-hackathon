@@ -6,6 +6,7 @@ and the 18.8 GB prior archive resumes with pinned HTTP ranges (If-Match on the E
 starting over.
 
     python worker/run_actor.py --stage          # preferred: loads keys from .env.local
+    python worker/run_actor.py --stage-high     # LHM-1B-HF only (6.85 GB), for --detail high
     python worker/run_actor.py --check          # CUDA image + LHM imports + weight audit, no GPU
     modal run --detach worker/modal_lhm_stage.py   # equivalent, needs Modal auth in the shell
 """
@@ -19,6 +20,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from lhm_stages.weights import (  # noqa: E402
     AUX_WEIGHTS,
+    LARGE_MODEL_ID,
+    LARGE_MODEL_REV,
     MODEL_ID,
     MODEL_REV,
     PRIOR_BYTES,
@@ -206,6 +209,18 @@ def stage_priors(report):
     report["steps"].append(step)
 
 
+def stage_large_model(report):
+    """LHM-1B-HF at the pinned revision (the "high detail" actor checkpoint), next to 500M."""
+    from huggingface_hub import snapshot_download
+
+    snapshot = snapshot_download(
+        LARGE_MODEL_ID, revision=LARGE_MODEL_REV, cache_dir="/cache/huggingface/hub", max_workers=4
+    )
+    step = {"name": "lhm-model-1b", "model": LARGE_MODEL_ID, "revision": LARGE_MODEL_REV, "snapshot": snapshot}
+    write_receipt("/cache/setup-receipts/lhm-model-1b.json", step)
+    report["steps"].append(step)
+
+
 def stage_model_and_aux(report):
     from huggingface_hub import snapshot_download
 
@@ -234,10 +249,12 @@ def stage_model_and_aux(report):
     scaledown_window=2,
 )
 def stage_weights(phase: str):
-    """phase: 'priors' (18.8 GB LHM prior tar) or 'model+aux' (HF model + small weights)."""
+    """phase: 'priors' (18.8 GB LHM prior tar), 'model+aux' (HF model + small weights) or
+    'model-1b' (LHM-1B-HF for high-detail actors)."""
     import time
 
-    if phase not in ("priors", "model+aux"):
+    phases = {"priors": stage_priors, "model+aux": stage_model_and_aux, "model-1b": stage_large_model}
+    if phase not in phases:
         raise ValueError("unknown staging phase")
     started = time.time()
     report = {"phase": phase, "status": "started", "startedEpoch": started, "steps": []}
@@ -245,7 +262,7 @@ def stage_weights(phase: str):
     write_receipt(attempt, report)
     cache.commit()
     try:
-        (stage_priors if phase == "priors" else stage_model_and_aux)(report)
+        phases[phase](report)
         report["status"] = "complete"
     except Exception as error:  # noqa: BLE001 - always leave a failure receipt
         report["status"] = "failed"
@@ -301,6 +318,7 @@ def check():
 
 @app.local_entrypoint()
 def main(phase: str = "all"):
+    """`all` = what standard actors need; `model-1b` stages the high-detail checkpoint."""
     import json
 
     phases = ("priors", "model+aux") if phase == "all" else (phase,)
