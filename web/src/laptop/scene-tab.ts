@@ -91,6 +91,20 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
     }
     const floor = floorOffset(w);
     if (floor) rows.push(h('div', { class: 'muted' }, `Floor raised ${(floor * 100).toFixed(0)} cm to the visible ground`));
+    if (w.ground)
+      rows.push(
+        h(
+          'div',
+          {
+            class: 'muted',
+            'data-testid': 'ground-field',
+            title: rt.ground
+              ? `Each actor stands on the measured ground at its own spot. ${rt.ground.method ?? ''}`.trim()
+              : 'The ground field did not load: actors stand on the median floor',
+          },
+          `ground field · ${Math.round((100 * w.ground.covered) / w.ground.cells)} % covered · ${w.ground.cell} m cells${rt.ground ? '' : ' (not loaded)'}`,
+        ),
+      );
     rows.push(h('div', { class: 'muted' }, rt.collider ? 'Collider loaded: dragged actors stay out of walls' : w.colliderGlb ? 'Collider loading…' : 'No collider: actors move freely'));
     world.append(...rows);
   };

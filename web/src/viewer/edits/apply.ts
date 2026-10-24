@@ -5,7 +5,10 @@
 //   splat-region → Spark SplatEdit + SplatEditSdf on the world mesh (model.ts regionSpecs):
 //                  colour multiply / set_rgb (hue = luminance-keeping multiply), opacity (hide),
 //                  displace (move), scale (displacement field of 5³ smoothly blended cells)
-//   transform    → actor / prop transforms (lights live in the Look; cameras on the laptop)
+//   transform    → actor / prop transforms (lights live in the Look; cameras on the laptop). An
+//                  actor's position[1] is its height ABOVE THE GROUND at (x, z) (viewer/ground.ts):
+//                  0 stands it on the visible ground there, which is what every actor transform
+//                  stored before the ground field (y = 0 on the old flat floor) keeps meaning
 //   prop-add     → a procedural prop (parked or moving along its path on the scene clock)
 //   prop-remove  → hides a screenplay or added prop
 //   look         → nothing here: re-prompt looks are baked into SceneEdits.look on the server
@@ -20,6 +23,7 @@ import { SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, type
 import type { SceneEdits } from '@shared/look';
 import type { DynamicElement } from '@shared/schema';
 import { PathSampler } from '../dynamics-path';
+import { onGround } from '../ground';
 import { createProp, type Prop } from '../props';
 import type { SceneRuntime } from '../world';
 import {
@@ -34,9 +38,10 @@ import {
 } from './model';
 
 /** What apply.ts needs from a SceneRuntime (tests and harnesses can fake it). */
-export type EditsHost = Pick<SceneRuntime, 'scene' | 'splat' | 'actors' | 'dynamics' | 'colliderReady' | 'time'> & {
-  edits: SceneEdits | null;
-};
+export type EditsHost = Pick<SceneRuntime, 'scene' | 'splat' | 'actors' | 'dynamics' | 'colliderReady' | 'time'> &
+  Partial<Pick<SceneRuntime, 'groundY'>> & {
+    edits: SceneEdits | null;
+  };
 
 interface Base {
   position: THREE.Vector3;
@@ -132,6 +137,22 @@ export class SceneEditsRuntime {
     this.followMovingProps();
   }
 
+  /**
+   * An object leaves the scene (world.ts swapActors replaces an actor's body): its spot before any
+   * edit (null when no transform touched it), and it is no longer restored or transformed.
+   */
+  release(o: THREE.Object3D): { position: THREE.Vector3; yaw: number } | null {
+    const b = this.base.get(o);
+    this.base.delete(o);
+    this.touched.delete(o);
+    return b ? { position: b.position.clone(), yaw: b.yaw } : null;
+  }
+
+  /** Applies the document again on the next frame (e.g. to a swapped-in actor body). */
+  refresh() {
+    this.applied = undefined;
+  }
+
   /** A live preview region (the edit panel while the director sizes a selection); null clears. */
   setPreview(region: RegionEdit | null) {
     this.previewEdits = region ? regionSpecs(region).map((s, i) => splatEditFor(s, `preview-${i}`)) : [];
@@ -201,6 +222,7 @@ export class SceneEditsRuntime {
     this.transforms = this.colliderSettled ? effectiveTransforms(edits) : new Map();
     for (const o of this.touched) this.restore(o);
     this.touched.clear();
+    const groundY = this.host.groundY?.bind(this.host);
     for (const [key, t] of this.transforms) {
       const [type, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
       const obj =
@@ -213,7 +235,8 @@ export class SceneEditsRuntime {
       if (!obj) continue;
       const b = this.snapshot(obj);
       const moving = type === 'prop' && this.isMovingProp(id);
-      if (t.position && !moving) obj.position.set(...t.position);
+      if (t.position && !moving)
+        obj.position.set(...(type === 'actor' && groundY ? onGround(t.position, groundY) : t.position));
       if (t.yaw !== undefined && !moving) obj.rotation.y = t.yaw;
       if (t.scale !== undefined) obj.scale.copy(b.scale).multiplyScalar(t.scale);
       this.touched.add(obj);
