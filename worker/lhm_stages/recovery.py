@@ -312,12 +312,13 @@ MOTION_TRACKS = ("sequence/motion.u16", "sequence/motion.f32")
 def wanted(name, include_raw=False, all_frames=False, files=()):
     """What a caller downloads by default.
 
-    raw/ (unpackaged LHM frames) and canonical-state.pt stay in the Volume unless asked for. When
+    raw/ (unpackaged LHM frames), canonical-state.pt and rig-canonical.npz (the runtime rig's
+    offline rebuild input) stay in the Volume unless asked for. When
     the checkpoint has a motion track, the browser needs only frame_000.ply (the appearance
     keyframe) plus the track, so the other packaged PLYs (~2.7 MB each, ~190 MB for 72 frames)
     stay remote too unless all_frames; they remain listed and hash-pinned in sequence.json.
     """
-    if not include_raw and (name.startswith("raw/") or name == "canonical-state.pt"):
+    if not include_raw and (name.startswith("raw/") or name in ("canonical-state.pt", "rig-canonical.npz")):
         return False
     if all_frames or not FRAME_PLY.fullmatch(name) or name == "sequence/frame_000.ply":
         return True

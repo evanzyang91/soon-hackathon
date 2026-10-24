@@ -169,6 +169,7 @@ def main():
     ap.add_argument("--quantize", action="store_true")
     ap.add_argument("--dilate", type=int, default=2)
     ap.add_argument("--upright-max-deg", type=float, default=35)
+    ap.add_argument("--motion-library", help="dir with motion-library.json + motion-clips.bin (runtime rig clips)")
     a = ap.parse_args()
     repo, out = Path(a.repo), Path(a.out)
     (out / "raw").mkdir(parents=True, exist_ok=True)
@@ -325,6 +326,25 @@ def main():
         ),
     )
     timings["package"] = time.time() - t0
+    # Runtime rig: canonical splats + skin + skeleton for browser skinning (rig_export.py), with the
+    # shared motion library beside it. Optional: the baked sequence above stays the fallback.
+    rig_report = None
+    try:
+        import rig_export
+
+        rig = rig_export.export(
+            model,
+            dict(state=str(out / "canonical-state.pt"), frozen=str(out / "raw/frozen.ply"), out=str(out / "sequence"), upright=bool(use_upright), canonical=str(out / "rig-canonical.npz")),
+        )
+        pointer = rig_export.install_in_sequence(out / "sequence", rig, Path(a.motion_library) if a.motion_library else None)
+        rig_report = dict(splats=rig["splats"], clips=pointer.get("clipNames"), validation={k: v["runtimeVsLhm"] for k, v in rig["validation"].items()})
+        print(f"runtime rig: {rig['splats']} splats, clips {pointer.get('clipNames')}", flush=True)
+    except Exception as error:  # noqa: BLE001 - the baked sequence is still a complete actor
+        import traceback
+
+        rig_report = dict(error=f"{type(error).__name__}: {error}"[:500])
+        print("runtime rig export failed (baked sequence kept):", traceback.format_exc(), flush=True)
+    timings["rig"] = time.time() - t0
     meta = dict(
         model="3DAIGC/LHM-500M-HF",
         modelRevision="dd6392905187a91fd67b3f6962aa74481e943764",
@@ -340,6 +360,7 @@ def main():
         nativeHeight=seq["nativeHeight"],
         bounds=seq["bounds"],
         headDetected=head_detected,
+        rig=rig_report,
         mask=mask_report,
         rootDeltaDeg=root_delta,
         uprightRoot=use_upright,
