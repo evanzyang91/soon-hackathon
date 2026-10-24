@@ -13,6 +13,8 @@ import { gazeTargets } from './gaze';
 import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
 import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
+import type { Look, SceneEdits } from '@shared/look';
+import { SceneLook } from './look/scene-look';
 
 export type SplatQuality = 'k100' | 'k500' | 'full';
 
@@ -65,6 +67,13 @@ export interface SceneRuntime {
    * other actor untouched. Resolves with the swapped character ids.
    */
   swapActors(assets: ActorAsset[]): Promise<string[]>;
+  /** Look development (viewer/look/scene-look.ts): grade, lens, lights, compare, per-view looks. */
+  readonly look: SceneLook;
+  /** The scene's look (applied at render time on every view of this scene). */
+  setLook(look: Look): void;
+  getLook(): Look;
+  /** The scene's edits.json document (look + scene edits); null until loaded. WP G fills it. */
+  edits: SceneEdits | null;
   dispose(): void;
 }
 
@@ -155,6 +164,7 @@ class LoadedScene implements SceneRuntime {
   collider: THREE.Object3D | null = null;
   colliderReady: Promise<THREE.Object3D | null> = Promise.resolve(null);
   dynamics!: DynamicsRuntime;
+  readonly look: SceneLook;
   quality: SplatQuality;
   time = 0;
   playing = false;
@@ -182,6 +192,7 @@ class LoadedScene implements SceneRuntime {
     this.scene.background = new THREE.Color(SKY[plan.timeOfDay]);
     this.spark = createSpark(renderer, sparkOptions);
     this.scene.add(this.spark);
+    this.look = new SceneLook(this.scene, this.spark);
 
     const t = worldTransform(world);
     this.worldRoot.name = 'world';
@@ -202,6 +213,22 @@ class LoadedScene implements SceneRuntime {
 
   resolve(path: string): string {
     return new URL(path, this.assetBase).href;
+  }
+
+  setLook(look: Look) {
+    this.look.setLook(look);
+  }
+
+  getLook(): Look {
+    return this.look.getLook();
+  }
+
+  get edits(): SceneEdits | null {
+    return this.look.edits;
+  }
+
+  set edits(e: SceneEdits | null) {
+    this.look.edits = e;
   }
 
   setWorld(mesh: SplatMesh | null) {
@@ -234,6 +261,7 @@ class LoadedScene implements SceneRuntime {
     this.dynamics.update(this.time);
     this.aimHeads();
     for (const a of this.actors.values()) a.update(dt, this.time);
+    this.look.update();
   }
 
   /** Heads turn toward whoever speaks, else toward the nearest partner (viewer/gaze.ts). */
@@ -365,6 +393,7 @@ class LoadedScene implements SceneRuntime {
     if (this.placeholderGroup) disposeObject(this.placeholderGroup);
     if (this.collider) disposeObject(this.collider);
     disposeObject(this.grid);
+    this.look.dispose();
     this.spark.dispose();
     this.scene.clear();
   }

@@ -8,6 +8,8 @@
 import * as THREE from 'three';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { createSpark } from './spark';
+import { LookPost, type PostOptions } from './look/post';
+import { lookProviderOf } from './look/scene-look';
 
 /** CSS pixels, measured from the top-left of the canvas. */
 export interface PipRect {
@@ -21,6 +23,8 @@ export interface ViewportOptions {
   maxPixelRatio?: number;
   /** Needed for MediaRecorder-free screenshots/readback; off by default (costs bandwidth). */
   preserveDrawingBuffer?: boolean;
+  /** Look post pass settings (the phone asks for a cheaper bloom). */
+  post?: PostOptions;
 }
 
 export class ViewportRenderer {
@@ -31,6 +35,10 @@ export class ViewportRenderer {
   private scene: THREE.Scene;
   private readonly empty = new THREE.Scene();
   private pipSpark: SparkRenderer | null = null;
+  /** Look post passes (viewer/look/post.ts), created on the first graded frame of each view. */
+  private mainPost: LookPost | null = null;
+  private pipPost: LookPost | null = null;
+  private readonly postOptions: PostOptions;
   private width = 1;
   private height = 1;
 
@@ -51,6 +59,7 @@ export class ViewportRenderer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.empty.background = new THREE.Color('#14181d');
     this.scene = this.empty;
+    this.postOptions = opts.post ?? {};
   }
 
   get size() {
@@ -77,7 +86,14 @@ export class ViewportRenderer {
     const r = this.renderer;
     r.setScissorTest(false);
     r.setViewport(0, 0, this.width, this.height);
-    r.render(this.scene, camera);
+    // the scene's look (viewer/look/scene-look.ts) sets this view's lens and says whether to grade
+    const post = lookProviderOf(this.scene)?.prepare(camera, null) ?? null;
+    if (post) {
+      const rect = { x: 0, y: 0, width: this.width, height: this.height };
+      (this.mainPost ??= new LookPost(r, this.postOptions)).render(post, rect, () =>
+        r.render(this.scene, camera),
+      );
+    } else r.render(this.scene, camera);
     this.mainFrames++;
   }
 
@@ -94,7 +110,14 @@ export class ViewportRenderer {
     r.setScissorTest(true);
     try {
       if (this.scene === this.empty) r.render(this.scene, camera);
-      else (this.pipSpark ??= createSpark(r)).render(this.scene, camera);
+      else {
+        const spark = (this.pipSpark ??= createSpark(r));
+        const post = lookProviderOf(this.scene)?.prepare(camera, spark) ?? null;
+        if (post) {
+          const pipPost = (this.pipPost ??= new LookPost(r, this.postOptions));
+          pipPost.render(post, { x, y, width: w, height: h }, () => spark.render(this.scene, camera));
+        } else spark.render(this.scene, camera);
+      }
     } finally {
       r.setScissorTest(false);
       r.setViewport(0, 0, this.width, this.height);
@@ -102,9 +125,16 @@ export class ViewportRenderer {
     this.pipFrames++;
   }
 
+  /** Frames graded by the look post pass (main, PiP); debug / tests. */
+  get postFrames() {
+    return { main: this.mainPost?.frames ?? 0, pip: this.pipPost?.frames ?? 0 };
+  }
+
   dispose() {
     this.pipSpark?.dispose();
     this.pipSpark = null;
+    this.mainPost?.dispose();
+    this.pipPost?.dispose();
     this.renderer.dispose();
   }
 }
