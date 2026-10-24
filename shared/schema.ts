@@ -133,8 +133,16 @@ export const WorldAsset = z.object({
       confidence: z.enum(['high', 'medium', 'low']),
       /** Human-readable measurements, e.g. "door 2.04 m, counter 0.91 m, ceiling 2.6 m". */
       evidence: z.string(),
+      /** Short HUD text, e.g. "door 2.04 m" or "unverified". */
+      headline: z.string().optional(),
     })
     .optional(),
+  /**
+   * Measured height of the real ground above Marble's declared floor plane, in meters (Marble's
+   * outdoor floors sit 0.1–0.2 m above the splats' ground). The viewer lowers y = 0 by this much so
+   * actors stand on the visible ground. Absent = 0.
+   */
+  floorOffsetMeters: z.number().optional(),
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 
