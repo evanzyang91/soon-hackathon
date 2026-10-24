@@ -110,7 +110,8 @@ export function mockChatReply(input: RuleInput): RuleResult {
   for (const a of input.attachments) {
     const [kind, ref = ''] = (a.hint ?? '').split(':');
     let character = kind === 'character' ? findCharacter(plan, ref) : undefined;
-    let scene = kind === 'scene' ? plan.scenes[Number(ref) - 1] : undefined;
+    // hints carry the 0-based ScenePlan.index; spoken "scene 2" below is 1-based
+    let scene = kind === 'scene' ? plan.scenes[Number(ref)] : undefined;
     if (!a.hint) {
       const who = /\bthis is\s+(?:the\s+)?([\p{L}][\p{L}'’-]*)/iu.exec(text)?.[1];
       const where = /\buse this for\s+(?:scene\s+(\d+)|(?:the\s+)?([\p{L}-]+))/iu.exec(text);
@@ -317,7 +318,7 @@ export function mockChatReply(input: RuleInput): RuleResult {
         const before = s.worldPrompt;
         s.worldPrompt = `${cap(words)}. ${before}`.slice(0, 600);
         patch(
-          `scene:${s.index + 1}`,
+          `scene:${s.index}`,
           'worldPrompt',
           before,
           s.worldPrompt,
@@ -653,13 +654,24 @@ export class FakeChatApi implements ChatApi {
     return this.response(p);
   }
 
-  async confirm(id: string, messageId: string, actionId: string): Promise<ChatResponse> {
+  async confirm(
+    id: string,
+    messageId: string,
+    actionId: string,
+    decline = false,
+  ): Promise<ChatResponse> {
     const p = await this.project(id);
     const action = p.chat.messages
       .find((m) => m.id === messageId)
       ?.actions?.find((a) => a.id === actionId);
     if (!action) throw new Error('no such action (HTTP 404)');
     if (action.status !== 'needs-confirm') return this.response(p);
+    if (decline) {
+      action.status = 'skipped';
+      action.note = 'Declined: the current world stays.';
+      this.bump(p);
+      return this.response(p);
+    }
     action.status = 'running';
     this.bump(p);
     const index = 'sceneIndex' in action ? action.sceneIndex : null;

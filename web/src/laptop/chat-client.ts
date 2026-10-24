@@ -15,8 +15,8 @@ import {
   listProjects,
   sendChat,
   uploadAttachment,
-  type ChatResponse,
 } from './api';
+import type { ChatResponse } from '@shared/chat';
 
 export type { ChatResponse };
 
@@ -32,10 +32,16 @@ export interface ChatApi {
   uploadImage(projectId: string, image: File | Blob, name?: string): Promise<Attachment>;
   getChat(projectId: string): Promise<ProjectChat>;
   send(projectId: string, req: ChatRequest): Promise<ChatResponse>;
-  confirm(projectId: string, messageId: string, actionId: string): Promise<ChatResponse>;
+  /** Runs a needs-confirm action; `decline` marks it skipped instead. */
+  confirm(
+    projectId: string,
+    messageId: string,
+    actionId: string,
+    decline?: boolean,
+  ): Promise<ChatResponse>;
   generate(projectId: string): Promise<ProjectStatus>;
-  /** Chat-first project: only the parse stage runs until generate(). */
-  createDraft(screenplay: string, title?: string, attachmentIds?: string[]): Promise<ProjectStatus>;
+  /** Chat-first project: only the parse stage runs until generate(); photos follow as a chat message. */
+  createDraft(screenplay: string, title?: string): Promise<ProjectStatus>;
   /** Everything runs at once (the pre-chat Generate). */
   createProject(screenplay: string, title?: string): Promise<ProjectStatus>;
 }
