@@ -80,7 +80,8 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
    (fallback) chip can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
 4. The **Scene** tab (right panel) lists the open project's scenes, the world (splat quality,
-   measured scale, floor offset) and the cast: one row per character with its build detail
+   measured scale, floor offset) and the cast: one row per character with its height (`1.80 m`,
+   see [Actor heights](#actor-heights)), build detail
    (`standard` / `high`), kind (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min
    per actor)** rebuilds that character with LHM-1B plus a fine-tune against its reference image
    (see below).
@@ -348,7 +349,8 @@ pnpm tsx server/pipeline/cli.ts calibrate <worldDir> --write --before-after out.
 #   CALIBRATE=0 / --no-calibrate skips the pipeline step; CALIBRATE_VISION=0 skips the Claude half
 ```
 
-The calibration uses two independent sources (`server/pipeline/calibrate*.ts`):
+The calibration measures with two independent sources (`server/pipeline/calibrate*.ts`) and, when
+the collider has no reference, checks them against two weak ones:
 
 - **Collider geometry.** The collider GLB is flattened with the viewer's own transform. Heights are
   measured from the *local* floor, never y = 0: floor to ceiling over open floor, doorways (a
@@ -361,36 +363,88 @@ The calibration uses two independent sources (`server/pipeline/calibrate*.ts`):
   and top pixels. Those pixels are cast into the world (base onto the floor, top onto the vertical
   above it), so heights are perspective-correct. There are two requests on different views, plus a
   close-up request with the mannequin standing beside the best objects found. At least two of the
-  three must agree within 15%, with enough evidence: total weight ≥ 0.8 and one clean standard
-  reference.
+  three must agree within 15%.
+- **Claude's eyeballed comparison** (weak): each run's sizes judged by eye against the mannequins,
+  without the pixel geometry. It counts only when the runs agree within 15%.
+- **Camera eye height** (weak prior): Marble's text worlds put the source camera at a standing eye
+  height, 1.39–1.61 m above the collider floor on three of the four worlds (1.43 m in the kitchen,
+  which every reference confirms). The prior is 1.55 m ± 0.2, so a camera 2.17 m up says the world
+  is ×0.71 too big, give or take 13%.
+
+With a collider estimate (interiors) the collider decides:
 
 | Collider vs vision | Result |
 | --- | --- |
 | agree within 10% | apply the collider median, confidence `high` |
 | 10–25% apart | apply the collider median (`medium`) only with ≥ 3 consistent collider references |
 | more than 25% apart | nothing applied: factor 1, `low`, and the evidence says why |
-| only one source | collider `high` (≥ 3 consistent) or `medium`; vision `medium` |
+| collider only | `high` (≥ 3 consistent references) or `medium` |
 
-A correction under 5% is recorded but not applied, and nothing outside [0.5, 2] is ever applied.
-Library copies carry the calibration, so a reused world is not measured again. Cost: 2–3 requests,
-each about 5k input tokens (two 1280×720 JPEGs) and 1–4k output tokens, so $0.14–0.25 per world.
-The collider half runs in about 1 s.
+Outdoors, where Marble's collider never has doors, counters or ceilings, each source is a factor with
+an uncertainty σ (log space), and they are combined weighted by 1/σ²:
 
-Results on the four real worlds (heights at Marble's scale; `typ` is the real-world size):
+| Source | σ |
+| --- | --- |
+| vision | √(0.06² + 0.08²/W + (spread/2)²), W = object weight of the agreeing runs (≈ 12% for four ad panels, 9% for four clean doors or counters) |
+| eyeballed | 15% |
+| camera | 13% |
 
-| World | Collider | Vision (pixel-measured) | Result |
+| Outdoors | Result |
+| --- | --- |
+| no vision (runs disagree or found nothing), or weak vision with nothing beside it | nothing applied: the camera alone is only a prior |
+| any two sources more than 25% apart | refused: factor 1, `low`, the evidence names the pair |
+| combined factor within 1.5σ of ×1 | kept, `low` (HUD `unverified`); the evidence gives ×c ± σ |
+| otherwise | apply the combination, `medium` |
+
+Everywhere, a correction under 5% is recorded but not applied, and nothing outside [0.5, 2] is ever
+applied. Library copies carry the stored report, and reusing one re-decides it under the current
+rule (no Claude call). Cost: 2–3 requests, each about 5k input tokens (two 1280×720 JPEGs) and
+1–4k output tokens, so $0.14–0.25 per world. The collider half runs in about 1 s.
+`calibrate --reuse` re-decides a stored report for free; with `--before-after` the left panel then
+shows the stored decision (old rule) and the right one the new decision.
+
+Results on the four real worlds (heights at Marble's scale; `typ` is the real-world size), re-decided
+from the stored reports without a Claude call:
+
+| World | Evidence | Old rule | New rule |
 | --- | --- | --- | --- |
-| kitchen-morning | ceiling 2.68 m (typ 2.60), doorway 2.09 (2.04), counter 0.95 (0.91), table 0.75 (0.75) → ×0.969, 4/4 consistent | doors 1.88–2.12 m, counters 0.81–0.93 m, sill 0.85 m; three runs ×1.04 / ×1.06 / ×0.97 | **Marble right**: sources agree within 6%, correction 3% < 5%, ×1 kept (`high`) |
-| city-street-night | awning 3.44 m only (weak) | bench seat 0.46–0.51 m (typ 0.45) → ×0.89; shopfronts 27 m away → ×1.14–1.25 | ×1 kept (`low`): only one clean reference (the bench) |
-| rooftop-dusk | nothing usable | parapet tops 1.24–1.46 m (typ 1.05–1.10) → ×0.85 | ×1 kept (`low`): parapet heights are not standard; with the 2.17 m camera height this hints the roof may be ~15% large (unverified) |
-| city-bus-stop-night (live project) | shelter roof 2.73 m (typ 2.6, weak) | shelter frame / ad panels → ×1.16–1.22 | ×1 kept (`low`): no standard object near the camera |
+| kitchen-morning | ceiling 2.68 m (typ 2.60), doorway 2.09 (2.04), counter 0.95 (0.91), table 0.75 (0.75) → ×0.969, 4/4 consistent; vision runs ×1.04 / ×1.06 / ×0.97 | ×1 (`high`) | ×1 (`high`): sources agree within 6%, correction 3% < 5% (unchanged) |
+| rooftop-dusk | parapet tops 1.24–1.46 m (typ 1.05–1.10) → vision ×0.85 ± 13% (runs ×0.75 / ×0.85); camera 2.17 m → ×0.71 ± 13%; eyeballed ×0.59 / ×1.0 (disagree, unused) | ×1, `unverified` | **×0.778 ± 9% applied (`medium`)**, 2.8σ: the parapet comes out 0.97 m |
+| city-bus-stop-night (live project) | shelter post / ad panels (tops cut off at the image edge) → vision ×1.16 ± 12%; eyeballed ×0.99; camera 1.61 m → ×0.96; shelter roof 2.73 m (weak) | ×1, `unverified` | ×1, `unverified`: combined ×1.04 ± 8%, 0.6σ, under the 5% deadband |
+| city-street-night | bench seat 0.46–0.51 m (typ 0.45) → vision ×0.89 ± 10%; eyeballed ×0.94; camera 1.39 m → ×1.11; awning 3.44 m (weak) | ×1, `unverified` | ×1, `unverified`: vision and camera are 25% apart (refused; the combination, ×0.96, would also have stayed under the deadband) |
 
-![kitchen before/after](docs/images/scale-kitchen-morning-before-after.png)
+![rooftop: old rule vs new rule](docs/images/scale-v2-rooftop-dusk-before-after.png)
 
-Before/after pictures for the other three: [city street](docs/images/scale-city-street-night-before-after.png),
+Old rule vs new rule for the other three, with the 1.70 m mannequin standing by the object vision
+measured: [bus stop](docs/images/scale-v2-city-bus-stop-night-before-after.png) (the right panel
+shows the not-applied ×1.04),
+[city street](docs/images/scale-v2-city-street-night-before-after.png),
+[kitchen](docs/images/scale-v2-kitchen-morning-before-after.png). The first-rule pictures are still
+there: [kitchen](docs/images/scale-kitchen-morning-before-after.png),
+[city street](docs/images/scale-city-street-night-before-after.png),
 [rooftop](docs/images/scale-rooftop-dusk-before-after.png),
-[bus stop](docs/images/scale-city-bus-stop-night-before-after.png). In each, the right panel shows
-the not-applied candidate, labelled as such.
+[bus stop](docs/images/scale-city-bus-stop-night-before-after.png).
+
+A scaled world moves everything toward or away from the source camera, so blocking marks written in
+metres before calibration can end up inside furniture (×0.78 pulls a bench 3 m out to 2.3 m). The
+viewer's collider correction moves such an actor out at load, and the staging step places marks on
+the calibrated set.
+
+### Actor heights
+
+Every character has a standing height, `Character.heightMeters` (0.9–2.3 m). The planner takes it
+from the script when it gives one ("6'2"" → 1.88, "a boy of ten" ≈ 1.40), otherwise picks a
+plausible value for the description (adult women about 1.55–1.75 m, men 1.65–1.90 m, "tall" adds
+about 0.1). The MOCK planner gives each character id a stable 1.62–1.85 m (the top of that range
+when the intro says "tall": THEO 1.80, MAYA 1.69 in the fixture). Every actor asset carries its
+character's height (LHM avatars, library copies, rebuilds and the mannequin fallback; an older
+`actor.json` is brought in line), and the viewer scales each body kind so the top of the head is
+at that height; the head, label, caption, voice and seated drop follow. The Scene tab's cast row
+shows it.
+
+![MAYA 1.69 m and THEO 1.80 m on the calibrated rooftop](docs/images/actor-heights-rooftop.png)
+
+The same pair in the MOCK laptop: [actor-heights-mock-laptop.png](docs/images/actor-heights-mock-laptop.png).
 
 ### Floor offset: actors on the visible ground
 
