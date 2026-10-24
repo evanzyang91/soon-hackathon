@@ -7,7 +7,8 @@
 //   plan.json               ScreenplayPlan (parse stage, once per project)
 //   log.txt                 human-readable pipeline log
 //   actors/<characterId>/   one actor per character, shared by every scene (actor.json caches it)
-//   scene-<n>/world/        Marble outputs + marble-receipt.json + world-asset.json
+//   scene-<n>/world/        Marble outputs + marble-receipt.json + world-asset.json (or a copy of
+//                           a matching world-library world: live projects only, no credits)
 //   scene-<n>/audio/        one file per dialogue line; scene-<n>/audio.json caches LineAudio[]
 //   scene-<n>/manifest.json SceneManifest, written once world/actors/tts have all settled
 //
@@ -35,9 +36,10 @@ import { buildActor } from './actors.ts';
 import { parseFountain } from './fountain.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
-import { ASSET_FILE, generateWorld, type GenerateWorldOptions } from './marble.ts';
+import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
 import { parseScreenplay } from './screenplay.ts';
 import { synthesizeLine } from './tts.ts';
+import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
 
 export type StageName = 'parse' | 'world' | 'actors' | 'tts' | 'manifest';
 type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -84,6 +86,11 @@ export interface StoreOptions {
    */
   keys?: StoreKeys;
   deps?: Partial<PipelineDeps>;
+  /**
+   * Pre-generated worlds reused by live (non-MOCK) projects before calling Marble; null disables.
+   * Default: env WORLD_LIBRARY_DIR or data/marble.
+   */
+  worldLibraryDir?: string | null;
   maxWorldJobs?: number;
   maxActorJobs?: number;
   maxTtsJobs?: number;
@@ -157,6 +164,7 @@ export class ProjectStore {
   private readonly mock: boolean;
   private readonly model: string;
   private readonly keys: StoreKeys;
+  private readonly libraryDir: string | null;
   private readonly deps: PipelineDeps;
   private readonly echo: boolean;
   private readonly worldSem: Semaphore;
@@ -179,6 +187,7 @@ export class ProjectStore {
     this.mock = o.mock;
     this.model = o.marbleModel ?? env.marbleModel;
     this.keys = o.keys ?? keyPresence();
+    this.libraryDir = o.worldLibraryDir === undefined ? env.worldLibraryDir : o.worldLibraryDir;
     this.deps = {
       parseScreenplay: o.deps?.parseScreenplay ?? parseScreenplay,
       generateWorld: o.deps?.generateWorld ?? generateWorld,
@@ -530,6 +539,11 @@ export class ProjectStore {
     const sceneLog = this.logger(id, `[scene ${idx}] world: `);
     await this.setStage(id, idx, 'world', { status: 'running', note: 'queued' });
     try {
+      const reused = await this.libraryWorld(st, scene, outDir, sceneLog);
+      if (reused) {
+        await this.worldDone(st, idx, reused.asset, `reused library world ${reused.id}`);
+        return;
+      }
       const asset = await this.worldSem.use(async () => {
         await this.setStage(id, idx, 'world', {
           status: 'running',
@@ -554,9 +568,6 @@ export class ProjectStore {
       });
       WorldAsset.parse(asset);
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
-      const job = st.scenes[idx];
-      if (job && asset.thumbnail)
-        job.thumbnailUrl = `/projects/${id}/scene-${idx}/world/${asset.thumbnail}`;
       const note =
         asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
@@ -565,12 +576,39 @@ export class ProjectStore {
             : offline
               ? 'mock world (WLT_API_KEY not set)'
               : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)';
-      await this.setStage(id, idx, 'world', { status: 'done', note });
-      sceneLog(`done — ${note}`);
+      await this.worldDone(st, idx, asset, note);
     } catch (e) {
       await this.setStage(id, idx, 'world', { status: 'failed', note: errMsg(e) });
       sceneLog(`FAILED ${errMsg(e)}`);
     }
+  }
+
+  private async worldDone(st: ProjectStatus, idx: number, asset: WorldAsset, note: string) {
+    const job = st.scenes[idx];
+    if (job && asset.thumbnail)
+      job.thumbnailUrl = `/projects/${st.id}/scene-${idx}/world/${asset.thumbnail}`;
+    await this.setStage(st.id, idx, 'world', { status: 'done', note });
+    void this.log(st.id, `[scene ${idx}] world: done — ${note}`);
+  }
+
+  /**
+   * Live projects only: copies the world-library world matching the scene slug into the scene,
+   * unless the scene already has its own Marble receipt (a submitted job is never abandoned).
+   */
+  private async libraryWorld(
+    st: ProjectStatus,
+    scene: ScenePlan,
+    outDir: string,
+    log: (m: string) => void,
+  ): Promise<{ id: string; asset: WorldAsset } | null> {
+    if (st.mock || !this.libraryDir) return null;
+    if (await exists(join(outDir, RECEIPT_FILE))) return null;
+    const world = await findLibraryWorld(this.libraryDir, scene.slug, log);
+    if (!world) return null;
+    const asset = await copyLibraryWorld(world, outDir);
+    const id = asset.worldId ?? world.key;
+    log(`reusing library world ${world.key} (${id}) from ${world.dir}: no Marble call`);
+    return { id, asset };
   }
 
   private characterMap(plan: ScreenplayPlan) {
