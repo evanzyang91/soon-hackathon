@@ -208,6 +208,8 @@ Rules, most important first:
 5. Keep the planner's intent where the set allows it (who is left or right, who is nearer the camera), but the set wins.
 6. pose: "sitting" only when the action says they sit AND there is a real seat (chair, bench, stool, step, low wall): then give px, the pixel in image 1 on the seat surface where they sit. "walking" only for someone crossing the shot right now; someone who jogs in and then talks is "standing" at their mark. Otherwise "standing".
 
+You will then see your answer rendered with mannequins on its marks and can correct it.
+
 First describe the set's walkable layout in "set": which marks are on the sidewalk or floor and which are on the road, in furniture or hidden, and where the places named in the action are (shelter, bench, kerb, stove, table, parapet…), by mark labels. Then, for every character: "mark" is the label their feet go on; use "" only when no mark is right, and then "px" is the exact pixel in image 1 where their feet touch the ground. "facing" is the id of the character they face, or "camera", or a mark label they look toward. "note" is one short line for the director, at most 90 characters, saying where and why ("on the sidewalk under the shelter by the bench, facing Leo"). Pixels are in image coordinates: x right, y down, origin at the top-left corner, ${IMAGE.width}×${IMAGE.height}.`;
 
 const Px = z.object({ x: z.number(), y: z.number() });
@@ -272,8 +274,20 @@ export function stagingUserText(o: StagingPromptInput): string {
     .join('\n\n');
 }
 
-export function retryText(previous: StagingAnswer, failures: string[]): string {
-  return `A previous answer could not be used:\n${failures.map((f) => `- ${f}`).join('\n')}\n\nPrevious answer:\n${JSON.stringify(previous)}\n\nAnswer again for every character, fixing these problems.`;
+/**
+ * The second request: the first answer rendered (images `first`.. with mannequins labelled by
+ * character id on its marks) plus the checks' failures, to keep or correct.
+ */
+export function reviewText(previous: StagingAnswer, failures: string[], first: number, count: number): string {
+  const imgs = count > 1 ? `Images ${first}-${first + count - 1} show` : `Image ${first} shows`;
+  return [
+    `${imgs} your previous answer rendered: a 1.70 m mannequin labelled with the character id on each mark it could place (main camera${count > 1 ? ', then from the side' : ''}).`,
+    failures.length
+      ? `The automatic checks rejected it:\n${failures.map((f) => `- ${f}`).join('\n')}`
+      : 'It passed the automatic checks (free floor, spacing, nobody behind anybody by the collision mesh), which cannot see thin things like a raised ad panel, glass or a sign.',
+    'Look at every figure in the main camera view: is the whole body visible (not behind a panel, sign, glass wall, post, vehicle or another figure; not cut off by the frame edge)? Is it on walkable ground that fits the action (sidewalk not road, floor not furniture) and where the action says? Keep the marks that work, change the ones that do not, and answer again for every character.',
+    `Previous answer:\n${JSON.stringify(previous)}`,
+  ].join('\n\n');
 }
 
 // ---------------------------------------------------------------------------

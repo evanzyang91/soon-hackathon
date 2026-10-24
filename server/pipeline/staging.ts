@@ -3,12 +3,17 @@
 // they talk to, visible from the director's start camera and not behind one another.
 //
 //   1. the set's collider in the viewer's frame (scale calibrated, floor offset applied)
-//   2. staging-vision.ts planMarks: labelled rings on free ground the start camera can see
-//   3. two renders from the start camera (calibrate-render.ts): a clean plate and the rings
-//   4. one Claude request (structured output): per character a mark (or a feet / seat pixel),
+//   2. staging-vision.ts planMarks: labelled rings on free ground the start camera can see, at
+//      the height of the visible ground (groundHeights)
+//   3. renders (calibrate-render.ts): from the start camera a clean plate and the rings, and the
+//      rings from beside it (depth)
+//   4. a Claude request (structured output): per character a mark (or a feet / seat pixel),
 //      facing, pose, a one-line note; resolveAnswer converts and validates it against the
-//      collider; on failure one retry with the failures fed back; still failing → the planner's
-//      blocking is kept and the report says why
+//      collider
+//   5. a second request that shows that answer rendered with mannequins on its marks, plus any
+//      failures from 4, to keep or fix (the collider cannot see a raised ad panel, glass or a
+//      sign in front of someone; a look can). The last answer that passes the checks wins; none
+//      → the planner's blocking is kept and the report says why
 //
 // The result is scene-<n>/staging.json (StagingReport). project.ts runs this right after the scale
 // calibration of a live Marble world (never in MOCK, never without ANTHROPIC_API_KEY), reuses the
@@ -41,13 +46,14 @@ import {
   marksSeenFrom,
   nearestMark,
   resolveAnswer,
-  retryText,
+  reviewText,
   sideView,
   STAGING_MODEL,
   STAGING_SYSTEM,
   StagingAnswer,
   stagingUserText,
   type Mark,
+  type Resolved,
   type StagedCharacter,
   type StagingCall,
   type StagingGeometry,
@@ -62,6 +68,8 @@ type Usage = { input: number; output: number; costUsd: number };
 
 export interface StagingAttempt {
   answer: StagingAnswer | null;
+  /** the answer's spots that converted (shown as mannequins in the next attempt's preview) */
+  staged?: StagedCharacter[];
   failures: string[];
   warnings: string[];
   usage: Usage;
@@ -180,6 +188,22 @@ export async function groundHeights(
   });
 }
 
+/** Labelled, tinted mannequins on staged spots (seated ones with their feet on the floor). */
+async function stagedFigures(
+  worldDir: string,
+  asset: WorldAsset,
+  geo: StagingGeometry,
+  staged: readonly Pick<StagedCharacter, 'characterId' | 'position' | 'pose'>[],
+  marks: Mark[],
+): Promise<ScaleFigure[]> {
+  const ys = await groundHeights(worldDir, asset, geo, staged.map((c) => [c.position[0], c.position[2]] as const));
+  return staged.map((c, i) => {
+    const sitting = c.pose === 'sitting';
+    const y = sitting ? (nearestMark(marks, c.position[0], c.position[2])?.mark.y ?? 0) : ys[i]!;
+    return { x: c.position[0], z: c.position[2], y, label: c.characterId, tint: PALETTE[i % PALETTE.length]!, ...(sitting ? { pose: 'sitting' as const } : {}) };
+  });
+}
+
 export interface StageOptions {
   worldDir: string;
   /** default: world-asset.json in worldDir */
@@ -190,8 +214,13 @@ export interface StageOptions {
   log?: (m: string) => void;
   call?: StagingCall;
   openRenderer?: (dir: string, asset: WorldAsset) => Promise<WorldRenderer>;
-  /** keep the two images Claude saw here (staging-clean.jpg, staging-marks.jpg) */
+  /** keep the images Claude saw here (staging-clean.jpg, staging-marks.jpg, staging-left.jpg, …) */
   saveViewsTo?: string;
+  /**
+   * Second request even when the first answer passes the checks: Claude looks at mannequins on
+   * its marks and keeps or fixes them (default true; false = one request unless it failed).
+   */
+  review?: boolean;
 }
 
 /** A render request for the staging view, in the harness's frame (no floor offset applied). */
@@ -236,70 +265,84 @@ export async function stageScene(o: StageOptions): Promise<StagingReport> {
     type: 'image',
     source: { type: 'base64', media_type: 'image/jpeg', data: b.toString('base64') },
   });
-  // depth views: the same marks from beside the camera, raised (each draws only what it sees)
-  const spots = marks.map((m) => [m.x, m.z] as const);
-  const sides = ([-1, 1] as const).flatMap((side) => {
-    const v = sideView(geo, spots, side, { fovDeg: 84 });
-    const seen = v ? marksSeenFrom(geo, v, marks) : [];
-    const where = `from ${Math.abs(v?.camera[0] ?? 0)} m ${side < 0 ? 'left' : 'right'} of the main camera, ${v?.camera[1] ?? 0} m up (the marks it sees)`;
-    return v && seen.length >= 3 ? [{ view: v, marks: seen, name: side < 0 ? 'left' : 'right', where }] : [];
-  });
-  const images: { name: string; caption: string; jpeg: Buffer }[] = [];
-  try {
-    images.push({ name: 'clean', caption: 'main camera, clean', jpeg: await renderer.shot(shotOf(asset, view, { format: 'jpeg' })) });
-    // rings sized to the grid so neighbours do not overlap (0.25 m grid in a small room)
-    const ring = (ms: Mark[]) => ms.map((m) => ({ ...m, radius: framing === 'cramped' ? 0.07 : 0.14 }));
-    images.push({ name: 'marks', caption: 'main camera, marks', jpeg: await renderer.shot(shotOf(asset, view, { marks: ring(marks), format: 'jpeg' })) });
-    for (const sv of sides)
-      images.push({ name: sv.name, caption: sv.where, jpeg: await renderer.shot(shotOf(asset, sv.view, { marks: ring(sv.marks), format: 'jpeg' })) });
-  } finally {
-    await renderer.close();
-  }
-  if (o.saveViewsTo) for (const im of images) await writeFile(join(o.saveViewsTo, `staging-${im.name}.jpg`), im.jpeg);
-  const imageBlocks = images.flatMap((im, i): Anthropic.Beta.BetaContentBlockParam[] => [
-    { type: 'text', text: `Image ${i + 1} (${im.caption}):` },
-    image(im.jpeg),
-  ]);
-
   const schema = betaZodOutputFormat(StagingAnswer).schema as Record<string, unknown>;
   const baseText = stagingUserText({ scene: o.scene, characters: o.characters, caption, marks, view });
   const call = o.call ?? defaultStagingCall;
   const attempts: StagingAttempt[] = [];
-  let resolved: ReturnType<typeof resolveAnswer> | undefined;
-  for (let k = 0; k < 2; k++) {
-    const prev = attempts[k - 1];
-    const text = prev?.answer ? `${baseText}\n\n${retryText(prev.answer, prev.failures)}` : baseText;
-    log(`staging: asking ${STAGING_MODEL} (${marks.length} marks, ${cast.length} character(s))${k ? ' again with the failures' : ''}`);
-    const attempt: StagingAttempt = { answer: null, failures: [], warnings: [], usage: { input: 0, output: 0, costUsd: 0 } };
-    attempts.push(attempt);
-    try {
-      const msg = await call({
-        system: STAGING_SYSTEM,
-        content: [...imageBlocks, { type: 'text', text }],
-        schema,
-      });
-      attempt.usage = costOf(msg.usage);
-      if (msg.stop_reason === 'refusal') throw new Error('staging request was declined');
-      if (msg.stop_reason === 'max_tokens') throw new Error('staging answer was cut off (max_tokens)');
-      const raw = msg.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
-      attempt.answer = StagingAnswer.parse(JSON.parse(raw));
-    } catch (e) {
-      // a declined, cut-off or unreadable answer has no failures to feed back: no retry
-      attempt.error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
-      attempt.failures.push(`no usable answer: ${attempt.error}`);
-      log(`staging: attempt ${k + 1} failed: ${attempt.error}`);
-      break;
+  /** the last answer that passed every check, with its conversion */
+  let accepted: { attempt: StagingAttempt; resolved: Resolved } | undefined;
+  try {
+    // depth views: the same marks from beside the camera, raised (each draws only what it sees)
+    const spots = marks.map((m) => [m.x, m.z] as const);
+    const sides = ([-1, 1] as const).flatMap((side) => {
+      const v = sideView(geo, spots, side, { fovDeg: 84 });
+      const seen = v ? marksSeenFrom(geo, v, marks) : [];
+      const where = `from ${Math.abs(v?.camera[0] ?? 0)} m ${side < 0 ? 'left' : 'right'} of the main camera, ${v?.camera[1] ?? 0} m up`;
+      return v && seen.length >= 3 ? [{ side, view: v, marks: seen, name: side < 0 ? 'left' : 'right', where }] : [];
+    });
+    // rings sized to the grid so neighbours do not overlap (0.25 m grid in a small room)
+    const ring = (ms: Mark[]) => ms.map((m) => ({ ...m, radius: framing === 'cramped' ? 0.07 : 0.14 }));
+    const images: { name: string; caption: string; jpeg: Buffer }[] = [
+      { name: 'clean', caption: 'main camera, clean', jpeg: await renderer.shot(shotOf(asset, view, { format: 'jpeg' })) },
+      { name: 'marks', caption: 'main camera, marks', jpeg: await renderer.shot(shotOf(asset, view, { marks: ring(marks), format: 'jpeg' })) },
+    ];
+    for (const sv of sides)
+      images.push({ name: sv.name, caption: `${sv.where} (the marks it sees)`, jpeg: await renderer.shot(shotOf(asset, sv.view, { marks: ring(sv.marks), format: 'jpeg' })) });
+    if (o.saveViewsTo) for (const im of images) await writeFile(join(o.saveViewsTo, `staging-${im.name}.jpg`), im.jpeg);
+    const blocks = (ims: { caption: string; jpeg: Buffer }[], first: number) =>
+      ims.flatMap((im, i): Anthropic.Beta.BetaContentBlockParam[] => [{ type: 'text', text: `Image ${first + i} (${im.caption}):` }, image(im.jpeg)]);
+
+    // 1: choose. 2: check — the first answer rendered with mannequins on its marks (main view and
+    // one side view) plus whatever the checks found, so problems the collider cannot see (a
+    // raised ad panel, glass, a thin post in front of someone) are caught by looking.
+    for (let k = 0; k < 2; k++) {
+      const prev = attempts[k - 1];
+      let content: Anthropic.Beta.BetaContentBlockParam[] = [...blocks(images, 1), { type: 'text', text: baseText }];
+      if (prev?.answer) {
+        const shown = prev.staged ?? [];
+        const figures = await stagedFigures(o.worldDir, asset, geo, shown, marks);
+        const preview = [{ name: 'preview-main', caption: 'your previous answer from the main camera, mannequins on its marks', jpeg: await renderer.shot(shotOf(asset, view, { figures, format: 'jpeg' })) }];
+        const sv = sides[0];
+        const side = sv && shown.length ? sideView(geo, shown.map((c) => [c.position[0], c.position[2]] as const), sv.side, { fovDeg: 84 }) : null;
+        if (side) preview.push({ name: 'preview-side', caption: `your previous answer ${sv!.where}`, jpeg: await renderer.shot(shotOf(asset, side, { figures, format: 'jpeg' })) });
+        if (o.saveViewsTo) for (const im of preview) await writeFile(join(o.saveViewsTo, `staging-${im.name}.jpg`), im.jpeg);
+        const text = `${baseText}\n\n${reviewText(prev.answer, prev.failures, images.length + 1, preview.length)}`;
+        content = [...blocks(images, 1), ...blocks(preview, images.length + 1), { type: 'text', text }];
+      }
+      const why = !k ? '' : prev?.failures.length ? ' again with the failures and a preview' : ' to check a preview of its marks';
+      log(`staging: asking ${STAGING_MODEL} (${marks.length} marks, ${cast.length} character(s))${why}`);
+      const attempt: StagingAttempt = { answer: null, failures: [], warnings: [], usage: { input: 0, output: 0, costUsd: 0 } };
+      attempts.push(attempt);
+      try {
+        const msg = await call({ system: STAGING_SYSTEM, content, schema });
+        attempt.usage = costOf(msg.usage);
+        if (msg.stop_reason === 'refusal') throw new Error('staging request was declined');
+        if (msg.stop_reason === 'max_tokens') throw new Error('staging answer was cut off (max_tokens)');
+        const raw = msg.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+        attempt.answer = StagingAnswer.parse(JSON.parse(raw));
+      } catch (e) {
+        // a declined, cut-off or unreadable answer: nothing to show or feed back
+        attempt.error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+        attempt.failures.push(`no usable answer: ${attempt.error}`);
+        log(`staging: attempt ${k + 1} failed: ${attempt.error}`);
+        break;
+      }
+      const resolved = resolveAnswer(attempt.answer, { scene: o.scene, marks, geo, view });
+      attempt.failures = resolved.failures;
+      attempt.warnings = resolved.warnings;
+      attempt.staged = resolved.staged;
+      if (!resolved.failures.length) accepted = { attempt, resolved };
+      else log(`staging: attempt ${k + 1} not usable: ${resolved.failures.join('; ')}`);
+      if (o.review === false && accepted) break;
     }
-    resolved = resolveAnswer(attempt.answer, { scene: o.scene, marks, geo, view });
-    attempt.failures = resolved.failures;
-    attempt.warnings = resolved.warnings;
-    if (!resolved.failures.length) break;
-    log(`staging: attempt ${k + 1} not usable: ${resolved.failures.join('; ')}`);
+  } finally {
+    await renderer.close();
   }
 
-  const usage = attempts.reduce((s, a) => ({ input: s.input + a.usage.input, output: s.output + a.usage.output, costUsd: s.costUsd + a.usage.costUsd }), { input: 0, output: 0, costUsd: 0 });
+  const usage = attempts.reduce((t, a) => ({ input: t.input + a.usage.input, output: t.output + a.usage.output, costUsd: t.costUsd + a.usage.costUsd }), { input: 0, output: 0, costUsd: 0 });
   const last = attempts[attempts.length - 1]!;
-  const ok = !!resolved && !last.failures.length && !!last.answer;
+  if (accepted && accepted.attempt !== last) log(`staging: the check's answer failed (${last.failures.join('; ')}); the first answer stands`);
+  const set = (accepted?.attempt.answer ?? last.answer)?.set;
   const report: StagingReport = {
     schema: 'previz.staging/1',
     version: STAGING_VERSION,
@@ -308,19 +351,19 @@ export async function stageScene(o: StageOptions): Promise<StagingReport> {
     factor: calibrationFactor(asset),
     createdAt: new Date().toISOString(),
     model: STAGING_MODEL,
-    status: ok ? 'staged' : 'kept',
-    ...(ok ? {} : { reason: `the planner's blocking is kept: ${last.failures.join('; ') || 'no usable answer'}` }),
+    status: accepted ? 'staged' : 'kept',
+    ...(accepted ? {} : { reason: `the planner's blocking is kept: ${last.failures.join('; ') || 'no usable answer'}` }),
     view,
     marks,
     original: o.scene.blocking,
-    blocking: ok ? resolved!.blocking : o.scene.blocking,
-    characters: ok ? resolved!.staged : [],
-    ...(last.answer?.set ? { set: last.answer.set } : {}),
+    blocking: accepted ? accepted.resolved.blocking : o.scene.blocking,
+    characters: accepted ? accepted.resolved.staged : [],
+    ...(set ? { set } : {}),
     attempts,
     usage,
   };
   log(
-    ok
+    accepted
       ? `staging: ${report.characters.map((c) => `${c.characterId} → ${c.mark || c.source} (${c.position[0]}, ${c.position[2]}) ${c.pose}: ${c.note}`).join(' | ')} ($${usage.costUsd.toFixed(3)})`
       : `staging: ${report.reason} ($${usage.costUsd.toFixed(3)})`,
   );
