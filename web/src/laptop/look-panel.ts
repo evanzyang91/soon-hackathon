@@ -29,7 +29,14 @@ import { GIZMO_LAYER } from './gizmos';
 import { storageGet, storageSet } from './storage';
 
 type Dof = Look['dof'];
-const LIVE_LOOK_INTERVAL_MS = 100; // ≤ 10 Hz to the phone while dragging
+/**
+ * Live look pacing: the director's heartbeat (every 250 ms, director.ts) carries the live look
+ * anyway, so one extra send goes out midway between heartbeats: 8 Hz in total (≤ 10 Hz), and
+ * none when a heartbeat is due within 60 ms.
+ */
+const HEARTBEAT_MS = 250;
+const LIVE_LOOK_SPACING_MS = HEARTBEAT_MS / 2;
+const HEARTBEAT_GRACE_MS = 60;
 const TAB_KEY = 'previz:rightTab';
 
 // ---- slider specs ------------------------------------------------------------------------------
@@ -175,18 +182,34 @@ export function mountLookPanel(director: Director): LookPanel {
   showTab(activeTab);
 
   // ---- session + phone link --------------------------------------------------------------------
-  let lastBroadcast = 0;
+  /** When the last SceneState carrying the live look went out (ours or the heartbeat's). */
+  let lastLookSent = -Infinity;
+  /** When the director last broadcast on its own (its heartbeat); -∞ until seen. */
+  let lastHeartbeat = -Infinity;
+  let ownSend = false;
   let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  const send = (force: boolean) => {
+    ownSend = true;
+    try {
+      director.broadcast(force);
+    } finally {
+      ownSend = false;
+    }
+  };
   const broadcast = (force: boolean) => {
     if (broadcastTimer) clearTimeout(broadcastTimer);
     broadcastTimer = null;
+    if (force) return send(true);
     const now = performance.now();
-    if (force || now - lastBroadcast >= LIVE_LOOK_INTERVAL_MS) {
-      lastBroadcast = now;
-      director.broadcast(force);
-      return;
+    const at = Math.max(now, lastLookSent + LIVE_LOOK_SPACING_MS);
+    // the heartbeat is about to carry the latest look anyway (it runs a little late, so "near a
+    // heartbeat" counts on both sides of its nominal time)
+    if (Number.isFinite(lastHeartbeat)) {
+      const phase = (at - lastHeartbeat) % HEARTBEAT_MS;
+      if (phase < HEARTBEAT_GRACE_MS || phase > HEARTBEAT_MS - HEARTBEAT_GRACE_MS) return;
     }
-    broadcastTimer = setTimeout(() => broadcast(false), LIVE_LOOK_INTERVAL_MS - (now - lastBroadcast));
+    if (at <= now) send(false);
+    else broadcastTimer = setTimeout(() => broadcast(false), at - now);
   };
   const session = new LookSession({ onChange: () => render(), onBroadcast: broadcast });
 
@@ -204,11 +227,15 @@ export function mountLookPanel(director: Director): LookPanel {
   };
 
   director.decorateState = (state: SceneState) => {
+    if (!ownSend) lastHeartbeat = performance.now();
     if (!session.sceneLook) return;
     if (session.status !== 'offline' && session.status !== 'loading') state.editsRevision = session.revision;
     if (session.liveLook || activeOverride()) {
       const look = phoneLook();
-      if (look) state.look = look as unknown as Record<string, unknown>;
+      if (look) {
+        state.look = look as unknown as Record<string, unknown>;
+        lastLookSent = performance.now();
+      }
     }
   };
 
@@ -702,7 +729,8 @@ export function mountLookPanel(director: Director): LookPanel {
 
   // ---- keyboard: undo / redo while the Look tab is open ------------------------------------------
   window.addEventListener('keydown', (e) => {
-    if (activeTab !== 'look' || !(e.metaKey || e.ctrlKey) || e.code !== 'KeyZ') return;
+    // the panel itself must be showing (other tabs, e.g. Edit, hide it without telling us)
+    if (section.hidden || !(e.metaKey || e.ctrlKey) || e.code !== 'KeyZ') return;
     if (isTyping(e.target)) return;
     e.preventDefault();
     if (e.shiftKey) session.redo();
