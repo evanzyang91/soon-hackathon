@@ -406,6 +406,8 @@ class MarbleRun {
       groundPlaneOffset: Number.isFinite(gpo) ? gpo : 0,
       opencvFrame: true,
     };
+    if (typeof world.caption === 'string' && world.caption.trim())
+      asset.caption = world.caption.trim().slice(0, 2000);
     const get = async (url: string | undefined, file: string, spz: boolean, required: boolean) => {
       if (!url) return undefined;
       try {

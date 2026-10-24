@@ -326,7 +326,12 @@ describe('project pipeline (mock)', () => {
       expect(st.scenes[n]!.stages.manifest.status).toBe('done');
       const m = await readManifest(id, n);
       expect(m.plan.dialogue.length).toBeGreaterThan(0);
+      // the laptop's scene list shows the heading and the world thumbnail
+      expect(st.scenes[n]!.heading).toBe(m.plan.heading);
+      expect(st.scenes[n]!.thumbnailUrl).toBe(`/projects/${id}/scene-${n}/world/thumbnail.png`);
+      expect(existsSync(join(dataDir, id, `scene-${n}`, 'world', 'thumbnail.png'))).toBe(true);
     }
+    expect(st.scenes[0]!.heading).toBe('EXT. CITY STREET - NIGHT');
   });
 });
 
