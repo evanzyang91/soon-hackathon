@@ -84,6 +84,25 @@ def test_submit_then_recover_downloads_verified_outputs(tmp_path):
     assert fn.spawned == 1
 
 
+def test_default_download_is_keyframe_plus_motion_track(tmp_path):
+    vol = tmp_path / "volume"
+    vol.mkdir()
+    receipt_path, _ = rc.new_receipt(tmp_path / "a", "actor")
+    rc.submit_once(FakeFunction(vol), receipt_path, {})
+    rc.recover_outputs(receipt_path, FakeVolume(vol))
+    seq = tmp_path / "a/sequence"
+    assert sorted(p.name for p in seq.iterdir()) == ["frame_000.ply", "motion.u16", "sequence.json"]
+    rc.recover_outputs(receipt_path, FakeVolume(vol), all_frames=True)  # resumes, adds the rest
+    assert (seq / "frame_002.ply").exists()
+
+
+def test_without_a_motion_track_every_frame_is_downloaded():
+    files = {"sequence/frame_000.ply": {}, "sequence/frame_001.ply": {}}
+    assert rc.wanted("sequence/frame_001.ply", files=files)
+    assert not rc.wanted("sequence/frame_001.ply", files={**files, "sequence/motion.f32": {}})
+    assert not rc.wanted("raw/frame_000.ply") and rc.wanted("raw/frame_000.ply", include_raw=True)
+
+
 def test_include_raw_downloads_repackageable_frames(tmp_path):
     vol = tmp_path / "volume"
     vol.mkdir()
@@ -109,7 +128,7 @@ def test_tampered_download_is_rejected(tmp_path):
     vol.mkdir()
     receipt_path, receipt = rc.new_receipt(tmp_path / "a", "actor")
     rc.submit_once(FakeFunction(vol), receipt_path, {})
-    frame = vol / receipt["remotePath"] / "output/sequence/frame_001.ply"
+    frame = vol / receipt["remotePath"] / "output/sequence/motion.u16"
     data = bytearray(frame.read_bytes())
     data[-1] ^= 0xFF
     frame.write_bytes(bytes(data))

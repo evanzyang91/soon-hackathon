@@ -305,12 +305,26 @@ def local_target(destination, relative):
     return target
 
 
-def wanted(name, include_raw=False):
-    """raw/ (unpackaged LHM frames) and canonical-state.pt stay in the Volume unless asked for."""
-    return include_raw or not (name.startswith("raw/") or name == "canonical-state.pt")
+FRAME_PLY = re.compile(r"sequence/frame_\d+\.ply")
+MOTION_TRACKS = ("sequence/motion.u16", "sequence/motion.f32")
 
 
-def recover_outputs(receipt_path, volume, destination=None, include_raw=False):
+def wanted(name, include_raw=False, all_frames=False, files=()):
+    """What a caller downloads by default.
+
+    raw/ (unpackaged LHM frames) and canonical-state.pt stay in the Volume unless asked for. When
+    the checkpoint has a motion track, the browser needs only frame_000.ply (the appearance
+    keyframe) plus the track, so the other packaged PLYs (~2.7 MB each, ~190 MB for 72 frames)
+    stay remote too unless all_frames; they remain listed and hash-pinned in sequence.json.
+    """
+    if not include_raw and (name.startswith("raw/") or name == "canonical-state.pt"):
+        return False
+    if all_frames or not FRAME_PLY.fullmatch(name) or name == "sequence/frame_000.ply":
+        return True
+    return not any(track in files for track in MOTION_TRACKS)
+
+
+def recover_outputs(receipt_path, volume, destination=None, include_raw=False, all_frames=False):
     """Download verified output files only; no FunctionCall or inference API is used."""
     with receipt_lock(receipt_path):
         receipt_path = Path(receipt_path)
@@ -333,7 +347,7 @@ def recover_outputs(receipt_path, volume, destination=None, include_raw=False):
         destination = Path(destination or receipt["destination"])
         destination.mkdir(parents=True, exist_ok=True)
         for name, item in manifest["files"].items():
-            if not wanted(name, include_raw):
+            if not wanted(name, include_raw, all_frames, manifest["files"]):
                 continue
             target = local_target(destination, name)
             if target.exists():
