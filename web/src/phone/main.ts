@@ -132,6 +132,8 @@ const debug = {
   setFov: (f: number) => setFov(f),
   /** Back to the attached camera (what a double-tap on the joystick does). */
   resetWalk: () => resetWalk(),
+  /** The loaded scene (look checks freeze its clock and read its look). */
+  sceneRuntime: () => view?.sceneRuntime ?? null,
 };
 export type PhoneDebug = typeof debug;
 declare global {
