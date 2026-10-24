@@ -40,16 +40,16 @@ export const Look = z.object({
   vignette: unit.default(0),
   grain: unit.default(0),
   bloom: unit.default(0),
-  fog: z.object({ color: z.string().default('#9aa3ad'), density: unit.default(0) }).default({}),
+  fog: z.object({ color: z.string().default('#9aa3ad'), density: unit.default(0) }).prefault({}),
   /** Multiplies the colour of splats above the horizon band; the honest way to "tint the sky". */
-  skyTint: z.object({ color: z.string().default('#ffffff'), strength: unit.default(0) }).default({}),
+  skyTint: z.object({ color: z.string().default('#ffffff'), strength: unit.default(0) }).prefault({}),
   dof: z
     .object({
       enabled: z.boolean().default(false),
       focusDistance: z.number().positive().default(3), // meters
       fStop: z.number().min(0.95).max(22).default(2.8),
     })
-    .default({}),
+    .prefault({}),
   lights: z.array(Light).default([]),
   /** 0 = scene lighting untouched; 1 = only the Look's lights brighten the splats. */
   ambient: unit.default(1),
