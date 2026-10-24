@@ -26,9 +26,9 @@ export interface LibraryWorld {
   asset: WorldAsset;
 }
 
-/** Every file a world asset names (relative to its directory). */
+/** Every file a world asset names (relative to its directory), the ground field included. */
 export function assetFiles(a: WorldAsset): string[] {
-  const files = [a.spz.k500, a.spz.k100, a.spz.full, a.colliderGlb, a.thumbnail];
+  const files = [a.spz.k500, a.spz.k100, a.spz.full, a.colliderGlb, a.thumbnail, a.ground?.file];
   return [...new Set(files.filter((f): f is string => !!f))];
 }
 
@@ -36,7 +36,8 @@ const plainFile = (f: string) => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(f);
 
 /**
  * The library world for `slug`, or null when there is none (or it is incomplete: a world-asset.json
- * that does not validate, or names a file that is missing).
+ * that does not validate, or names a file that is missing). A missing ground field only drops
+ * `ground`: the world is still good, and the pipeline measures the field again after the copy.
  */
 export async function findLibraryWorld(
   libraryDir: string,
@@ -52,13 +53,19 @@ export async function findLibraryWorld(
     log(`library world ${key}: invalid ${ASSET_FILE}; ignoring`);
     return null;
   }
-  for (const f of assetFiles(parsed.data)) {
+  let asset = parsed.data;
+  if (asset.ground && !(plainFile(asset.ground.file) && (await exists(join(dir, asset.ground.file))))) {
+    log(`library world ${key}: ${asset.ground.file} missing; the ground field will be measured again`);
+    const { ground: _missing, ...rest } = asset;
+    asset = rest;
+  }
+  for (const f of assetFiles(asset)) {
     if (!plainFile(f) || !(await exists(join(dir, f)))) {
       log(`library world ${key}: ${f} missing; ignoring`);
       return null;
     }
   }
-  return { key, dir, asset: parsed.data };
+  return { key, dir, asset };
 }
 
 /**

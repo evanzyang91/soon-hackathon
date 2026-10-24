@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { mockWorldSplats } from './mock-world.ts';
-import { decodeSpz, encodeSpz, isGzip, readSpzHeader, type Splat } from './spz.ts';
+import { decodeSpz, decodeSpzPoints, encodeSpz, isGzip, readSpzHeader, type Splat } from './spz.ts';
 
 describe('spz', () => {
   it('round-trips positions, colors, opacity and scale within quantization error', () => {
@@ -37,6 +37,13 @@ describe('spz', () => {
       expect(b.opacity).toBeCloseTo(a.opacity, 2);
     }
     expect(back[1]!.rotation![1]).toBeCloseTo(0.7071, 1);
+    // the typed-array decoder reads the same positions and opacities
+    const pts = decodeSpzPoints(gz);
+    expect(pts.header.numPoints).toBe(2);
+    back.forEach((s, i) => {
+      for (let k = 0; k < 3; k++) expect(pts.positions[3 * i + k]).toBeCloseTo(s.position[k]!, 5);
+      expect(pts.opacities[i]).toBeCloseTo(s.opacity, 5);
+    });
   });
 
   it('rejects non-gzip and non-SPZ data', () => {
