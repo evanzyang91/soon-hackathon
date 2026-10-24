@@ -40,6 +40,11 @@ export const FRAMINGS = {
 export type Framing = keyof typeof FRAMINGS;
 /** Marks farther than this from the camera are not offered (the rules ask for ≤ ~6 m). */
 export const MAX_MARK_DISTANCE = 7.5;
+/**
+ * Farthest anyone may be staged (by feet pixel): a place the action names beyond the marks (a
+ * parapet 10 m out) still reads from the start camera (a 1.7 m body ≈ 140 px of 720 at 10 m).
+ */
+export const MAX_STAGE_DISTANCE = 12;
 
 export interface StagingGeometry {
   /** collider triangles in the viewer's frame (scale calibrated, floor offset applied) */
@@ -203,7 +208,7 @@ Images 1 and 2 show the set from the scene's main camera (the director's start v
 Rules, most important first:
 1. Walkable ground that fits the scene: the sidewalk or pavement, not the road or a traffic lane (unless the script puts them there); the floor, never on furniture, a counter, a table, a planter or a bed; not inside a shelter's glass walls, behind a counter or behind a railing unless the action says so. Keep feet at least about 0.3 m inside an edge (a kerb, a step, a platform or roof edge): a ring on the kerb line counts as the road. Judge the surface from image 1: the collision mesh is coarse, so a ring can sit on a road, a kerb edge or a puddle as easily as on a sidewalk.
 2. Where the action says: "under the shelter", "waits at the kerb", "by the stove", "sits at the table", "leans on the parapet" means right there, within about 0.5-1 m of that thing.
-3. Visible from the main camera: whole bodies readable, nobody hidden behind another (keep them at clearly different left/right positions in the frame) or behind a set piece. In image 2, a label drawn over a wall, panel, post or object means that spot is BEHIND it and hidden. Prefer marks 2-6 m from the camera. The director's laptop view is often narrower than these renders, so when the set allows, keep the characters toward the middle (|x| under about half their distance) rather than at the sides.
+3. Visible from the main camera: whole bodies readable, nobody hidden behind another (keep them at clearly different left/right positions in the frame) or behind a set piece. In image 2, a label drawn over a wall, panel, post or object means that spot is BEHIND it and hidden. Prefer marks 2-6 m from the camera; go farther (up to about 12 m, with px, since the marks stop at about 7 m) only when the action puts someone at a particular place that far out, like a parapet, a far doorway or a car across the street. The director's laptop view is often narrower than these renders, so when the set allows, keep the characters toward the middle (|x| under about half their distance) rather than at the sides.
 4. Conversation: characters who talk to each other stand about 1.2-1.8 m apart and face each other (opening slightly toward the camera is good); a group forms an open arc facing the camera.
 5. Keep the planner's intent where the set allows it (who is left or right, who is nearer the camera), but the set wins.
 6. pose: "sitting" only when the action says they sit AND there is a real seat (chair, bench, stool, step, low wall): then give px, the pixel in image 1 on the seat surface where they sit. "walking" only for someone crossing the shot right now; someone who jogs in and then talks is "standing" at their mark. Otherwise "standing".
@@ -354,7 +359,7 @@ export function coveredFraction(eye: Vec3, near: Vec3, far: Vec3): number {
  * surface 0.25-0.8 m above the floor. Each spot then passes correctPlacement (free floor, ≥ 0.5 m
  * from the others; a spot within 1.5 m is accepted as nudged). Failures: an unknown or missing
  * character, an unknown mark, a pixel off the floor / seat, no free floor nearby, two marks closer
- * than 0.7 m, someone the camera sees behind someone else or behind the set, a mark beyond 8 m.
+ * than 0.7 m, someone the camera sees behind someone else or behind the set, beyond 12 m.
  * Yaw faces the named character's final mark, the camera or a mark.
  */
 export function resolveAnswer(answer: StagingAnswer, ctx: ResolveContext): Resolved {
@@ -428,7 +433,7 @@ export function resolveAnswer(answer: StagingAnswer, ctx: ResolveContext): Resol
   for (let i = 0; i < staged.length; i++) {
     const a = staged[i]!;
     const da = Math.hypot(a.position[0] - eye[0], a.position[2] - eye[2]);
-    if (da > 8) failures.push(`${a.characterId} is ${da.toFixed(1)} m from the camera (keep within 6 m)`);
+    if (da > MAX_STAGE_DISTANCE) failures.push(`${a.characterId} is ${da.toFixed(1)} m from the camera (at most ${MAX_STAGE_DISTANCE} m; prefer 2-6 m)`);
     // chest height: a seated body's is lower (floorAt is the seat there, ~0.45 m)
     const chest = (floorAt(geo.grid, a.position[0], a.position[2]) ?? 0) + (a.pose === 'sitting' ? 0.6 : 1.3);
     if (!sees(geo.cast, eye, [a.position[0], chest, a.position[2]], 0.4))
