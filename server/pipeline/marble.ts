@@ -30,7 +30,7 @@ export type MarbleModel = (typeof MARBLE_MODELS)[number];
 export const RECEIPT_FILE = 'marble-receipt.json';
 export const DRY_RUN_FILE = 'marble-dry-run.json';
 export const ASSET_FILE = 'world-asset.json';
-const WORLD_FILE = 'marble-world.json';
+export const WORLD_FILE = 'marble-world.json';
 const BASE_URL = 'https://api.worldlabs.ai';
 
 export interface MarbleDeps {
@@ -672,7 +672,7 @@ async function fileMatches(
   }
 }
 
-interface MarbleWorld {
+export interface MarbleWorld {
   world_id?: string;
   caption?: string;
   assets?: {

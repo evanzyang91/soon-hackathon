@@ -205,6 +205,9 @@ describe('writing and running', () => {
     expect(floorOffsetOf(at(-0.189511))).toBe(0.19);
     expect(floorOffsetOf(at(0.0004))).toBe(0);
     expect(floorOffsetOf(at(-0.7))).toBeUndefined();
+    // No ground plane from Marble (draft worlds): the splat ground may be farther from 0.
+    expect(floorOffsetOf({ ...at(-0.537), groundPlaneDeclared: false })).toBe(0.537);
+    expect(floorOffsetOf({ ...at(-2.5), groundPlaneDeclared: false })).toBeUndefined();
     expect(floorOffsetOf(at(null))).toBeUndefined();
     expect(floorOffsetOf({ ground: null })).toBeUndefined();
     const base = asset('w5', { scaleCalibration: { factor: 1, method: 'none', confidence: 'low', evidence: 'x' }, floorOffsetMeters: 0.3 });
