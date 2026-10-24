@@ -50,13 +50,79 @@ speakers are in the same room.
 ?sway=2           exaggerate the handheld nudge
 ?voice=0          mute the actors on the phone (the laptop still plays them)
 ?ws=wss://…/ws    override the relay URL
+?pose=external    the native ARKit app streams the pose; the page only renders (see below)
 ```
+
+## Native ARKit app (`?pose=external`)
+
+The iOS app (`ios/`, contract: "Web side contract" in `ios/README.md`) loads
+`/phone.html?room=ABCD&pose=external&voice=0&sim=0` in a `WKWebView`. The app owns the relay
+socket and is the room's only phone: it sends `hello` / `pose` / `cmd` itself and forwards every
+relay message to the page. The page:
+
+- **starts at once**: no "Tap to start", sensor permission, fullscreen, orientation / wake lock,
+  `deviceorientation` / `devicemotion` listeners, joystick, keyboard walk, pinch lens or
+  "No motion sensors" fallback. `OrientationTracker`, `HandheldNudge` and `Walker` stay idle.
+- **never opens the relay** (no `RelayClient`, nothing sent; `posesSent` stays 0).
+- **installs the bridge, then says ready**: `window.__previzPose(pose)` stores the latest pose
+  (cheap, up to 60 Hz; the rAF loop renders it) and `window.__previzMessage(msg)` is the relay
+  `onMessage` (`peers` / `scene` / `cmd`). Then it calls
+  `window.webkit?.messageHandlers?.previz?.postMessage({ type: 'ready' })` (a no-op in a desktop
+  browser) and the app replays the latest peers, scene and pose.
+- **renders the pose as is** (`external.ts`): orientation = `pose.q` verbatim (already world
+  frame and re-centred), position = anchor + `pose.offset` + `pose.nudge` (anchor as in browser
+  mode: active drop camera → manifest `startCamera`), fov = `pose.fovDeg` clamped to [10, 120]
+  only (not the pinch lens's 24–90), lens label from it, `pose.recording` drives the REC badge;
+  `pose.aspect` is ignored. Poses that fail the shape guard (non-finite / non-unit `q`,
+  non-finite fov, malformed `nudge` / `offset`) are dropped.
+- **leaves heading, fov and walk to the app**: a laptop `cmd: recenter` only shows a toast, and a
+  new anchor camera does not reset fov / walk or recenter.
+- **hides** `#start`, `#joystick`, `#height`, `#controls`, `#top-right`, `#top-left`,
+  `#walk-readout`, `#hint` and `#rotate` (`body[data-pose="external"]` rules in `phone.html`; the
+  app draws its own overlay there). It keeps `#top-center` (camera, lens, clock, REC), `#caption`,
+  `#perf`, `#toast`, `#flash` and `#attitude`.
+- **audio**: the app passes `voice=0`. With `voice=1` the first `__previzPose` creates and resumes
+  the AudioContext (the web view allows media without a gesture).
+- **page → app**: besides `ready`, it posts `{ type: 'log', message }` when the 3D view or a
+  manifest fails to load. The render governor still runs (it keeps the page responsive).
+
+Debug: `__phone.poseSource` is `'external'`, `__phone.externalPoses` counts the poses applied,
+and `__phone.conn` mirrors `window.__previzNative.conn` (the app's relay link, refreshed at 1 Hz)
+when that is a string. `window.__previzNativeHost` is injected by the app before any page script.
+
+Driving it from Playwright (desktop Chromium, no app):
+
+```ts
+await ctx.addInitScript(() => {
+  (window as any).webkit = {
+    messageHandlers: { previz: { postMessage: (m: unknown) => ((window as any).__posted ||= []).push(m) } },
+  };
+});
+await phone.goto(`${base}/phone.html?room=ABCD&pose=external&voice=0&sim=0`);
+await phone.waitForFunction(() => (window as any).__posted?.some((m: any) => m.type === 'ready'));
+await phone.evaluate((scene) => {
+  window.__previzMessage!({ type: 'peers', laptop: true, phones: 1 });
+  window.__previzMessage!(scene); // a SceneState
+}, scene);
+await phone.evaluate(() =>
+  window.__previzPose!({
+    type: 'pose', source: 'arkit', t: 1, q: [0, 0.2588, 0, 0.9659], nudge: [0, 0, 0],
+    offset: [0.5, 0, -0.2], fovDeg: 38, recording: true,
+  }),
+);
+await phone.waitForFunction(() => window.__phone?.viewMode === 'webgl');
+// __phone.cameraPosition = anchor + offset + nudge, __phone.cameraQuaternion = q
+```
+
+The `webkit` stub is optional (the page optional-chains it); without it there is just no `ready`
+to observe.
 
 ## Modules
 
 | file                                  | what                                                                          |
 | ------------------------------------- | ----------------------------------------------------------------------------- |
 | `main.ts`                             | boot + wiring: start gesture, relay, sensors, pose pump, scene state, HUD     |
+| `external.ts`                         | `?pose=external`: native pose shape guard + fov range (the app owns the pose) |
 | `sensors.ts`                          | `deviceorientation` → camera quaternion, yaw recenter (`OrientationTracker`)  |
 | `nudge.ts`                            | `devicemotion` → damped, high-passed, clamped (±0.3 m) handheld sway          |
 | `walk.ts` / `joystick.ts`             | joystick walk math (heading, dead zone, ramp, height clamp) / its DOM + keys  |
@@ -101,7 +167,8 @@ await phone.evaluate(() =>
 
 | field                                                            | meaning                                                                   |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `conn`                                                           | `'idle' \| 'connecting' \| 'open' \| 'reconnecting' \| 'closed'`          |
+| `conn`                                                           | `'idle' \| 'connecting' \| 'open' \| 'reconnecting' \| 'closed'`; with `?pose=external`, `__previzNative.conn` |
+| `poseSource`, `externalPoses`                                    | `'external'` (`?pose=external`) or `'browser'`; native poses applied      |
 | `peers`                                                          | last `peers` message `{ laptop, phones }`                                 |
 | `posesSent`, `lastPose`                                          | count and last `PhonePose` sent                                           |
 | `orientationEvents`, `motionEvents`                              | sensor events applied                                                     |
@@ -109,6 +176,7 @@ await phone.evaluate(() =>
 | `viewMode`, `viewStatus`                                         | `'webgl' \| 'viewfinder'`, plus a human-readable status                   |
 | `renderLevel`, `renderMs`, `framesRendered`, `fps`               | governor level (0 full … 4 paused), JS cost per 3D frame, 3D frames drawn, 3D frames / s |
 | `offset`, `heading`, `walk`, `cameraPosition`                    | walk offset (m), walking heading (rad), stick input `{ x, y, rise }`, anchor + offset + nudge |
+| `cameraQuaternion`                                               | rendered camera orientation `[x, y, z, w]` (world frame)                  |
 | `sceneRunning`                                                   | the laptop runs the scene (ACTION shows CUT)                              |
 | `audio`, `audioPlaying`, `lastLinePlayed`, `audioPeak`, `voice`  | AudioContext state (`'none'` before the tap), a voice playing now, last line voiced, loudest level of it (0..1, > 0 only when sound really flows), `?voice` |
 | `yawOffset`, `recording`, `permission`, `started`, `room`, `sim` | self-explanatory                                                          |
