@@ -125,11 +125,13 @@ describe('buildActor', () => {
     expect(calls).toEqual([]);
     expect(images).toBe(0);
     expect(await readdir(projectDir)).toEqual([]);
+    expect(asset.fallback).toBeUndefined(); // MOCK mannequins are final
   });
 
   it('without Modal keys is free and offline: no reference image is generated', async () => {
     const asset = await buildActor(opts(), deps(async () => ({ ok: true, code: 0 }), { ...keys, modalTokenId: '', modalTokenSecret: '' }));
     expect(asset.kind).toBe('glb-humanoid');
+    expect(asset.fallback).toBe(true);
     expect(images).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -174,6 +176,7 @@ describe('buildActor', () => {
   it('any worker failure falls back to the mannequin', async () => {
     const asset = await buildActor(opts(), deps(async () => ({ ok: false, code: 1, result: { ok: false, error: 'InvalidError: Please add a payment method to use L4 GPU functions.' } })));
     expect(asset.kind).toBe('glb-humanoid');
+    expect(asset.fallback).toBe(true); // live fallback: project.ts must not cache it as final
     expect(logs.some((l) => l.includes('payment method'))).toBe(true);
   });
 

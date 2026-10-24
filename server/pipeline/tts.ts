@@ -7,7 +7,8 @@
 // duration measured by walking the MP3 frames (no ffmpeg). A sidecar `<lineId>.json` caches the
 // result per (provider, voice, model, text, instructions). MOCK, missing keys or a provider
 // failure write `<lineId>.wav`: offline syllable beeps, 0.06 s per character (min 1 s), so the
-// actors' playback/jaw path is exercised without credits. Key values are never logged.
+// actors' playback/jaw path is exercised without credits. Outside MOCK those beeps are marked
+// `fallback: true` so project.ts retries the real provider later. Key values are never logged.
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -20,6 +21,8 @@ export interface SynthesizeLineOptions {
   outDir: string;
   mock: boolean;
   log: (m: string) => void;
+  /** Provider keys (default: env). Tests pass their own so they never reach the network. */
+  keys?: typeof env.keys;
 }
 
 export const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL ?? 'gpt-4o-mini-tts';
@@ -286,7 +289,9 @@ async function readSidecar(path: string): Promise<Sidecar | undefined> {
 export async function synthesizeLine(opts: SynthesizeLineOptions): Promise<LineAudio> {
   const { line, character, outDir, log } = opts;
   await mkdir(outDir, { recursive: true });
-  const provider = chooseProvider(opts.mock);
+  const provider = chooseProvider(opts.mock, opts.keys ?? env.keys);
+  /** Beeps produced while not in MOCK are a fallback a later run should upgrade. */
+  const flag = opts.mock ? {} : { fallback: true as const };
   const voice = provider === 'elevenlabs' ? elevenVoiceFor(character) : provider === 'openai' ? openaiVoiceFor(character) : 'beeps';
   const instructions = provider === 'openai' ? ttsInstructions(character, line.parenthetical) : '';
   const model = provider === 'elevenlabs' ? ELEVENLABS_MODEL : provider === 'openai' ? OPENAI_TTS_MODEL : 'mock-wav/1';
@@ -294,7 +299,8 @@ export async function synthesizeLine(opts: SynthesizeLineOptions): Promise<LineA
   const sidecarPath = join(outDir, `${line.id}.json`);
   const cached = await readSidecar(sidecarPath);
   if (cached?.key === key && (await stat(join(outDir, cached.file)).catch(() => null))) {
-    return { lineId: line.id, url: cached.file, durationSeconds: cached.durationSeconds };
+    const beeps = cached.provider === 'mock' ? flag : {};
+    return { lineId: line.id, url: cached.file, durationSeconds: cached.durationSeconds, ...beeps };
   }
 
   const writeMock = async (why: string): Promise<LineAudio> => {
@@ -306,7 +312,7 @@ export async function synthesizeLine(opts: SynthesizeLineOptions): Promise<LineA
     const mockKey = createHash('sha256').update(JSON.stringify(['mock', 'mock-wav/1', 'beeps', line.text, ''])).digest('hex');
     await writeFile(sidecarPath, JSON.stringify({ key: mockKey, provider: 'mock', file, durationSeconds } satisfies Sidecar));
     log(`tts ${line.id}: ${why} -> ${file} (${durationSeconds}s beeps)`);
-    return { lineId: line.id, url: file, durationSeconds };
+    return { lineId: line.id, url: file, durationSeconds, ...flag };
   };
 
   if (provider === 'mock') return writeMock(opts.mock ? 'MOCK' : 'no TTS key');
