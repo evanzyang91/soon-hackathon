@@ -1,5 +1,5 @@
 import { api } from '@shared/api';
-import type { ProjectStatus } from '@shared/schema';
+import type { ActorDetail, ProjectStatus } from '@shared/schema';
 
 export interface Health {
   ok: boolean;
@@ -29,6 +29,20 @@ export const retryStage = (id: string, sceneIndex: number, stage: string) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sceneIndex, stage }),
   }).then((r) => json<ProjectStatus>(r));
+
+/** Rebuild one character at a detail level (202 → ProjectStatus); the error text on 4xx. */
+export const rebuildActor = async (id: string, characterId: string, detail: ActorDetail) => {
+  const res = await fetch(api.rebuildActor(id, characterId), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ detail }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as ProjectStatus;
+};
 
 /** Fresh room code, or the LAN phone URL for a code kept from a previous load. */
 export const newRoom = (keep?: string) =>
