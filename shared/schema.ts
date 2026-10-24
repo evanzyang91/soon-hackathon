@@ -144,10 +144,20 @@ export type WorldAsset = z.infer<typeof WorldAsset>;
  */
 const Fallback = { fallback: z.boolean().optional() };
 
+/**
+ * Build quality of an actor. `standard` = LHM-500M (the default, ~3 min GPU); `high` = LHM-1B plus
+ * a fine-tune against the reference image (sharper face and clothing), about 5 minutes per actor,
+ * triggered from the laptop UI per character.
+ */
+export const ActorDetail = z.enum(['standard', 'high']);
+export type ActorDetail = z.infer<typeof ActorDetail>;
+const Detail = { detail: ActorDetail.optional() };
+
 export const ActorAsset = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('splat-sequence'),
     ...Fallback,
+    ...Detail,
     characterId: z.string(),
     /** Directory containing sequence.json (Orbis wander.person-motion/1 compatible) + PLY frames. */
     sequenceDir: z.string(),
@@ -204,6 +214,21 @@ export const SceneJob = z.object({
   stages: z.record(StageName, z.object({ status: StageStatus, note: z.string().optional() })),
   manifestUrl: z.string().optional(),
 });
+/** Per-character build state shown in the laptop's project panel (rebuilds are per character). */
+export const ActorBuildStatus = z.object({
+  characterId: z.string(),
+  name: z.string(),
+  /** Detail level of the build currently referenced by the manifests. */
+  detail: ActorDetail,
+  kind: z.enum(['splat-sequence', 'glb-humanoid']).optional(),
+  fallback: z.boolean().optional(),
+  /** A rebuild in progress (or its outcome) at the requested detail. */
+  rebuild: z
+    .object({ detail: ActorDetail, status: StageStatus, note: z.string().optional(), startedAt: z.string().optional() })
+    .optional(),
+});
+export type ActorBuildStatus = z.infer<typeof ActorBuildStatus>;
+
 export const ProjectStatus = z.object({
   id: z.string(),
   title: z.string(),
@@ -211,5 +236,6 @@ export const ProjectStatus = z.object({
   mock: z.boolean(),
   parse: z.object({ status: StageStatus, note: z.string().optional() }),
   scenes: z.array(SceneJob),
+  actors: z.array(ActorBuildStatus).optional(),
 });
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
