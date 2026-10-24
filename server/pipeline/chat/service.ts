@@ -50,11 +50,21 @@ function serialized<T>(host: object, id: string, fn: () => Promise<T>): Promise<
 
 const msgId = () => `m-${randomBytes(5).toString('hex')}`;
 
-export function chatTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurnOptions = {}): Promise<ChatTurnResult> {
+export function chatTurn(
+  host: ChatHost,
+  id: string,
+  req: ChatRequest,
+  o: ChatTurnOptions = {},
+): Promise<ChatTurnResult> {
   return serialized(host, id, () => runTurn(host, id, req, o));
 }
 
-async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurnOptions): Promise<ChatTurnResult> {
+async function runTurn(
+  host: ChatHost,
+  id: string,
+  req: ChatRequest,
+  o: ChatTurnOptions,
+): Promise<ChatTurnResult> {
   const st = await host.getProject(id);
   if (!st) throw new ChatRequestError(404, 'no such project');
   const text = req.text.trim();
@@ -62,11 +72,16 @@ async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurn
   const attachments: Attachment[] = [];
   for (const ref of req.attachments ?? []) {
     const a = await readAttachment(projectDir, ref.id);
-    if (!a) throw new ChatRequestError(400, `no upload ${ref.id} in this project (POST /api/projects/${id}/uploads first)`);
+    if (!a)
+      throw new ChatRequestError(
+        400,
+        `no upload ${ref.id} in this project (POST /api/projects/${id}/uploads first)`,
+      );
     const hint = ref.hint?.trim().slice(0, 120);
     if (!attachments.some((x) => x.id === a.id)) attachments.push(hint ? { ...a, hint } : a);
   }
-  if (!text && !attachments.length) throw new ChatRequestError(400, 'say something or attach a photo');
+  if (!text && !attachments.length)
+    throw new ChatRequestError(400, 'say something or attach a photo');
 
   const before = await host.chat.read(id);
   const user: ChatMessage = {
@@ -77,7 +92,10 @@ async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurn
     ...(attachments.length ? { attachments } : {}),
   };
   await host.chat.appendMessages(id, [user]);
-  await host.logEvent(id, `chat: director: "${text.slice(0, 200)}"${attachments.length ? ` + ${attachments.length} photo(s) ${attachments.map((a) => a.id).join(', ')}` : ''}`);
+  await host.logEvent(
+    id,
+    `chat: director: "${text.slice(0, 200)}"${attachments.length ? ` + ${attachments.length} photo(s) ${attachments.map((a) => a.id).join(', ')}` : ''}`,
+  );
 
   const answer = async (m: Omit<ChatMessage, 'id' | 'at' | 'role'>) => {
     const msg: ChatMessage = { id: msgId(), at: new Date().toISOString(), role: 'assistant', ...m };
@@ -92,7 +110,11 @@ async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurn
         ? `The screenplay could not be planned (${st.parse.note ?? 'unknown error'}). Retry the parse or paste the screenplay again.`
         : 'I am still reading the screenplay; send that again in a moment.';
     await answer({ text: why, source: 'pipeline' });
-    return { chat: await host.chat.read(id), status: (await host.getProject(id))!, settled: Promise.resolve() };
+    return {
+      chat: await host.chat.read(id),
+      status: (await host.getProject(id))!,
+      settled: Promise.resolve(),
+    };
   }
 
   const ctx: ChatContext = {
@@ -101,14 +123,24 @@ async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurn
     screenplay: await host.readScreenplay(id).catch(() => ''),
     history: before.messages,
     message: { text, attachments },
-    earlier: unassignedPhotos(before.messages, plan).filter((a) => !attachments.some((x) => x.id === a.id)),
+    earlier: unassignedPhotos(before.messages, plan).filter(
+      (a) => !attachments.some((x) => x.id === a.id),
+    ),
   };
   const mock = o.mock ?? (st.mock || env.mock || (!env.keys.anthropic && !o.call));
   let settled: Promise<void> = Promise.resolve();
   try {
-    const r = await planChat({ ctx, projectDir, mock, call: o.call, log: (m) => void host.logEvent(id, `chat: ${m}`) });
+    const r = await planChat({
+      ctx,
+      projectDir,
+      mock,
+      call: o.call,
+      log: (m) => void host.logEvent(id, `chat: ${m}`),
+    });
     const { proposals, problems } = checkDraft(r.draft, ctx);
-    const applied = await applyProposals(host, id, proposals, { dryRun: o.dryRun ?? env.marbleDryRun });
+    const applied = await applyProposals(host, id, proposals, {
+      dryRun: o.dryRun ?? env.marbleDryRun,
+    });
     const extra = [
       problems.length ? `Not done: ${problems.join('; ')}.` : '',
       r.unseen.length ? `I could not look at ${r.unseen.join('; ')}.` : '',
@@ -120,9 +152,15 @@ async function runTurn(host: ChatHost, id: string, req: ChatRequest, o: ChatTurn
       source: r.source,
     });
     if (problems.length) await host.logEvent(id, `chat: not applied — ${problems.join('; ')}`);
-    if (applied.after) settled = applied.after(msg.id).catch((e) => console.error(`[${id}] chat follow-up failed:`, e));
+    if (applied.after)
+      settled = applied
+        .after(msg.id)
+        .catch((e) => console.error(`[${id}] chat follow-up failed:`, e));
   } catch (e) {
-    const why = e instanceof ChatPlannerError ? e.message : `the planner is unreachable (${(e as Error).message.slice(0, 160)})`;
+    const why =
+      e instanceof ChatPlannerError
+        ? e.message
+        : `the planner is unreachable (${(e as Error).message.slice(0, 160)})`;
     await host.logEvent(id, `chat: planner FAILED ${why}`);
     await answer({ text: `Sorry, ${why}. Nothing was changed.`, source: mock ? 'mock' : 'claude' });
   }

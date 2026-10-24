@@ -7,12 +7,7 @@
 // done), not only by appends: the laptop's only signal is the revision.
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import {
-  ChatMessage,
-  emptyChat,
-  ProjectChat,
-  type ChatAction,
-} from '../../../shared/chat.ts';
+import { ChatMessage, emptyChat, ProjectChat, type ChatAction } from '../../../shared/chat.ts';
 import { exists, readJson, writeJsonAtomic } from '../fsutil.ts';
 
 export const CHAT_FILE = 'chat.json';
@@ -73,7 +68,8 @@ export class ChatStore {
     const chat = await this.update(id, (c) => {
       const msg = c.messages.find((m) => m.id === messageId);
       const i = msg?.actions?.findIndex((a) => a.id === actionId) ?? -1;
-      if (!msg?.actions || i < 0) throw new ChatNotFound(`no action ${actionId} in message ${messageId}`);
+      if (!msg?.actions || i < 0)
+        throw new ChatNotFound(`no action ${actionId} in message ${messageId}`);
       const prev = msg.actions[i]!;
       const next = { ...prev, ...patch } as ChatAction;
       if (patch.note === undefined && 'note' in patch) delete (next as { note?: string }).note;
@@ -84,7 +80,10 @@ export class ChatStore {
   }
 
   /** Read-modify-write under the per-project lock; stored with revision + 1. */
-  update(id: string, fn: (chat: ProjectChat) => ProjectChat | Promise<ProjectChat>): Promise<ProjectChat> {
+  update(
+    id: string,
+    fn: (chat: ProjectChat) => ProjectChat | Promise<ProjectChat>,
+  ): Promise<ProjectChat> {
     const key = this.path(id);
     const run = async () => {
       const current = await this.read(id);
