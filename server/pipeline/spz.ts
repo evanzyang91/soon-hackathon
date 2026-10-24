@@ -107,6 +107,68 @@ export function readSpzHeader(gz: Uint8Array): SpzHeader {
   return parseHeader(raw);
 }
 
+/** A splat is a surface patch when its thinnest axis is at most this fraction of the middle one. */
+export const FLAT_RATIO = 0.5;
+
+/**
+ * Positions (x, y, z interleaved, raw SPZ units and frame), opacities (0..1) and surface
+ * orientation only, in typed arrays: a 2M-splat Marble world decodes in under a second without
+ * building a JS object per splat (decodeSpz on world_full.spz holds ~1.3 GB of them). Used by the
+ * ground field.
+ *
+ * `surfaceUp[i]` is |y| of splat i's thinnest axis (its surface normal) when the splat is flat
+ * (thinnest ≤ FLAT_RATIO × middle axis): 1 = lying flat, 0 = a vertical face. A round splat has
+ * no surface and gets 0; NaN when the file's rotation encoding is not decoded (SPZ v3+). |y| is the
+ * same in the OpenCV and the flipped Y-up frame.
+ */
+export function decodeSpzPoints(gz: Uint8Array): {
+  header: SpzHeader;
+  positions: Float32Array;
+  opacities: Float32Array;
+  surfaceUp: Float32Array;
+} {
+  const raw = gunzipSync(gz);
+  const header = parseHeader(raw);
+  const { numPoints: n, fractionalBits: frac, version } = header;
+  if (raw.length < 16 + n * 16) throw new Error(`SPZ truncated: ${raw.length} bytes for ${n} points`);
+  const positions = new Float32Array(n * 3);
+  const opacities = new Float32Array(n);
+  const surfaceUp = new Float32Array(n);
+  const unit = 1 / (1 << frac);
+  for (let j = 0; j < n * 3; j++) {
+    const b = 16 + j * 3;
+    let v = raw[b]! | (raw[b + 1]! << 8) | (raw[b + 2]! << 16);
+    if (v & 0x800000) v -= 0x1000000;
+    positions[j] = v * unit;
+  }
+  const alphaOff = 16 + n * 9;
+  for (let i = 0; i < n; i++) opacities[i] = raw[alphaOff + i]! / 255;
+  const scaleOff = alphaOff + n * 4;
+  const rotOff = scaleOff + n * 3;
+  if (version >= 3 || raw.length < rotOff + n * 3) {
+    surfaceUp.fill(NaN);
+    return { header, positions, opacities, surfaceUp };
+  }
+  // scale bytes are (ln s + 10) × 16: ordering and ratios compare on the bytes directly
+  const flatBytes = -16 * Math.log(FLAT_RATIO);
+  for (let i = 0; i < n; i++) {
+    const s0 = raw[scaleOff + 3 * i]!;
+    const s1 = raw[scaleOff + 3 * i + 1]!;
+    const s2 = raw[scaleOff + 3 * i + 2]!;
+    const k = s0 <= s1 && s0 <= s2 ? 0 : s1 <= s2 ? 1 : 2;
+    const mid = s0 + s1 + s2 - Math.min(s0, s1, s2) - Math.max(s0, s1, s2);
+    if (mid - Math.min(s0, s1, s2) < flatBytes) continue; // round: no surface
+    const x = raw[rotOff + 3 * i]! / 127.5 - 1;
+    const y = raw[rotOff + 3 * i + 1]! / 127.5 - 1;
+    const z = raw[rotOff + 3 * i + 2]! / 127.5 - 1;
+    const w = Math.sqrt(Math.max(0, 1 - x * x - y * y - z * z));
+    // y row of the rotation matrix, column k = the thinnest axis in world terms
+    const ny = k === 0 ? 2 * (x * y + z * w) : k === 1 ? 1 - 2 * (x * x + z * z) : 2 * (y * z - x * w);
+    surfaceUp[i] = Math.min(1, Math.abs(ny));
+  }
+  return { header, positions, opacities, surfaceUp };
+}
+
 /** Full decode of positions/colors/opacities (tests and fixture checks; SH ignored). */
 export function decodeSpz(gz: Uint8Array): { header: SpzHeader; splats: Splat[] } {
   const raw = gunzipSync(gz);

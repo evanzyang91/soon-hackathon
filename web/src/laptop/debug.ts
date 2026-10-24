@@ -29,11 +29,17 @@ export interface PrevizDebugState {
   recording: boolean;
   /** performance.now() of the last still (phone shutter / Still button), 0 = none yet. */
   lastStillAt: number;
-  /** Placed actors; `placementCorrected` = moved out of collider geometry (viewer/placement.ts). */
+  /** The scene's ground height field (viewer/ground.ts), null without one. */
+  ground: { cols: number; rows: number; cell: number } | null;
+  /**
+   * Placed actors; `placementCorrected` = moved out of collider geometry (viewer/placement.ts);
+   * `groundY` = the visible ground's y under the actor's spot (its feet are there when standing).
+   */
   actors: {
     id: string;
     kind: string;
     position: number[];
+    groundY: number;
     yaw: number;
     heightMeters: number | null;
     placementCorrected: boolean;
@@ -109,6 +115,7 @@ export function installDebugHook(director: Director) {
         frames: director.view.pipFrames,
       },
       mainFrames: director.view.mainFrames,
+      ground: rt?.ground ? { cols: rt.ground.cols, rows: rt.ground.rows, cell: rt.ground.cell } : null,
       viewFromPhone: director.viewFromPhone,
       recording: director.recorder.recording,
       lastStillAt: director.lastStillAt,
@@ -122,6 +129,7 @@ export function installDebugHook(director: Director) {
           id: a.characterId,
           kind: String(a.object.userData.actorKind ?? ''),
           position: a.object.position.toArray(),
+          groundY: rt?.groundY(a.object.position.x, a.object.position.z) ?? 0,
           yaw: a.object.rotation.y,
           /** Standing height the body is scaled to (the character's). */
           heightMeters: (a.object.userData.heightMeters ?? null) as number | null,
