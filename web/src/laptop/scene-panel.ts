@@ -44,11 +44,9 @@ export function mountPhoneSection(director: Director) {
 
   const pair = async () => {
     // the relay recreates rooms on hello, so a saved code survives server restarts
+    // The server picks the host (LAN IP, never localhost) even for a kept code.
     const saved = storageGet<string>('previz:room');
-    const room =
-      saved && /^[A-Z0-9]{4,6}$/.test(saved)
-        ? { room: saved, phoneUrl: `${location.origin}/phone.html?room=${saved}` }
-        : await newRoom();
+    const room = await newRoom(saved && /^[A-Z0-9]{4,6}$/.test(saved) ? saved : undefined);
     // keep a hand-corrected LAN host across reloads
     const host = storageGet<string>('previz:phoneHost');
     if (host) {

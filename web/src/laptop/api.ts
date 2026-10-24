@@ -30,5 +30,8 @@ export const retryStage = (id: string, sceneIndex: number, stage: string) =>
     body: JSON.stringify({ sceneIndex, stage }),
   }).then((r) => json<ProjectStatus>(r));
 
-export const newRoom = () =>
-  fetch(api.newRoom).then((r) => json<{ room: string; phoneUrl: string }>(r));
+/** Fresh room code, or the LAN phone URL for a code kept from a previous load. */
+export const newRoom = (keep?: string) =>
+  fetch(keep ? `${api.newRoom}?room=${encodeURIComponent(keep)}` : api.newRoom).then((r) =>
+    json<{ room: string; phoneUrl: string }>(r),
+  );
