@@ -3,6 +3,7 @@
 
     python3 worker/run_actor.py --image ref.png --out DIR [--mask m.png] [--frames 48]
                                 [--talk-frames 24] [--fps 12] [--lossless] [--include-raw]
+                                [--all-frames]
     python3 worker/run_actor.py --check            # Modal auth + CUDA image build + imports, no GPU
     python3 worker/run_actor.py --stage            # one-time weight staging (CPU only, resumable)
     python3 worker/run_actor.py --recover DIR/recovery-receipt.json   # no inference
@@ -117,7 +118,7 @@ def summarize(dest: Path, manifest: dict) -> dict:
     }
 
 
-def recover(receipt_path: Path, include_raw: bool) -> int:
+def recover(receipt_path: Path, include_raw: bool, all_frames: bool = False) -> int:
     import modal
 
     receipt = recovery.load_receipt(receipt_path)
@@ -125,7 +126,9 @@ def recover(receipt_path: Path, include_raw: bool) -> int:
         return result(False, 1, error="receipt was never submitted to Modal; delete it to run again")
     volume = modal.Volume.from_name(recovery.VOLUME_NAME, create_if_missing=False)
     try:
-        manifest = recovery.recover_outputs(receipt_path, volume, include_raw=include_raw)
+        manifest = recovery.recover_outputs(
+            receipt_path, volume, include_raw=include_raw, all_frames=all_frames
+        )
     except ValueError as error:
         if "running or incomplete" not in str(error) and "unavailable" not in str(error):
             raise
@@ -135,7 +138,9 @@ def recover(receipt_path: Path, include_raw: bool) -> int:
             return result(False, 3, error=str(error), recoveryId=receipt["recoveryId"], running=True)
         except Exception as call_error:  # noqa: BLE001 - the call itself failed or was cancelled
             return result(False, 1, error=f"Modal call ended without a checkpoint: {call_error}"[:600])
-        manifest = recovery.recover_outputs(receipt_path, volume, include_raw=include_raw)
+        manifest = recovery.recover_outputs(
+            receipt_path, volume, include_raw=include_raw, all_frames=all_frames
+        )
     summary = summarize(Path(receipt["destination"]), manifest)
     ok = manifest["status"] == "complete"
     return result(ok, 0 if ok else 1, **summary)
@@ -166,7 +171,9 @@ def run(a) -> int:
     import modal
 
     volume = modal.Volume.from_name(recovery.VOLUME_NAME, create_if_missing=False)
-    manifest = recovery.recover_outputs(receipt_path, volume, include_raw=a.include_raw)
+    manifest = recovery.recover_outputs(
+        receipt_path, volume, include_raw=a.include_raw, all_frames=a.all_frames
+    )
     summary = summarize(dest, manifest)
     summary["wallSeconds"] = time.time() - started
     ok = manifest["status"] == "complete"
@@ -183,6 +190,11 @@ def main(argv=None) -> int:
     ap.add_argument("--fps", type=float, default=12)
     ap.add_argument("--lossless", action="store_true", help="float32 motion track (default uint16)")
     ap.add_argument("--include-raw", action="store_true", help="also download raw/ LHM frames")
+    ap.add_argument(
+        "--all-frames",
+        action="store_true",
+        help="download every packaged PLY (default: frame_000 + motion track when one exists)",
+    )
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--stage", action="store_true")
     ap.add_argument("--recover")
@@ -203,7 +215,7 @@ def main(argv=None) -> int:
             )
             return result(code == 0, code)
         if a.recover:
-            return recover(Path(a.recover), a.include_raw)
+            return recover(Path(a.recover), a.include_raw, a.all_frames)
         if not a.image or not a.out:
             ap.print_usage(sys.stderr)
             return result(False, 2, error="--image and --out are required")
