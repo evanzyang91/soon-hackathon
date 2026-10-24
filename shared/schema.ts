@@ -121,6 +121,20 @@ export const WorldAsset = z.object({
   groundPlaneOffset: z.number(),
   /** true when the SPZ is OpenCV (Y down) and needs the 180° X flip. Marble: true. */
   opencvFrame: z.boolean().default(true),
+  /**
+   * Measured correction applied on top of metricScaleFactor (effective scale = factor × metric).
+   * Written by the scale calibration step from real-world references (door, counter, ceiling,
+   * a 1.7 m human); absent or 1 means Marble's estimate was kept.
+   */
+  scaleCalibration: z
+    .object({
+      factor: z.number().positive(),
+      method: z.string(),
+      confidence: z.enum(['high', 'medium', 'low']),
+      /** Human-readable measurements, e.g. "door 2.04 m, counter 0.91 m, ceiling 2.6 m". */
+      evidence: z.string(),
+    })
+    .optional(),
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 
