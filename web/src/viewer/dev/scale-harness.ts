@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SplatMesh } from '@sparkjsdev/spark';
 import { createSpark } from '../spark';
 import { worldTransform } from '../transform';
-import { buildMannequin, MANNEQUIN_HEIGHT_M } from '../actors/mannequin';
+import { buildMannequin, MANNEQUIN_HEIGHT_M, restHeight } from '../actors/mannequin';
 import { textSprite } from '../actors/common';
 import type { ScaleHarness, ScalePanel, ScaleShot, ScaleWorld } from './scale-shot';
 
@@ -108,7 +108,7 @@ const harness: ScaleHarness = {
       m.animate(0, 0, false, 0);
       // same scaling as a character's actor (viewer/actors mannequinBody)
       const tall = f.heightMeters ?? MANNEQUIN_HEIGHT_M;
-      m.root.scale.setScalar(tall / MANNEQUIN_HEIGHT_M);
+      m.root.scale.setScalar(tall / restHeight(m.root));
       g.add(m.root);
       const label = textSprite(f.label ?? `${tall.toFixed(2)} m`, { h: 0.11, bg: 'rgba(0,0,0,0.6)', fg: '#fff' });
       label.sprite.center.set(0.5, 0);
