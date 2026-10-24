@@ -768,8 +768,9 @@ export class ProjectStore {
         const prev = await previousCalibration(outDir, asset.worldId);
         if (!prev) return { asset, note: '' };
         const report = await withGround(redecide(prev), outDir, marks);
-        if (asset.scaleCalibration.headline && asset.floorOffsetMeters === report.floorOffsetMeters)
-          return { asset, note: '' };
+        // rewritten when the floor moved or the decision rule changed the calibration
+        const same = JSON.stringify(asset.scaleCalibration) === JSON.stringify(report.calibration);
+        if (same && asset.floorOffsetMeters === report.floorOffsetMeters) return { asset, note: '' };
         return { asset: await writeCalibration(outDir, report, { log }), note: '' };
       } catch (e) {
         log(`floor offset not measured: ${errMsg(e)}`);
@@ -778,7 +779,7 @@ export class ProjectStore {
     }
     try {
       let report = await previousCalibration(outDir, asset.worldId);
-      if (report) report = await withGround(report, outDir, marks);
+      if (report) report = await withGround(redecide(report), outDir, marks);
       if (!report) {
         await this.setStage(st.id, scene.index, 'world', {
           status: 'running',
