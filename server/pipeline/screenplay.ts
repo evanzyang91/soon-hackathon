@@ -48,6 +48,9 @@ const Draft = z.object({
       gender: z.enum(['female', 'male', 'neutral']),
       voice: z.enum(VOICE_IDS),
       description: z.string().describe('physical description for a full-body reference image'),
+      heightMeters: z
+        .number()
+        .describe('standing height in metres, 0.9-2.3: from the script, else plausible for the description'),
     }),
   ),
   scenes: z.array(
@@ -106,6 +109,7 @@ Scenes
 Characters
 - Every speaking character appears once in "characters". "id" is a lowercase slug of the name (letters, digits, hyphens) and is the only way other fields refer to the character. "name" is exactly as written in the character cue, without extensions such as (V.O.) or (CONT'D).
 - "description" is a physical description for generating a full-body reference image: apparent age, gender presentation, height and build, skin tone, hair, notable facial features, and specific wardrobe (garments, colors, materials, shoes) that fits the story, era and setting. Use what the script says; where it is silent, invent plausible, specific details that suit the character. 40-80 words. No real people, no camera or lighting language.
+- "heightMeters" is the character's standing height in metres, between 0.9 and 2.3; the 3D actor is scaled to exactly this height. Take it from the script when it gives one ("6'2"" is 1.88, "five foot two" is 1.57, "a boy of ten" is about 1.40, "a toddler" about 0.9). Otherwise pick a plausible value for the apparent age, gender presentation and build in the description: adult women usually 1.55-1.75, adult men 1.65-1.90, "tall" adds about 0.1 m and "short" or "petite" takes about 0.1 m away. Make the description agree with the number. Different characters usually have different heights.
 - "gender" and "voice": choose the voice to match the character. female: nova, shimmer, coral, sage. male: onyx, ash, echo, ballad. neutral or unknown: alloy, fable. Give each character a different voice when possible.
 
 Dialogue
@@ -301,10 +305,15 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
       if (free) voice = free;
     }
     usedVoices.add(voice);
+    // the contract's range (0.9–2.3 m); a value outside it is a slip, not a giant
+    const height = Number.isFinite(c.heightMeters) ? Math.round(clamp(c.heightMeters, 0.9, 2.3) * 100) / 100 : undefined;
+    if (height !== undefined && height !== Math.round(c.heightMeters * 100) / 100)
+      notes.push(`characters.${id}: heightMeters ${c.heightMeters} clamped to ${height}`);
     return {
       id,
       name: c.name.trim().toUpperCase(),
       description: c.description.trim(),
+      ...(height !== undefined ? { heightMeters: height } : {}),
       voice: { id: voice, gender: c.gender },
     };
   });
@@ -429,7 +438,9 @@ export function summarizePlan(plan: ScreenplayPlan): string {
     `"${plan.title}": ${plan.scenes.length} scene(s), ${plan.characters.length} character(s)`,
   ];
   for (const c of plan.characters)
-    lines.push(`  ${c.name} (${c.id}, ${c.voice.gender}, voice ${c.voice.id}): ${c.description}`);
+    lines.push(
+      `  ${c.name} (${c.id}, ${c.voice.gender}, voice ${c.voice.id}${c.heightMeters ? `, ${c.heightMeters.toFixed(2)} m` : ''}): ${c.description}`,
+    );
   for (const s of plan.scenes) {
     lines.push(
       `  [${s.index}] ${s.heading} — ${s.timeOfDay}${s.interior ? ', interior' : ''}; ${s.dialogue.length} line(s), ${s.dynamics.length} dynamic(s), ${s.shots.length} shot(s)`,

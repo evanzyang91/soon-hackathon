@@ -59,11 +59,13 @@ screenplay.txt/.fountain
   before the scale is applied (`web/src/viewer/transform.ts`). We scale the world object so 1 unit = 1 m
   and translate so the floor sits at y = 0.
 - Actors are placed with feet on y = 0; blocking positions are meters in the world frame, origin at
-  Marble's source camera.
+  Marble's source camera. Each actor stands `Character.heightMeters` tall (head top; 1.7 m when the
+  plan has none): every ActorAsset carries it and the viewer scales every body kind to it.
 - `WorldAsset.scaleCalibration.factor` (server/pipeline/calibrate.ts) multiplies Marble's scale
   (S = factor × msf, ty = factor × gpo, floor still at y = 0). It is measured after download from
-  collider references and Claude vision with 1.70 m mannequins; absent or 1 means Marble's scale
-  was kept.
+  collider references and Claude vision with 1.70 m mannequins; outdoors, where the collider has no
+  references, vision is weighed against Claude's eyeballed runs and the source camera's eye height
+  (1.55 ± 0.2 m) by 1/σ². Absent or 1 means Marble's scale was kept.
 - `WorldAsset.floorOffsetMeters` (same step, from the splats at the actors' marks; the collider
   sits ~0.1 m below the splats outdoors and is not used) raises the world by factor × offset so
   the visible ground is at y = 0 where the actors stand.
