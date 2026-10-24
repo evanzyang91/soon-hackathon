@@ -130,21 +130,25 @@ export class CameraMarkers {
   }
 
   sync(cameras: DropCamera[], activeId: string | null) {
-    const key = JSON.stringify([cameras, activeId]);
-    if (key === this.key) return;
-    this.key = key;
-    for (const g of this.gizmos) g.dispose();
-    this.gizmos = cameras.map((c) => {
-      const color = c.id === activeId ? '#ffd23f' : '#9aa4b1';
-      const g = new FrustumGizmo(color, 0.35, { label: c.name });
-      g.setFov(c.fovDeg, 16 / 9);
-      g.setPose(
+    // rebuilt when the set, names, lenses or the active camera change; a drag only moves them
+    const key = JSON.stringify([cameras.map((c) => [c.id, c.name, c.fovDeg]), activeId]);
+    if (key !== this.key) {
+      this.key = key;
+      for (const g of this.gizmos) g.dispose();
+      this.gizmos = cameras.map((c) => {
+        const color = c.id === activeId ? '#ffd23f' : '#9aa4b1';
+        const g = new FrustumGizmo(color, 0.35, { label: c.name });
+        g.setFov(c.fovDeg, 16 / 9);
+        this.group.add(g.object);
+        return g;
+      });
+    }
+    cameras.forEach((c, i) =>
+      this.gizmos[i]?.setPose(
         { x: c.position[0], y: c.position[1], z: c.position[2] },
         { x: c.quaternion[0], y: c.quaternion[1], z: c.quaternion[2], w: c.quaternion[3] },
-      );
-      this.group.add(g.object);
-      return g;
-    });
+      ),
+    );
   }
 
   dispose() {

@@ -10,8 +10,9 @@ Output directory (``sequence/``):
   +Y up, the avatar faces -Z (the ActorHandle forward), feet (0.5th percentile of opaque splat
   heights in frame 0) at y = 0, x/z centred on frame 0's opaque median. Units unchanged (LHM
   native = SMPL-X metres); the browser rescales to ``heightMeters`` using ``nativeHeight``.
-* ``motion.u16`` / ``motion.f32`` — Orbis ``wander.person-motion/1`` compact track.
-* ``sequence.json`` — Orbis person-sequence fields plus ``avatarFrame``, ``bounds``,
+* ``motion.u16`` / ``motion.f32`` — ``previz.actor-motion/1`` compact track (per-frame centres
+  and rotations only; everything else is identical across frames).
+* ``sequence.json`` — playback fields plus ``avatarFrame``, ``bounds``,
   ``nativeHeight`` and ``loops``; see worker/README.md for every field.
 
     python worker/lhm_stages/package_actor.py RAW_DIR OUT_DIR --fps 12 --idle 48 --talk 24
@@ -32,7 +33,7 @@ except ImportError:  # run as a script from worker/lhm_stages/
     from idle_motion import matrix_to_quat
 
 SCHEMA = "previz.actor-sequence/1"
-MOTION_SCHEMA = "wander.person-motion/1"
+MOTION_SCHEMA = "previz.actor-motion/1"
 CHANNELS = ("x", "y", "z", "rot_0", "rot_1", "rot_2", "rot_3")
 REQUIRED = (*CHANNELS, "f_dc_0", "f_dc_1", "f_dc_2", "opacity", "scale_0", "scale_1", "scale_2")
 # OpenCV camera (x right, y down, z forward; the subject faces the camera, i.e. -z) to avatar
@@ -136,7 +137,7 @@ def measure(props: list[str], data: np.ndarray) -> dict:
 
 
 def quantise(motion: np.ndarray):
-    """uint16 per channel over the sequence range (Orbis package_person_motion.quantise)."""
+    """uint16 per channel over the sequence range."""
     flat = motion.reshape(-1, motion.shape[-1]).astype(np.float64)
     lo = flat.min(0)
     hi = flat.max(0)
@@ -153,7 +154,7 @@ def sha256(path) -> str:
 
 
 def motion_track(out_dir: Path, props, frames: list[np.ndarray], names: list[str], quantize: bool):
-    """Orbis wander.person-motion/1 record, or (None, reason) when appearance varies per frame."""
+    """previz.actor-motion/1 record, or (None, reason) when appearance varies per frame."""
     channels = [props.index(c) for c in CHANNELS]
     static = [i for i in range(len(props)) if i not in channels]
     first = frames[0]

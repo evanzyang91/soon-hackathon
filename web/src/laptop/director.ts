@@ -9,6 +9,9 @@ import type {
   ServerMessage,
 } from '@shared/protocol';
 import { SceneManifest, type Quat, type SuggestedShot, type Vec3 } from '@shared/schema';
+import type { RegionSelection } from '../viewer/edits/select';
+import type { TargetRef } from '../viewer/manipulate/edits';
+import { UndoStack } from '../viewer/manipulate/undo';
 import { ViewportRenderer, type PipRect } from '../viewer/render';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world';
 import { downloadBlob } from './dom';
@@ -36,11 +39,27 @@ import { RelayLink, type LinkStatus } from './relay-link';
 import { storageGet, storageSet } from './storage';
 
 export type Change =
-  'scene' | 'loading' | 'cameras' | 'clock' | 'phone' | 'lines' | 'view' | 'recording' | 'pairing';
+  | 'scene'
+  | 'loading'
+  | 'cameras'
+  | 'clock'
+  | 'phone'
+  | 'lines'
+  | 'view'
+  | 'recording'
+  | 'pairing'
+  /** The viewport selection (`selection`) changed. */
+  | 'selection'
+  /** The selected splat region (`pendingRegion`) changed. */
+  | 'region'
+  /** The direct-manipulation undo stack changed. */
+  | 'undo';
 
 /** Phone framing when its pose does not carry `aspect` (landscape 16:9). */
 export const PHONE_ASPECT = 16 / 9;
 const HEARTBEAT_MS = 250;
+/** A dragged camera reaches the phone at most this often (its anchor follows live). */
+const LIVE_CAMERA_MS = 50;
 
 const v3 = (p: Vec3) => new THREE.Vector3(p[0], p[1], p[2]);
 const q4 = (q: Quat) => new THREE.Quaternion(q[0], q[1], q[2], q[3]);
@@ -90,6 +109,15 @@ export class Director {
   lastStillAt = 0;
   /** Adds fields to each SceneState before it is sent (look panel: editsRevision, live look). */
   decorateState: ((state: SceneState) => void) | null = null;
+  /** Direct manipulation's undo stack (moves, deletes, region edits, camera drags) for this scene. */
+  readonly undo = new UndoStack();
+  /** What is selected in the viewport (viewer/manipulate); panels highlight it. */
+  selection: TargetRef | null = null;
+  /**
+   * The splat region the director clicked in the viewport (a sphere around the hit, resized by
+   * dragging its outline): the Edit tab can use it as the selection for its next prompt.
+   */
+  pendingRegion: RegionSelection | null = null;
 
   private readonly subscribers = new Set<(c: Change) => void>();
   private lastSentKey = '';
@@ -103,6 +131,8 @@ export class Director {
   private lastFrame = 0;
   private lastClockEmit = 0;
   private hadPhone = false;
+  private readonly frameHooks = new Set<(t: number) => void>();
+  private lastLiveCamera = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.view = new ViewportRenderer(canvas);
@@ -123,6 +153,7 @@ export class Director {
       },
       onOpen: () => this.broadcast(true),
     });
+    this.undo.onChange(() => this.emit('undo'));
     // Browsers start audio only from a user gesture: the first click anywhere (Generate, a scene
     // row, the canvas…) or key press resumes the context. Capture phase, so a handler that stops
     // propagation cannot swallow it; pointerup / click / touchend cover touch screens, where a
@@ -171,6 +202,9 @@ export class Director {
       }
       const prev = this.runtime;
       this.runtime = rt;
+      this.undo.clear();
+      this.selection = null;
+      this.pendingRegion = null;
       this.projectId = projectId;
       this.sceneIndex = sceneIndex;
       this.manifestUrl = manifestUrl;
@@ -297,6 +331,53 @@ export class Director {
     this.cameras = this.cameras.filter((c) => c.id !== id);
     if (this.activeCameraId === id) this.activeCameraId = this.cameras[0]?.id ?? null;
     this.camerasChanged();
+  }
+
+  /**
+   * Changes a dropped camera. Live changes (a drag in the viewport) reach the phone at ≤ 20 Hz, so
+   * a phone attached to it follows; `persist` ends the change (saved, panels re-render).
+   */
+  updateCamera(id: string, patch: Partial<Omit<DropCamera, 'id'>>, persist: boolean) {
+    if (!this.cameras.some((c) => c.id === id)) return;
+    this.cameras = this.cameras.map((c) => (c.id === id ? { ...c, ...structuredClone(patch), id } : c));
+    if (persist) return this.camerasChanged();
+    const now = performance.now();
+    if (now - this.lastLiveCamera >= LIVE_CAMERA_MS) {
+      this.lastLiveCamera = now;
+      this.broadcast();
+    }
+  }
+
+  /** Puts a deleted camera back where it was (undo). */
+  restoreCamera(cam: DropCamera, index: number, active: boolean) {
+    if (this.cameras.some((c) => c.id === cam.id)) return;
+    const list = [...this.cameras];
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, structuredClone(cam));
+    this.cameras = list;
+    if (active || !this.activeCameraId) this.activeCameraId = cam.id;
+    this.camerasChanged();
+  }
+
+  // ---- selection ----------------------------------------------------------------------------
+
+  /** Selects an actor / prop / light / camera in the viewport (null clears). */
+  select(ref: TargetRef | null) {
+    const same = ref?.type === this.selection?.type && ref?.id === this.selection?.id;
+    if (same) return;
+    this.selection = ref ? { ...ref } : null;
+    this.emit('selection');
+  }
+
+  setPendingRegion(sel: RegionSelection | null) {
+    if (JSON.stringify(sel) === JSON.stringify(this.pendingRegion)) return;
+    this.pendingRegion = sel ? structuredClone(sel) : null;
+    this.emit('region');
+  }
+
+  /** Runs every frame right before the views render (viewport overlays that follow the scene). */
+  onFrame(fn: (t: number) => void) {
+    this.frameHooks.add(fn);
+    return () => this.frameHooks.delete(fn);
   }
 
   setActiveCamera(id: string | null) {
@@ -592,6 +673,13 @@ export class Director {
     rt?.update(Math.min(1, raw));
     this.markers.sync(this.cameras, this.activeCameraId);
     this.updatePhone(t);
+    for (const fn of this.frameHooks) {
+      try {
+        fn(t);
+      } catch (err) {
+        console.warn('frame hook failed', err);
+      }
+    }
 
     const main = this.mainCamera();
     if (this.listener.parent !== main) main.add(this.listener);

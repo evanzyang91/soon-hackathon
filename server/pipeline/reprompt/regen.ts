@@ -21,7 +21,7 @@ import { env } from '../../env.ts';
 import { exists, readJson, safeEndpoint, writeJsonAtomic } from '../fsutil.ts';
 import { generateWorld, type GenerateWorldOptions } from '../marble.ts';
 import { MOCK_WORLD_DIR } from '../mock-world.ts';
-import { decodePng, editMask, encodePng, isPng, resize, toRgb } from './png.ts';
+import { compositeMasked, decodePng, EDIT_CANVAS, editMask, encodePng, isPng, resize, toRgb } from './png.ts';
 
 export type RegenSpec = NonNullable<EditPlan['regen']>;
 export const REGEN_FILE = 'regen.json';
@@ -75,13 +75,16 @@ export type ImageEdit = (o: { image: Buffer; mask: Buffer; prompt: string; log: 
 /** OpenAI `POST /v1/images/edits` (multipart), first model the account has. */
 export const openaiImageEdit: ImageEdit = async ({ image, mask, prompt, log }) => {
   let last = '';
-  for (const model of IMAGE_EDIT_MODELS) {
+  let fidelity = true;
+  for (let k = 0; k < IMAGE_EDIT_MODELS.length; k++) {
+    const model = IMAGE_EDIT_MODELS[k]!;
     const form = new FormData();
     form.set('model', model);
     form.set('prompt', prompt);
     form.set('size', '1536x1024');
     form.set('quality', process.env.REGEN_IMAGE_QUALITY ?? 'high');
     form.set('n', '1');
+    if (fidelity) form.set('input_fidelity', 'high');
     form.set('image', new Blob([new Uint8Array(image)], { type: 'image/png' }), 'pano.png');
     form.set('mask', new Blob([new Uint8Array(mask)], { type: 'image/png' }), 'mask.png');
     const t0 = Date.now();
@@ -93,6 +96,12 @@ export const openaiImageEdit: ImageEdit = async ({ image, mask, prompt, log }) =
     });
     if (!res.ok) {
       last = `OpenAI image edit (${model}) HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+      if (res.status === 400 && fidelity && /input_fidelity/i.test(last)) {
+        log(`${model} does not take input_fidelity; retrying without it`);
+        fidelity = false;
+        k--;
+        continue;
+      }
       if ((res.status === 400 || res.status === 404) && /model|does not exist|not found|invalid_value/i.test(last)) {
         log(`${model} unavailable for edits; trying the next model`);
         continue;
@@ -154,7 +163,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
   try {
     let note: string;
     if (o.regen.method === 'pano-inpaint') {
-      const mask = maskFor(o.regen.prompt);
+      const mask = o.regen.imageEdit?.mask ?? maskFor(o.regen.prompt);
       const panoPath = join(jobDir, 'pano.png');
       const editedPath = join(jobDir, 'pano-edited.png');
       if (!(await exists(panoPath))) {
@@ -175,26 +184,32 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
       }
       if (!(await exists(editedPath))) {
         const src = decodePng(await readFile(panoPath));
-        const small = resize(toRgb(src), PANO_SIZE.width, PANO_SIZE.height);
-        const maskPng = encodePng(editMask(PANO_SIZE.width, PANO_SIZE.height, mask));
-        await writeFile(join(jobDir, 'pano-input.png'), encodePng(small));
-        await writeFile(join(jobDir, 'mask.png'), maskPng);
-        const prompt = imageEditPrompt(o.regen.prompt);
+        const pano = resize(toRgb(src), PANO_SIZE.width, PANO_SIZE.height);
+        // the model works at 3:2 and fills the whole frame (it ignores letterbox bars), so the
+        // panorama is stretched to 1536×1024 and its answer stretched back to 2:1
+        const canvas = { image: resize(pano, EDIT_CANVAS.width, EDIT_CANVAS.height), mask: editMask(EDIT_CANVAS.width, EDIT_CANVAS.height, mask) };
+        await writeFile(join(jobDir, 'pano-input.png'), encodePng(pano));
+        await writeFile(join(jobDir, 'edit-canvas.png'), encodePng(canvas.image));
+        await writeFile(join(jobDir, 'mask.png'), encodePng(canvas.mask));
+        const prompt = imageEditPrompt(o.regen.imageEdit?.prompt ?? o.regen.prompt);
         await writeJsonAtomic(join(jobDir, 'image-edit-request.json'), {
           method: 'POST',
           url: 'https://api.openai.com/v1/images/edits',
-          form: { model: IMAGE_EDIT_MODELS[0], size: '1536x1024', quality: process.env.REGEN_IMAGE_QUALITY ?? 'high', n: 1, prompt, image: 'pano-input.png', mask: 'mask.png' },
+          form: { model: IMAGE_EDIT_MODELS[0], size: '1536x1024', quality: process.env.REGEN_IMAGE_QUALITY ?? 'high', input_fidelity: 'high', n: 1, prompt, image: 'edit-canvas.png', mask: 'mask.png' },
           mask,
         });
         const edit = o.deps?.imageEdit ?? (env.keys.openai ? openaiImageEdit : null);
         if (o.mock || !edit) {
-          await writeFile(editedPath, encodePng(small));
+          await writeFile(editedPath, encodePng(pano));
           await step('edit', `${o.mock ? 'mock' : 'OPENAI_API_KEY not set'}: panorama passed through unedited (mask ${mask})`, { mask });
         } else {
-          const out = await edit({ image: encodePng(small), mask: maskPng, prompt, log: o.log });
-          const edited = resize(toRgb(decodePng(out.png)), PANO_SIZE.width, PANO_SIZE.height);
+          const out = await edit({ image: encodePng(canvas.image), mask: encodePng(canvas.mask), prompt, log: o.log });
+          await writeFile(join(jobDir, 'pano-edit-raw.png'), out.png);
+          let edited = resize(toRgb(decodePng(out.png)), PANO_SIZE.width, PANO_SIZE.height);
+          // a sky-only change keeps every ground pixel of the original (the model redraws freely)
+          if (mask === 'sky') edited = compositeMasked(pano, edited, editMask(PANO_SIZE.width, PANO_SIZE.height, 'sky'));
           await writeFile(editedPath, encodePng(edited));
-          await step('edit', `edited with ${out.model} (mask ${mask}), resized to ${PANO_SIZE.width}×${PANO_SIZE.height}`, { mask, imageModel: out.model });
+          await step('edit', `edited with ${out.model} (mask ${mask}${mask === 'sky' ? ', ground composited back' : ''}), ${PANO_SIZE.width}×${PANO_SIZE.height}`, { mask, imageModel: out.model });
         }
       }
       await gen({

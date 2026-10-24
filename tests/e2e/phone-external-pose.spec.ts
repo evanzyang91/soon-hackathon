@@ -4,6 +4,7 @@
 // relay socket itself (ios/README.md, "Web side contract").
 import { expect, test } from '@playwright/test';
 import type { PhonePose, RoomScan, SceneState } from '../../shared/protocol.ts';
+import { focalLabel } from '../../web/src/phone/fov.ts';
 import { createReadyProject, phoneState, watchPage } from './helpers.ts';
 
 test('pose=external renders native poses, posts ready, never opens the relay', async ({
@@ -88,10 +89,8 @@ test('pose=external renders native poses, posts ready, never opens the relay', a
   await expect.poll(at).toEqual([1, 0, -0.5]);
   await page.evaluate((p) => window.__previzPose!(p), pose([-2, 0.25, 1], 15));
   await expect.poll(at).toEqual([-2, 0.25, 1]);
-  await expect(page.locator('#lens')).not.toHaveText('--mm');
-  const st = (await phoneState(page))!;
-  expect(st.externalPoses).toBe(2);
-  expect(st.lastPose?.fovDeg).toBe(15);
+  await expect(page.locator('#lens')).toHaveText(focalLabel(15)); // the pose's fov, unclamped
+  expect((await phoneState(page))!.externalPoses).toBe(2);
 
   // the recording flag in the pose drives the rec badge
   await page.evaluate((p) => window.__previzPose!({ ...p, recording: true }), pose([0, 0, 0], 40));

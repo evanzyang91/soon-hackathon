@@ -2,8 +2,8 @@
 //
 // World Labs (docs.worldlabs.ai/api/rendering-spz): metric = raw * metric_scale_factor, then
 // metric.y -= ground_plane_offset puts the ground at y = 0 in the raw OpenCV frame (Y down).
-// Marble's own viewer then rotates 180° about X. Orbis states the same thing from the other side:
-// in the flipped (Y-up) frame, before scaling, the floor sits at y = -ground_plane_offset / msf.
+// Marble's own viewer then rotates 180° about X. Seen from the other side: in the flipped (Y-up)
+// frame, before scaling, the floor sits at y = -ground_plane_offset / msf.
 //
 // A three.js Object3D applies p' = T + R(S p). With R = rotX(π), S = msf and T = (0, ty, 0) a raw
 // floor point (y_cv = gpo / msf) lands at -gpo + ty, so ty = gpo. Non-OpenCV (already Y-up) assets

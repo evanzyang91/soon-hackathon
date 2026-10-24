@@ -74,20 +74,23 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
 ## Make a scene
 
 1. Open `https://localhost:5173/` and accept the self-signed certificate once.
-2. Paste a screenplay (or press **Sample**) and press **Generate**. The project appears with one
-   row per scene and a chip per stage (parse, world, actors, tts, manifest). Hover a chip for the
-   detail; a red (failed) or amber (fallback) chip can be clicked to retry.
+2. In the projects drawer (left, ☰ or `[` toggles it), paste a screenplay (or press **Sample**)
+   and press **Generate**. The project appears with one row per scene and a chip per stage
+   (parse, world, actors, tts, manifest). Hover a chip for the detail; a red (failed) or amber
+   (fallback) chip can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
-4. Under the scenes, each character has a row: name, build detail (`standard` / `high`), kind
-   (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min per actor)** rebuilds that
-   character with LHM-1B plus a fine-tune against its reference image (see below).
+4. The **Scene** tab (right panel) lists the open project's scenes, the world (splat quality,
+   measured scale, floor offset) and the cast: one row per character with its build detail
+   (`standard` / `high`), kind (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min
+   per actor)** rebuilds that character with LHM-1B plus a fine-tune against its reference image
+   (see below).
 
 ## High detail actors
 
 The standard actor is LHM-500M from one generated reference photo: right silhouette, soft face
 and clothing. **High detail (~5 min per actor)** in the project panel (tooltip: "LHM-1B +
 fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build
-stays until the new one lands.") calls `POST /api/projects/:id/actors/:characterId/rebuild
+stays until the new one lands.") in the Scene tab's cast calls `POST /api/projects/:id/actors/:characterId/rebuild
 {detail: 'high'}` (202). The server runs `worker/run_actor.py --detail high` in the background into
 `<project>/actors/<id>/high/`; the chip reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
 time. When the build lands, every scene manifest showing the character is rewritten to it
@@ -167,6 +170,94 @@ meshes. Depth of field is Spark's own (aperture from f-stop and the camera's foc
 
 ![A light 2 m from the actor](docs/images/look-light.png)
 
+## Laptop layout and direct manipulation
+
+The director page has a slim projects drawer on the left (new project + every project and its
+scenes; ☰ or `[` collapses it), the viewport, and a right panel with four tabs: **Scene** (the
+project's scenes, world quality and scale, cast with High detail, and an outliner of the props,
+lights and cameras), **Look** (grade / lens / lights), **Edit** (re-prompting: describe a change in
+words) and **Shoot** (phone pairing, scene clock, takes, cameras, suggested shots, dialogue). The
+top bar shows the scene title with its scale badge, the look's name, Play / Pause with the clock,
+undo / redo and `?`, which opens a keyboard and mouse cheatsheet. A three-step tour (fly → drop a
+camera → pair the phone) shows once on first run; the cheatsheet can replay it. Every button has
+a hover hint.
+
+Everything in the viewport can be grabbed (`web/src/viewer/manipulate/`):
+
+- **Hover** outlines an actor, prop, light or dropped camera; **click** selects it: a ring on the
+  floor, a yellow rotate ring, an orange knob (a prop's scale, a light's radius), a green focus
+  point on a camera's view axis when depth of field is on, and a small toolbar over it (Reset to
+  blocking, Delete, Make active, Look through).
+- **Drag** moves it on a floor-parallel plane through the point you grabbed, so it stays under
+  the cursor; **Shift+drag** raises / lowers; the ring turns (Shift snaps to 15°); arrow keys nudge
+  5 cm (Shift 50 cm) along the world axis the view faces most. Actors cannot be dragged into walls:
+  the collider's body probe (the same test that fixes LLM blocking at load) stops them at the last
+  free spot. **Delete** removes props, lights and cameras; actors are reset to their blocking
+  instead. **Esc** deselects. Left-drag on empty space looks around (as does right-drag), so the
+  fly controls and the manipulator never fight.
+- **Click the world** (nothing under the cursor) to select a region of splats: a sphere at the hit
+  with an auto radius from the splats around it (the Edit tab's selection code), resized by
+  dragging its outline. Its toolbar recolours the region (luminance-keeping hue), hides it, moves
+  its splats (Move, then drag inside), hands it to the Edit tab as the selection for a prompt
+  (`director.pendingRegion`), or deletes the region's edit. Clicking an object already edited
+  selects that edit again.
+- Where changes go: actors and props become `transform` / `prop-remove` scene edits and regions
+  `splat-region` edits in `edits.json` (one director edit per target, kept last so it wins; live
+  while dragging, saved on release), which the viewer's edit applier renders on the laptop and the
+  phone; lights and focus go into the look; cameras stay in the laptop's camera list, and a phone
+  attached to a dragged camera follows it live (≤ 20 Hz). Every change is one undo step: ⌘Z / ⇧⌘Z
+  undo / redo whichever changed last, the director's stack or the Look panel's own history.
+
+![The four tabs: Scene, Look, Edit, Shoot](docs/images/ux-scene.png)
+
+![A selected actor: floor ring, rotate ring, toolbar](docs/images/ux-manipulate.png)
+
+![A region on the shelter's ad panel, recoloured from its toolbar](docs/images/ux-region-recoloured.png)
+
+More: [Look tab](docs/images/ux-look.png), [Edit tab](docs/images/ux-edit.png),
+[Shoot tab](docs/images/ux-shoot.png), [region selected](docs/images/ux-region.png),
+[cheatsheet](docs/images/ux-cheatsheet.png), [first-run tour](docs/images/ux-tour.png).
+
+## Re-prompting (Edit tab): change only what the prompt touches
+
+Type a change in the **Edit** tab ("make the pillow on the left red", "move Leo a metre closer to
+Maya", "warmer and more contrast", "make the sky stormy") and press **Send**. The current view
+(a ≤ 300 KB JPEG plus its camera) goes with the prompt, so "left" and "right" mean what you see.
+The server asks Claude for an **EditPlan**: a scope and typed ops (`shared/look.ts`). The scope
+decides the cost, and the planner must pick the cheapest one that does the job:
+
+| Scope | Examples | Cost | What happens |
+| --- | --- | --- | --- |
+| `look` | warmer, more contrast, night mood, add a key light from the left | instant | a Look patch, baked into the scene look (the Look tab keeps editing it) |
+| `transform` | move Leo closer, rotate the bench, make the car bigger | instant | actor / prop transform edit; a moved light is a look patch |
+| `prop` | add a bicycle leaning on the shelter, remove the bus | instant | procedural prop added (drag it to place) or removed |
+| `splat-region` | pillow red, remove the lamp, make the plant taller, shift the chair left | instant, no re-render | a Spark `SplatEdit` region on the world splats only: recolour, hide, move, grow / shrink |
+| `world-regen` | stormy sky, make it winter, turn the kitchen into a diner | ~5 min + 1,580 Marble credits, **asks first** | a confirm card; on **Regenerate** the world's own panorama is edited by an image model (sky-only edits keep the ground pixel-identical) and fed to Marble as an image prompt, or the text prompt is re-run; actors, look and props are kept, region edits dropped with a note |
+| `clarify` | "the thing on the left" | free | the planner asks which object you mean |
+
+A region op needs a 3D target and is never guessed: the planner uses the region you selected in
+the viewport (click the world, or **Select** in the Edit tab; Shift+drag for a box), else Claude
+vision boxes the named object in the view you sent (`needsTarget[].box`), which is raycast into a
+3D region and previewed before **Apply**; if neither works a banner asks you to click the object.
+Every applied edit lands in `scene-<n>/edits.json` with the prompt that produced it and shows in
+the panel's history, where each one can be switched off (a look op restores the values it
+replaced), deleted or undone (**Undo last**). The response always says what changed and what did
+not. Under `MOCK=1` or without an Anthropic key a keyword planner follows the same rules offline.
+
+Routes: `POST /api/projects/:id/scenes/:n/reprompt` (`{ prompt, selection?, view? }` → `{ plan,
+edits }`; cheap scopes are applied and saved, regen and clarify come back unapplied) and
+`POST …/regen` (`{ plan.regen }`, runs the world stage again; `MARBLE_DRY_RUN=1` logs the Marble
+requests instead of sending them, which is how the regen path was verified).
+
+![A clicked region recoloured: only the splats inside the sphere change](docs/images/reprompt-region-recolor.png)
+
+![Vision target: Claude's box on the shelter roof → 3D region → Apply](docs/images/reprompt-vision-target.png)
+
+![World regen, dry run: confirm card, edited panorama, logged Marble request, world swapped](docs/images/reprompt-regen-dry-run.png)
+
+More: [hide + move a region](docs/images/reprompt-region-hide-move.png), [phone parity of a region
+edit](docs/images/reprompt-phone-parity.png), [the snow caveat](docs/images/reprompt-regen-snow-caveat.png).
+
 ## Pair the phone
 
 1. Phone and laptop on the same Wi-Fi. The laptop's right panel shows a room code, a QR code and
@@ -236,7 +327,12 @@ may fall outside a small room (drag them, or "move Leo closer").
 | Input | Action |
 | --- | --- |
 | W A S D, Q / E, Shift | fly, down / up, faster |
-| right-drag, or double-click for mouselook | look |
+| drag empty space, right-drag, or double-click for mouselook | look |
+| click / drag an actor, prop, light or camera | select / move it (Shift+drag: up / down; yellow ring: turn; orange knob: scale / radius; green point: focus) |
+| ← ↑ → ↓ (Shift), ⌫ / Delete, Esc | nudge 5 cm (50 cm); delete a prop / light / camera; deselect |
+| click the world | select a region of splats: **Recolour**, **Hide**, **Move**, **Edit ›**, **Delete region** |
+| ⌘Z / ⇧⌘Z, top-bar ↶ ↷ | undo / redo a move, delete or region edit (or a look change when the Look tab changed last) |
+| `?`, `[` | keyboard and mouse cheatsheet; projects drawer |
 | wheel | zoom (field of view) |
 | Space | play / pause the scene clock (moving props, dialogue sync) |
 | C, or **Drop** | drop a camera at the current view; 1–9 jump to a camera |
@@ -245,7 +341,7 @@ may fall outside a small room (drag them, or "move Leo closer").
 | G, **Grid**, **Collider** | ground grid at y = 0, collider wireframe |
 | click a dialogue line / **Play scene** | speak one line / the whole scene in order (caption + positional audio) |
 | **Re-center phone**, **Still**, **New room** | phone heading reset, PNG from the phone camera, new pairing code |
-| **Look** tab, Alt+click, ⌘Z / ⇧⌘Z, hold **Compare** | grade / lens / lights; focus on the clicked splat; undo / redo a look change; ungraded frame |
+| **Look** tab, Alt+click, hold **Compare** | grade / lens / lights; focus on the clicked splat; ungraded frame |
 
 **Phone**
 
@@ -303,7 +399,7 @@ libraries filled, `MOCK=0` on `fixtures/screenplay.fountain` spends only the Cla
 
 ### Scale calibration: is the world really metric?
 
-Marble returns a `metric_scale_factor`, and Orbis found it can be off by up to 2×. After every
+Marble returns a `metric_scale_factor`, but it can be off by up to 2× on some worlds. After every
 Marble download (and from the CLI) the pipeline measures the real scale and stores it as
 `WorldAsset.scaleCalibration`. The viewer multiplies Marble's scale by `factor`, keeping the floor at
 y = 0, and the laptop HUD shows `scale ×0.87 (door 2.04 m)` next to the scene title (the
@@ -469,7 +565,23 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   sky mask is a rule (far, and above the horizon as seen from the camera) rather than a
   segmentation: tall buildings far away can pick up some of the sky tint.
 - A camera's own lens is stored in the laptop's browser storage, next to the dropped cameras. It
-  is not in `edits.json`.
+  is not in `edits.json`, so another laptop opening the project does not see it. The viewport's
+  focus point edits whichever lens the camera renders with (its own, else the scene's).
+- Direct manipulation: only actors are kept out of walls (props, lights and cameras move freely);
+  actor and prop moves apply once the collider has settled the blocking (a second or two after a
+  real world loads; the toolbar says so if you grab earlier); a prop driving along its path is
+  moved by shifting its whole path and cannot be turned. Dropped cameras and lights are not scene
+  edits (cameras live on the laptop, lights in the look), so the Edit tab's history does not list
+  their moves; the undo stack does.
+- Re-prompting: a **season or weather regen that touches the ground does not keep the layout**:
+  when the whole panorama is editable, the image model draws a new street rather than editing the
+  360° image in place, so a real Marble regen from it would be a different-looking place. Sky-only
+  edits are safe (the original ground is composited back). Region edits: Spark has no hue blend,
+  so "hue" is a luminance-keeping multiply (strongly coloured surfaces of another hue go darker
+  instead of changing hue); grow / shrink moves splats on a 5×5×5 displacement grid but cannot
+  resize the splats themselves; "move" leaves a hole where the object was. An interrupted regen
+  resumes when re-requested, not on server restart. No real regen has been run (credits), only
+  dry runs with the request logged.
 
 ## Repository map
 

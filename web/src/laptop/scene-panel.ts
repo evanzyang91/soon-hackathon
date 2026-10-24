@@ -172,7 +172,7 @@ export function mountScenePanel(director: Director) {
         h(
           'div',
           { class: 'shot-row' },
-          h('button', { class: 'link', onclick: () => director.flyTo(s) }, s.name),
+          h('button', { class: 'link', title: 'Fly to this suggested shot', onclick: () => director.flyTo(s) }, s.name),
           h('span', { class: 'muted small' }, `${Math.round(s.fovDeg)}°`),
           h(
             'button',

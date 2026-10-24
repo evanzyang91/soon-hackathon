@@ -16,9 +16,10 @@ import {
   type Look,
 } from '../../../shared/look.ts';
 import { DynamicElementKind, type DynamicElement, type Quat, type Vec3 } from '../../../shared/schema.ts';
-import { encodeLookPatch, type LookPatch, type RegionEdit } from '../../../web/src/viewer/edits/model.ts';
+import { type LookPatch, type RegionEdit } from '../../../web/src/viewer/edits/model.ts';
 import { clamp, round3, yawFacing } from '../geometry.ts';
 import type { SceneContext } from './context.ts';
+import { maskFor } from './regen.ts';
 
 export const REGEN = { minutes: 5, credits: 1580 } as const;
 
@@ -284,6 +285,9 @@ export function draftToPlan(draft: Draft, o: FinalizeOptions): Finalized {
         regen: {
           method: pano ? 'pano-inpaint' : 'text',
           prompt: prompt.slice(0, 2000),
+          // the image model's instruction and how much of the panorama it may touch, stated on the
+          // plan so the confirm card and the regen agree (the server falls back to the wording)
+          imageEdit: pano ? { prompt: prompt.slice(0, 2000), mask: maskFor(prompt) } : undefined,
           estimatedMinutes: REGEN.minutes,
           estimatedCredits: REGEN.credits,
           keeps,
@@ -426,7 +430,7 @@ function lookFromDraft(
   }
   if (lights.length) patch.lights = lights;
   if (!Object.keys(patch).length) return null;
-  return SceneEdit.parse({ kind: 'look', id: newId('look'), patch: encodeLookPatch(patch) });
+  return SceneEdit.parse({ kind: 'look', id: newId('look'), patch });
 }
 
 function findActor(scene: SceneContext, id: string) {

@@ -1,9 +1,9 @@
 """Previz Stage actor worker: one reference image -> LHM gaussian avatar + idle/talk PLY loop.
 
-A trimmed port of OrbisEngine's ``worker/modal_lhm.py`` (same CUDA image, LHM code revision and
-LHM-500M-HF weights, same checkpoint-to-volume + small-receipt discipline). ``detail="high"``
-swaps in LHM-1B-HF (Orbis's ``larger_model``) and fine-tunes the avatar against the reference
-(``lhm_stages/finetune_actor.py``); the outputs keep the same layout. Differences:
+Pinned CUDA image, LHM code revision and LHM-500M-HF weights; every GPU call checkpoints its
+outputs to the Volume and returns a small receipt. ``detail="high"`` swaps in LHM-1B-HF and
+fine-tunes the avatar against the reference (``lhm_stages/finetune_actor.py``); the outputs keep
+the same layout. Compared with LHM's upstream inference script:
 
 * Input is one generated full-body reference PNG (+ optional mask). Without a mask the worker
   segments the person with ``rembg`` (LHM upstream's own fallback when SAM2 is absent).
@@ -11,7 +11,7 @@ swaps in LHM-1B-HF (Orbis's ``larger_model``) and fine-tunes the avatar against 
   loop (adds jaw + nods) built by perturbing the Multi-HMR source pose's SMPL-X body parameters,
   fed through LHM's native ``animation_infer_gs`` skinning. No video, no stock dance motion.
 * The worker packages the frames itself (``lhm_stages/package_actor.py``, pure numpy) into an
-  avatar-local OpenGL frame + ``sequence.json`` + a ``wander.person-motion/1`` motion track.
+  avatar-local OpenGL frame + ``sequence.json`` + a ``previz.actor-motion/1`` motion track.
 
 Entry points (use ``worker/run_actor.py`` rather than calling these directly):
 
@@ -43,7 +43,7 @@ from lhm_image import image  # noqa: E402
 
 APP_NAME = "previz-stage-lhm"
 
-# Modal list prices used by Orbis for its receipts (USD / second).
+# Modal list prices behind the receipts' cost estimate (USD / second).
 L4_PER_S, CPU_CORE_PER_S, GIB_PER_S = 0.000222, 0.0000131, 0.00000222
 GPU_CPU, GPU_MEM_GIB = 4, 64
 
@@ -52,7 +52,7 @@ cache = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
 
 def link_model_caches(repo=Path("/opt/lhm"), cache_root=Path("/cache"), gfpgan_package=None):
-    """Expose the staged public model trees inside the LHM checkout (verbatim from Orbis)."""
+    """Expose the staged public model trees inside the LHM checkout through symlinks."""
     repo, cache_root = Path(repo), Path(cache_root)
     links = []
     for relative, name in (

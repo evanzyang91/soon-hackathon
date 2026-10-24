@@ -214,7 +214,7 @@ export const ActorAsset = z.discriminatedUnion('kind', [
     ...Fallback,
     ...Detail,
     characterId: z.string(),
-    /** Directory containing sequence.json (Orbis wander.person-motion/1 compatible) + PLY frames. */
+    /** Directory containing sequence.json (previz.actor-sequence/1) + PLY frames. */
     sequenceDir: z.string(),
     fps: z.number().positive(),
     /** Height of the avatar in its native units; browser scales so it stands `heightMeters` tall. */

@@ -11,6 +11,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#000000" />
     <title>Previz Camera</title>
+    <script>
+      // ?pose=external (native ARKit app): hide the start screen before it can render
+      if (new URLSearchParams(location.search).get('pose') === 'external')
+        document.documentElement.dataset.pose = 'external';
+    </script>
     <link rel="icon" href="data:," />
     <style>
       :root {
@@ -535,6 +540,19 @@
         #perf {
           bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px);
         }
+      }
+      /* ---- ?pose=external: the native app (ios/) draws its own controls over the page; the inline
+         script in <head> marks <html> before the body renders, so the start screen never flashes ---- */
+      [data-pose='external'] #start,
+      [data-pose='external'] #joystick,
+      [data-pose='external'] #height,
+      [data-pose='external'] #controls,
+      [data-pose='external'] #top-right,
+      [data-pose='external'] #top-left,
+      [data-pose='external'] #walk-readout,
+      [data-pose='external'] #hint,
+      [data-pose='external'] #rotate {
+        display: none;
       }
       @keyframes blink {
         to {

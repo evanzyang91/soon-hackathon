@@ -1,7 +1,7 @@
 """The LHM CUDA worker image, shared by the GPU app (modal_lhm.py) and the CPU setup app.
 
-Exactly OrbisEngine's worker image (CUDA 12.1 devel, torch 2.3.0, pytorch3d / diff-gaussian-
-rasterization / simple-knn built for sm_89 = L4, LHM at the pinned revision). The stage scripts
+CUDA 12.1 devel, torch 2.3.0, pytorch3d / diff-gaussian-rasterization / simple-knn built for
+sm_89 = L4, LHM checked out at the pinned revision. The stage scripts
 in lhm_stages/ are mounted at container start, so editing them never rebuilds the image.
 """
 

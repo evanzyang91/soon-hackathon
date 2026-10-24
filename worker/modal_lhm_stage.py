@@ -1,7 +1,7 @@
 """One-time, CPU-only staging of LHM weights into the actor Volume. Never starts a GPU.
 
-Port of OrbisEngine ``worker/modal_stage_weights.py`` (LHM phases only). Each phase writes a
-receipt under ``/cache/setup-receipts/`` and is idempotent: a rerun reuses what is already there,
+Each phase (prior archive, model weights, auxiliary weights) writes a receipt under
+``/cache/setup-receipts/`` and is idempotent: a rerun reuses what is already there,
 and the 18.8 GB prior archive resumes with pinned HTTP ranges (If-Match on the ETag) instead of
 starting over.
 

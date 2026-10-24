@@ -64,11 +64,6 @@ export function bindUi() {
       document.body.dataset.wall = kind;
       $('wall').textContent = text;
     },
-    /** pose=external: the native overlay replaces the page's own controls (ios/README.md). */
-    hideForExternal() {
-      const ids = ['joystick', 'height', 'controls', 'top-right', 'top-left', 'walk-readout'];
-      for (const id of [...ids, 'hint', 'rotate']) $(id).style.display = 'none';
-    },
     setConn(s: ConnState) {
       const el = $('conn');
       el.dataset.state = s;

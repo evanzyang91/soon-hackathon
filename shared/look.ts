@@ -57,6 +57,40 @@ export const Look = z.object({
 export type Look = z.infer<typeof Look>;
 export const defaultLook = (): Look => Look.parse({});
 
+/**
+ * A defaults-free deep partial of Look for `LookEdit.patch`: it contains exactly the values the
+ * edit sets and nothing else (zod would fill every default into `Look.partial()`, so a patch
+ * {contrast: 1.2} would come back as a whole Look). Nested groups merge per field
+ * ({dof: {enabled: false}} only switches depth of field off); `lights` upserts by id.
+ */
+export const LookPatch = z.object({
+  name: z.string().optional(),
+  exposure: z.number().min(-3).max(3).optional(),
+  contrast: z.number().min(0.5).max(2).optional(),
+  saturation: z.number().min(0).max(2).optional(),
+  temperature: z.number().min(-1).max(1).optional(),
+  tint: z.number().min(-1).max(1).optional(),
+  shadows: z.number().min(-1).max(1).optional(),
+  highlights: z.number().min(-1).max(1).optional(),
+  lut: LutPreset.optional(),
+  lutStrength: unit.optional(),
+  vignette: unit.optional(),
+  grain: unit.optional(),
+  bloom: unit.optional(),
+  fog: z.object({ color: z.string().optional(), density: unit.optional() }).optional(),
+  skyTint: z.object({ color: z.string().optional(), strength: unit.optional() }).optional(),
+  dof: z
+    .object({
+      enabled: z.boolean().optional(),
+      focusDistance: z.number().positive().optional(),
+      fStop: z.number().min(0.95).max(22).optional(),
+    })
+    .optional(),
+  lights: z.array(Light).optional(),
+  ambient: unit.optional(),
+});
+export type LookPatch = z.infer<typeof LookPatch>;
+
 // ---------------------------------------------------------------------------
 // Scene edits
 // ---------------------------------------------------------------------------
@@ -86,6 +120,13 @@ export const SplatRegionEdit = z.object({
   enabled: z.boolean().default(true),
 });
 
+/**
+ * Moves / turns / scales a scene object. The renderer (web/src/viewer/edits/apply.ts) applies
+ * `actor` and `prop` targets on laptop and phone. `light` and `camera` are accepted so a planner
+ * can express them, but they are NOT applied from here: a light's position lives in
+ * `Look.lights[].position` (patch it with a `look` edit) and a dropped camera lives in the
+ * laptop's camera list (SceneState.cameras); the laptop converts such ops on receipt.
+ */
 export const TransformEdit = z.object({
   kind: z.literal('transform'),
   id: z.string(),
@@ -104,8 +145,8 @@ export const PropEdit = z.discriminatedUnion('kind', [
 export const LookEdit = z.object({
   kind: z.literal('look'),
   id: z.string(),
-  /** Partial Look merged in order of application. */
-  patch: Look.partial(),
+  /** Exactly the Look values this edit sets (see LookPatch), merged in order of application. */
+  patch: LookPatch,
   enabled: z.boolean().default(true),
 });
 
@@ -123,13 +164,34 @@ export const EditPlan = z.object({
   scope: EditScope,
   summary: z.string(), // "Recolour the left pillow red (one region, nothing else changes)."
   ops: z.array(SceneEdit).default([]),
-  /** Named objects the planner could not locate; the UI asks the director to click them. */
-  needsTarget: z.array(z.object({ opId: z.string(), label: z.string() })).default([]),
+  /**
+   * Named objects the planner could not locate in 3D; the UI asks the director to click them.
+   * When Claude vision found the object in the submitted view, `box` is its pixel box in the view
+   * (normalised 0–1, origin top-left) so the UI can pre-place the click target, and `confidence` is
+   * the model's own estimate; both absent when no view was sent or the object was not found.
+   */
+  needsTarget: z
+    .array(
+      z.object({
+        opId: z.string(),
+        label: z.string(),
+        box: z.object({ x: unit, y: unit, w: unit, h: unit }).optional(),
+        confidence: unit.optional(),
+      }),
+    )
+    .default([]),
   /** Present only for world-regen: what it costs and the new prompt; applied only after confirm. */
   regen: z
     .object({
       method: z.enum(['pano-inpaint', 'text']),
+      /** The complete new world description (text method), or the panorama edit instruction. */
       prompt: z.string(),
+      /**
+       * pano-inpaint only: the instruction given to the image model and which part of the
+       * panorama it may change ('sky' keeps the ground pixel-identical). Absent = the server
+       * infers the mask from the wording of `prompt`.
+       */
+      imageEdit: z.object({ prompt: z.string(), mask: z.enum(['sky', 'whole']) }).optional(),
       estimatedMinutes: z.number(),
       estimatedCredits: z.number(),
       keeps: z.array(z.string()), // "actors", "look", "props"
