@@ -67,7 +67,7 @@ import {
   type V2,
   type V3,
 } from './math';
-import { aboveGround, onGround } from '../ground';
+import { aboveGround, markY, onGround } from '../ground';
 import { allTargets, pickTarget, targetInfo, toScreen, type TargetContext, type TargetInfo } from './targets';
 import { Toolbar, type ToolbarModel, type ToolItem } from './toolbar';
 import type { UndoStack } from './undo';
@@ -654,7 +654,7 @@ export class Manipulator {
       // a moving prop's transform shifts its path: the stored position is the moved path start
       return transformOf(this.host.edits.current(), info.ref).position ?? [...info.element.path[0]!];
     }
-    const p = v3(info.object?.position ?? info.anchor);
+    const p = info.object ? ([info.object.position.x, markY(info.object), info.object.position.z] as V3) : v3(info.anchor);
     // an actor stores its height above the ground (viewer/ground.ts): a floor drag keeps it, so
     // the actor lands on the ground at every spot it passes (a kerb, a slope); Shift raises it
     return info.ref.type === 'actor' ? aboveGround(p, this.groundY) : p;

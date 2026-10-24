@@ -9,7 +9,7 @@ import type { GroundField } from '@shared/ground';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
-import { groundSampler, loadGroundField, onGround, type GroundY } from './ground';
+import { followGround, groundSampler, loadGroundField, markY, onGround, type GroundY } from './ground';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
 import { gazeTargets } from './gaze';
 import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
@@ -287,7 +287,15 @@ class LoadedScene implements SceneRuntime {
     if (this.playing) this.time += dt;
     this.dynamics.update(this.time);
     this.aimHeads();
-    for (const a of this.actors.values()) a.update(dt, this.time);
+    for (const a of this.actors.values()) {
+      a.update(dt, this.time);
+      // a walking body off its mark (the skinned walk-in reports how far) stands on the ground
+      // under it, not at the mark's height
+      if (this.ground) {
+        const behind = Number((a.object.userData.debug as { walkRemaining?: number } | undefined)?.walkRemaining ?? 0);
+        followGround(a.object, behind, this.groundAt);
+      }
+    }
     this.sceneEdits?.update(this.time);
     this.look.update();
   }
@@ -390,6 +398,7 @@ class LoadedScene implements SceneRuntime {
         // ground there); the scene's actor transforms are applied to the new body again below
         const base = this.sceneEdits?.release(old.object);
         actor.object.position.copy(base?.position ?? old.object.position);
+        if (!base) actor.object.position.y = markY(old.object);
         actor.object.rotation.y = base?.yaw ?? old.object.rotation.y;
         actor.object.userData.placement = old.object.userData.placement;
         old.stopSpeaking();
@@ -459,7 +468,7 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
       console.warn(`[placement] ${actor.characterId}: misplaced, but no free floor within 3 m`);
     if (r.status !== 'moved') continue;
     // the new spot has never been measured: its own ground, not the mark's
-    const lift = actor.object.position.y - rt.groundY(from[0], from[1]);
+    const lift = markY(actor.object) - rt.groundY(from[0], from[1]);
     actor.object.position.set(r.x, rt.groundY(r.x, r.z) + lift, r.z);
     const partner = others.sort(
       (a, b) => Math.hypot(a[0] - r.x, a[1] - r.z) - Math.hypot(b[0] - r.x, b[1] - r.z),

@@ -23,7 +23,7 @@ import { SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, type
 import type { SceneEdits } from '@shared/look';
 import type { DynamicElement } from '@shared/schema';
 import { PathSampler } from '../dynamics-path';
-import { onGround } from '../ground';
+import { markY, onGround } from '../ground';
 import { createProp, type Prop } from '../props';
 import type { SceneRuntime } from '../world';
 import {
@@ -269,7 +269,8 @@ export class SceneEditsRuntime {
   private snapshot(o: THREE.Object3D): Base {
     let b = this.base.get(o);
     if (!b) {
-      b = { position: o.position.clone(), yaw: o.rotation.y, scale: o.scale.clone() };
+      // the mark's height, not a walking body's momentary ground difference (viewer/ground.ts)
+      b = { position: o.position.clone().setY(markY(o)), yaw: o.rotation.y, scale: o.scale.clone() };
       this.base.set(o, b);
     }
     return b;
