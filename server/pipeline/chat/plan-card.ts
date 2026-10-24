@@ -6,7 +6,9 @@ import type { ScreenplayPlan } from '../../../shared/schema.ts';
 
 /** "LEO" → "Leo", "MR. SMITH" → "Mr. Smith" (same rule as project.ts displayName). */
 export const castName = (name: string) =>
-  name.toLowerCase().replace(/(^|[\s.'-])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
+  name
+    .toLowerCase()
+    .replace(/(^|[\s.'-])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

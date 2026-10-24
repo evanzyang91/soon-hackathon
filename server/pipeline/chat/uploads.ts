@@ -28,7 +28,10 @@ export const isUploadId = (id: string) => ID_RE.test(id);
 /** "../../IMG 0042.JPG\u0000" → "IMG 0042.JPG": a display name, never a path. */
 export function cleanUploadName(name: string | null | undefined): string | undefined {
   const base = basename(String(name ?? '').replace(/\\/g, '/'));
-  const clean = base.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200);
+  const clean = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 200);
   return clean || undefined;
 }
 
@@ -45,7 +48,8 @@ export async function saveUpload(
   if (!(UPLOAD_TYPES as readonly string[]).includes(declared))
     throw new UploadError(415, `content-type must be one of ${UPLOAD_TYPES.join(', ')}`);
   if (!bytes.length) throw new UploadError(400, 'empty body: send the image bytes');
-  if (bytes.length > MAX_UPLOAD_BYTES) throw new UploadError(413, `image over ${MAX_UPLOAD_BYTES} bytes`);
+  if (bytes.length > MAX_UPLOAD_BYTES)
+    throw new UploadError(413, `image over ${MAX_UPLOAD_BYTES} bytes`);
   // the bytes decide the type: a JPEG labelled image/png is stored as the JPEG it is
   const info = readImageInfo(bytes);
   if (!info) throw new UploadError(415, 'not a readable PNG, JPEG or WebP image');
@@ -73,7 +77,10 @@ export async function saveUpload(
 }
 
 /** The stored Attachment for `id`, or undefined. */
-export async function readAttachment(projectDir: string, id: string): Promise<Attachment | undefined> {
+export async function readAttachment(
+  projectDir: string,
+  id: string,
+): Promise<Attachment | undefined> {
   if (!isUploadId(id)) return undefined;
   const raw = await readJson(join(projectDir, UPLOADS_DIR, `${id}.json`)).catch(() => undefined);
   const parsed = Attachment.safeParse(raw);
