@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildMannequin } from './mannequin';
-import { wantsGlbFile, PROCEDURAL_GLB } from './index';
+import { poseDrop, wantsGlbFile, PROCEDURAL_GLB, SIT_DROP_M } from './index';
 import { tintFor } from '@shared/tint';
 import { projectCandidates, wrapText } from './common';
 
@@ -95,7 +95,7 @@ describe('fallback selection helpers', () => {
   });
 });
 
-describe('speaking caption', () => {
+describe('speaking caption + seated height', () => {
   it('word-wraps the caption line and ellipsizes past the line cap', () => {
     expect(wrapText('MAYA: I let it go.', 34)).toEqual(['MAYA: I let it go.']);
     expect(wrapText("THEO: That's the saddest thing I've heard all week.", 34)).toEqual([
@@ -106,5 +106,19 @@ describe('speaking caption', () => {
     expect(long).toHaveLength(3);
     expect(long[2]!.endsWith('…')).toBe(true);
     expect(wrapText('   ', 10)).toEqual(['']);
+  });
+
+  it('lowers seated actors to a plausible seated eye line, matching the mannequin hips', () => {
+    expect(poseDrop('standing')).toBe(0);
+    expect(poseDrop('walking')).toBe(0);
+    expect(poseDrop('sitting')).toBe(SIT_DROP_M);
+    const m = buildMannequin('#3366cc');
+    m.setPose('sitting');
+    m.animate(0.016, 0, false, 0);
+    const seatedTop = box(m.root).max.y;
+    m.setPose('standing');
+    m.animate(0.016, 0, false, 0);
+    const standingTop = box(m.root).max.y;
+    expect(standingTop - seatedTop).toBeCloseTo(SIT_DROP_M, 1);
   });
 });
