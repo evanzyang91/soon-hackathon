@@ -1,7 +1,7 @@
 // Laptop director state + render loop. Panels read state from here and call its actions; it
 // emits coarse change events so they can re-render.
 import * as THREE from 'three';
-import type { DropCamera, PhoneCommand, ServerMessage } from '@shared/protocol';
+import type { DropCamera, PhoneCommand, SceneState, ServerMessage } from '@shared/protocol';
 import { SceneManifest, type Quat, type SuggestedShot, type Vec3 } from '@shared/schema';
 import { ViewportRenderer, type PipRect } from '../viewer/render';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world';
@@ -78,6 +78,8 @@ export class Director {
   pipLabel = '';
   takes = 0;
   lastStillAt = 0;
+  /** Adds fields to each SceneState before it is sent (look panel: editsRevision, live look). */
+  decorateState: ((state: SceneState) => void) | null = null;
 
   private readonly subscribers = new Set<(c: Change) => void>();
   private lastSentKey = '';
@@ -534,6 +536,7 @@ export class Director {
       speakingLineId: this.speakingLineId,
     });
     if (!state) return;
+    this.decorateState?.(state);
     const key = sceneStateKey(state);
     const now = performance.now();
     if (!force && key === this.lastSentKey && now - this.lastSentAt < HEARTBEAT_MS) return;
