@@ -91,6 +91,13 @@ export function bindUi() {
       const el = $('walk-readout');
       if (el.textContent !== text) el.textContent = text;
     },
+    /** ACTION (scene stopped) or CUT (the laptop is running the scene). */
+    setAction(running: boolean) {
+      const el = $('action');
+      if (el.getAttribute('aria-pressed') === String(running)) return;
+      el.setAttribute('aria-pressed', String(running));
+      el.textContent = running ? 'CUT' : 'ACTION';
+    },
     setRecording(on: boolean) {
       recBtn.setAttribute('aria-pressed', String(on));
       recBadge.hidden = !on;
@@ -136,6 +143,8 @@ export function bindUi() {
     onShutter: click('shutter'),
     onRecord: click('record'),
     onNextCamera: click('next-cam'),
+    onAction: click('action'),
+    onNextLine: click('next-line'),
   };
 }
 

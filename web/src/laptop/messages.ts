@@ -94,6 +94,20 @@ export function phoneAnchor(
   return cameras.find((c) => c.id === activeCameraId)?.position ?? fallback;
 }
 
+/**
+ * The dialogue line after `lastId` in scene order, wrapping to the first (the first line when
+ * nothing has played yet); null for a scene without dialogue. The phone's "Line ›" button.
+ */
+export function nextLineId(
+  dialogue: readonly { id: string; order: number }[],
+  lastId: string | null,
+): string | null {
+  const lines = [...dialogue].sort((a, b) => a.order - b.order);
+  if (!lines.length) return null;
+  const i = lines.findIndex((l) => l.id === lastId);
+  return lines[(i + 1) % lines.length]!.id;
+}
+
 export function cycleCamera(cameras: DropCamera[], activeId: string | null): string | null {
   if (!cameras.length) return null;
   const i = cameras.findIndex((c) => c.id === activeId);
