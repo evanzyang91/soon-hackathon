@@ -40,7 +40,10 @@ export const Blocking = z.object({
   characterId: z.string(),
   /** Meters in the world frame (origin = Marble source camera, y = floor). */
   position: Vec3,
-  /** Yaw in radians, 0 = facing -Z (towards the source camera direction). */
+  /**
+   * Yaw in radians applied as three.js `rotation.y` to a model whose front is -Z.
+   * 0 = facing -Z (away from the Marble source camera), π = facing the camera at the origin.
+   */
   yaw: z.number(),
   /** 'standing' | 'sitting' | 'walking' — picks the motion loop. */
   pose: z.enum(['standing', 'sitting', 'walking']).default('standing'),
@@ -107,6 +110,8 @@ export const WorldAsset = z.object({
   spz: z.object({ k500: z.string(), full: z.string().optional(), k100: z.string().optional() }),
   colliderGlb: z.string().optional(),
   thumbnail: z.string().optional(),
+  /** Provider caption of the generated world, when available. */
+  caption: z.string().optional(),
   /** Marble semantics; see docs/PLAN.md "Coordinate conventions". */
   metricScaleFactor: z.number().positive(),
   groundPlaneOffset: z.number(),
@@ -166,6 +171,8 @@ export const StageStatus = z.enum(['pending', 'running', 'done', 'failed', 'skip
 export const SceneJob = z.object({
   sceneIndex: z.number().int(),
   slug: z.string(),
+  heading: z.string().optional(),
+  thumbnailUrl: z.string().optional(),
   stages: z.record(StageName, z.object({ status: StageStatus, note: z.string().optional() })),
   manifestUrl: z.string().optional(),
 });
