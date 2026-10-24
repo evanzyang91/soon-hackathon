@@ -32,12 +32,13 @@ import { SceneManifest, WorldAsset, type Blocking, type Character, type ScenePla
 import type { ScaleFigure, ScaleMark } from '../../web/src/viewer/dev/scale-shot.ts';
 import { TriGrid } from '../../web/src/viewer/placement.ts';
 import { applyWorldTransform, calibrationFactor, floorOffset, worldTransform } from '../../web/src/viewer/transform.ts';
-import { colliderMetric, readWorldAsset } from './calibrate.ts';
-import { measureGround } from './calibrate-ground.ts';
+import { colliderMetric, previousCalibration, readWorldAsset, redecide, withGround, writeCalibration } from './calibrate.ts';
+import { measureGround, writeGroundField } from './calibrate-ground.ts';
 import { RayGrid } from './calibrate-geometry.ts';
 import { openWorldRenderer, type WorldRenderer } from './calibrate-render.ts';
 import { costOf, floorAt, IMAGE, projectPoint } from './calibrate-vision.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
+import { ASSET_FILE } from './marble.ts';
 import { decodeSpz } from './spz.ts';
 import { round3 } from './geometry.ts';
 import {
@@ -423,6 +424,37 @@ export function stagedBlocking(
   const k = factor / (report.factor > 0 ? report.factor : 1);
   if (Math.abs(k - 1) < 1e-9) return report.blocking;
   return report.blocking.map((b) => ({ ...b, position: [round3(b.position[0] * k), b.position[1], round3(b.position[2] * k)] as Vec3 }));
+}
+
+/**
+ * Where the floor and the ground field are measured for a scene: the staged marks, then the
+ * planner's. The staged ones decide wherever their ground is measurable; the planner's (near the
+ * camera) keep the floor offset defined when a staged mark is too far out to measure (the rooftop
+ * parapet's splat columns are too sparse), so the world's reference does not vanish.
+ */
+export function groundMarks(staged: readonly Blocking[] | undefined, planner: readonly Blocking[]): (readonly [number, number])[] {
+  return [...(staged ?? []), ...planner].map((b) => [b.position[0], b.position[2]] as const);
+}
+
+/**
+ * After staging: the floor offset and the ground field measured where the actors now stand, by the
+ * calibration's own path (calibrate.ts withGround + writeCalibration, which re-measures the field
+ * with its grid grown to the marks; without a scale report, only the field). Staged marks can lie
+ * outside the default field (x ±8, z -12..3 m at Marble's scale; the rooftop's parapet at ×0.778),
+ * and floorOffsetMeters is by definition the ground at the marks. `manifest` also patches
+ * ../manifest.json's world. Returns the new world-asset.json.
+ */
+export async function measureGroundAtMarks(
+  worldDir: string,
+  asset: WorldAsset,
+  marks: readonly (readonly [number, number])[],
+  o: { log?: (m: string) => void; manifest?: boolean } = {},
+): Promise<WorldAsset> {
+  const prev = asset.provider === 'marble' ? await previousCalibration(worldDir, asset.worldId) : null;
+  if (prev) return writeCalibration(worldDir, await withGround(redecide(prev), worldDir, marks), { log: o.log, marks, manifest: o.manifest });
+  const next = await writeGroundField(worldDir, asset, { marks, log: o.log });
+  await writeJsonAtomic(join(worldDir, ASSET_FILE), next);
+  return next;
 }
 
 /** Rewrites ../manifest.json's plan.blocking from a report (CLI --write on an existing project). */
