@@ -336,7 +336,11 @@ describe('MOCK project: the chat-called methods run offline', () => {
     expect(st.scenes[0]!.stages.world.note).toBe('regenerated from your photo');
     expect(st.scenes[0]!.stages.manifest.status).toBe('done');
     expect(existsSync(join(dataDir, id, 'scene-0/world.prev-1/world.spz'))).toBe(true);
-    expect((await manifest(id, 0)).world.spz.k500).toBe('scene-0/world/world.spz');
+    const world = (await manifest(id, 0)).world;
+    expect(world.spz.k500).toBe('scene-0/world/world.spz');
+    // the regenerated world went through the same calibrate step: its own ground height field
+    expect(world.ground?.file).toMatch(/^scene-0\/world\//);
+    expect(existsSync(join(dataDir, id, world.ground!.file))).toBe(true);
     await expect(s.regenerateWorld(id, 9)).rejects.toMatchObject({ status: 404 });
   });
 
