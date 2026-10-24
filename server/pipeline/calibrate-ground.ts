@@ -12,7 +12,13 @@
 // world's global fallback; the ground height FIELD below (ground.json) is what actors stand on.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { GROUND_FIELD_SCHEMA, validateGroundField, type GroundField } from '../../shared/ground.ts';
+import {
+  feetY,
+  GROUND_FIELD_SCHEMA,
+  sampleGround,
+  validateGroundField,
+  type GroundField,
+} from '../../shared/ground.ts';
 import type { WorldAsset } from '../../shared/schema.ts';
 import { applyWorldTransform, calibrationFactor, worldTransform } from '../../web/src/viewer/transform.ts';
 import { writeFileAtomic } from './fsutil.ts';
@@ -416,6 +422,32 @@ export function fieldCoverage(f: GroundField): { covered: number; cells: number 
 /** WorldAsset.ground for a field stored as `file` (world-dir- or project-root-relative). */
 export function groundRef(f: GroundField, file = GROUND_FILE): NonNullable<WorldAsset['ground']> {
   return { file, cell: f.cell, ...fieldCoverage(f) };
+}
+
+/**
+ * Report text (cli calibrate): extent, coverage, range and, per mark (scene metres), the ground
+ * there and where the viewer now puts the feet relative to the old y = 0.
+ */
+export function describeField(
+  f: GroundField | null,
+  asset: WorldAsset,
+  marks?: readonly (readonly [number, number])[],
+): string {
+  if (!f) return '  ground field: none (no column holds ground); actors stand on the median floor';
+  const { covered, cells } = fieldCoverage(f);
+  const hs = f.heights.filter((h): h is number => h !== null);
+  const sign = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(3)}`;
+  const frame = { factor: calibrationFactor(asset), floorOffset: asset.floorOffsetMeters ?? 0 };
+  const L = [
+    `  ground field: ${f.cols}×${f.rows} cells of ${f.cell} m from (${f.origin.join(', ')}), ${Math.round((100 * covered) / cells)} % with ground, ${sign(Math.min(...hs))}..${sign(Math.max(...hs))} m vs Marble's plane (median floor ${sign(-frame.floorOffset)})`,
+  ];
+  for (const [x, z] of marks ?? []) {
+    const h = sampleGround(f, x / frame.factor, z / frame.factor);
+    L.push(
+      `    mark (${x}, ${z}): ground ${h === null ? '— (no ground within 2 cells)' : `${sign(h)} m → feet at y ${sign(feetY(f, frame, x / frame.factor, z / frame.factor))} m (was 0)`}`,
+    );
+  }
+  return L.join('\n');
 }
 
 /** Splat positions of a world dir in the field's frame; the full SPZ when there is one. */
