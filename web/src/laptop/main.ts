@@ -6,10 +6,13 @@ import { installDebugHook } from './debug';
 import { Director } from './director';
 import { byId } from './dom';
 import { mountHud } from './hud';
-import { mountEditPanel } from './edit-panel';
+import * as editPanel from './edit-panel';
 import { mountLookPanel } from './look-panel';
+import { mountManipulation } from './manipulate';
 import { mountProjectsPanel } from './projects-panel';
 import { mountPhoneSection, mountScenePanel } from './scene-panel';
+import { mountSceneTab } from './scene-tab';
+import { mountShell } from './shell';
 
 const canvas = byId<HTMLCanvasElement>('viewport');
 const stage = byId('stage');
@@ -25,9 +28,37 @@ fit();
 mountHud(director);
 mountScenePanel(director);
 mountPhoneSection(director);
-mountLookPanel(director);
-mountEditPanel(director);
-mountProjectsPanel(director);
+const look = mountLookPanel(director);
+// WP G's Edit tab: `mountEditPanel(director)` today (it adds its own section to #right); the
+// shell's contract is `mountEditPanel(el, director)` filling `el` — both are accepted
+const edit = (() => {
+  const mount = (editPanel as { mountEditPanel?: (...a: unknown[]) => unknown }).mountEditPanel;
+  if (!mount) return false;
+  try {
+    if (mount.length >= 2) {
+      const el = document.createElement('section');
+      el.className = 'card grow edit-panel';
+      el.id = 'edit-panel';
+      el.dataset.testid = 'edit-panel';
+      byId('right').append(el);
+      mount(el, director);
+    } else mount(director);
+    return true;
+  } catch (err) {
+    console.warn('edit panel failed to mount', err);
+    return false;
+  }
+})();
+const projects = mountProjectsPanel(director);
+// the four tabs, drawer, top bar, cheatsheet and tour (after the panels made their sections)
+const shell = mountShell(director, { edit });
+const manip = mountManipulation(director, look, {
+  toast: (t) => shell.toast(t),
+  lookVisible: () => shell.lookVisible(),
+  showTab: (t) => shell.show(t),
+});
+shell.setUndo(manip);
+mountSceneTab(director, projects, look, manip);
 installDebugHook(director);
 director.start();
 
