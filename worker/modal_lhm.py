@@ -170,7 +170,16 @@ def actor(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                env={**os.environ, "PYTHONPATH": "/root:/root/lhm_stages:/opt/lhm"},
+                env={
+                    **os.environ,
+                    "PYTHONPATH": "/root:/root/lhm_stages:/opt/lhm",
+                    # rembg -> pymatting compiles numba kernels on import (~50 s per cold
+                    # container); cached in the Volume it loads in ~1.4 s (measured). The
+                    # cache is keyed by host CPU model, so compile for a generic CPU to make
+                    # it portable across Modal hosts.
+                    "NUMBA_CACHE_DIR": "/cache/numba",
+                    "NUMBA_CPU_NAME": "generic",
+                },
             )
             for line in proc.stdout:
                 print(line, end="", flush=True)
