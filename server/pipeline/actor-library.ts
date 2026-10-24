@@ -56,9 +56,14 @@ export async function findLibraryActor(
 
 /**
  * Copies the library sequence into `<projectDir>/actors/<characterId>/sequence/` and returns the
- * splat-sequence asset for it (sequenceDir project-root relative, nativeHeight from sequence.json).
+ * splat-sequence asset for it (sequenceDir project-root relative, nativeHeight from sequence.json),
+ * standing at the character's `heightMeters` (the library avatar is the same body at any height).
  */
-export async function copyLibraryActor(found: LibraryActor, projectDir: string): Promise<ActorAsset> {
+export async function copyLibraryActor(
+  found: LibraryActor,
+  projectDir: string,
+  heightMeters = HEIGHT_METERS,
+): Promise<ActorAsset> {
   const dest = join(projectDir, 'actors', found.characterId, 'sequence');
   await mkdir(dest, { recursive: true });
   for (const e of await readdir(found.sequenceDir, { withFileTypes: true })) {
@@ -73,7 +78,7 @@ export async function copyLibraryActor(found: LibraryActor, projectDir: string):
     sequenceDir: relative(projectDir, dest).split(sep).join('/'),
     fps: found.sequence.fps,
     nativeHeight: Math.round(found.sequence.nativeHeight! * 1e4) / 1e4,
-    heightMeters: HEIGHT_METERS,
+    heightMeters,
     ...(high ? { detail: 'high' as const } : {}),
   };
 }

@@ -4,8 +4,23 @@
 // a look target (the speaker / scene partner, see viewer/gaze.ts), talk = head bob + jaw opening
 // driven by the voice's amplitude (AnalyserNode), walk = in-place leg/arm swing, sitting = hips
 // lowered with thighs forward. Everything is slow and eased: alive, never jittery.
-// ~20 low-poly meshes: phone-light.
+// ~20 low-poly meshes: phone-light. A character of another height scales `root` uniformly
+// (actors/index.ts mannequinBody), so every proportion and pose below stays in 1.7 m units.
 import * as THREE from 'three';
+
+/** The mannequin's nominal standing height (m): the default for a character without one. */
+export const MANNEQUIN_HEIGHT_M = 1.7;
+
+/**
+ * Head top of a freshly built mannequin (rest pose), m: about 1.73, since the head sphere ends a
+ * little above the nominal 1.7. Scale the root by height / this so the character's height is the
+ * top of the head, exactly.
+ */
+export function restHeight(root: THREE.Object3D): number {
+  root.updateMatrixWorld(true);
+  const top = new THREE.Box3().setFromObject(root).max.y;
+  return top > 0 ? top : MANNEQUIN_HEIGHT_M;
+}
 
 export type Pose = 'standing' | 'sitting' | 'walking';
 
