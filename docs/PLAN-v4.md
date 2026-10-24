@@ -79,6 +79,11 @@ view where it stands; Add shot from here is the laptop's Add shot at the phone's
 grabbed). Hold play = next line; a sideways swipe on the label steps through the shots. Evidence:
 `docs/images/phone-minimal-before-after.png`, `phone-camera-popover.png`, `phone-add-shot.png`.
 
+## Dynamic scenes (2026-10-25)
+
+Every moving thing in the action lines is background action in any genre: an animal or monster is a `creature` whose label names the species, aircraft are `airplane` / `helicopter`, each with a label-driven body (`web/src/viewer/props-more.ts`) and standard paths near the actors (`server/pipeline/dynamics.ts`), and the chat's free `dynamics` patch ("add a dinosaur walking by in scene 1", "remove the dinosaur") rewrites the manifest and swaps the open scene's props live.
+**Result (D1).** `tests/e2e/dynamics.spec.ts` (MOCK); evidence `docs/images/dynamics-dinosaur-airplane.png`, `dynamics-chat.png` and three new rows in `genre-props.png`.
+
 ## Props by import or by prompt (2026-10-25)
 
 Besides the procedural kinds, a director can put their own object in the scene: **Import a 3D model**
