@@ -6,6 +6,7 @@ import { installDebugHook } from './debug';
 import { Director } from './director';
 import { byId } from './dom';
 import { mountHud } from './hud';
+import { mountLookPanel } from './look-panel';
 import { mountProjectsPanel } from './projects-panel';
 import { mountPhoneSection, mountScenePanel } from './scene-panel';
 
@@ -23,6 +24,7 @@ fit();
 mountHud(director);
 mountScenePanel(director);
 mountPhoneSection(director);
+mountLookPanel(director);
 mountProjectsPanel(director);
 installDebugHook(director);
 director.start();
