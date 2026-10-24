@@ -37,6 +37,8 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   // (this project's rows: specs that run earlier, e.g. chat.spec, leave projects in the list)
   await expect(page.locator(`[data-testid=project][data-id="${s.projectId}"] [data-testid=scene-row]`)).toHaveCount(3);
   await expect(page.locator('#hud-title')).toHaveText('EXT. CITY STREET - NIGHT');
+  // where the cast and the background props stand at the top of the scene (Reset returns there)
+  const opened = { actors: s.actors.map((a) => [a.id, a.position] as const), dynamics: s.dynamics.map((d) => d.position) };
 
   // the default start camera opens on the Wide master: both actors head to toe in the viewport
   const atStart = await framing(page);
@@ -104,6 +106,21 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   // The analyser level (what drives the mannequin jaw) is reported, not asserted: headless
   // Chromium's audio thread is starved under SwiftShader load and sometimes renders silence.
   test.info().annotations.push({ type: 'voice peak level', description: voice.peak.toFixed(3) });
+
+  // Reset (top bar, left of Play) in the middle of a line: the clock paused at 0:00, nobody
+  // speaking, everyone on the mark they opened on, the background props at their path start
+  await page.getByTestId('line').first().click();
+  await expect(page.getByTestId('caption')).toBeVisible();
+  await page.getByTestId('top-reset').click();
+  await expect(page.getByTestId('toast')).toHaveText('Scene reset');
+  await expect(page.getByTestId('caption')).toBeHidden();
+  const reset = await laptopState(page);
+  expect([reset.time, reset.playing, reset.speakingLineId]).toEqual([0, false, null]);
+  expect(reset.voice.playing).toEqual([]);
+  const far = (a: readonly number[], b: readonly number[]) => Math.max(...a.map((v, i) => Math.abs(v - b[i]!)));
+  expect(reset.actors.map((a) => a.id)).toEqual(opened.actors.map(([id]) => id));
+  reset.actors.forEach((a, i) => expect(far(a.position, opened.actors[i]![1])).toBeLessThan(1e-4));
+  reset.dynamics.forEach((d, i) => expect(far(d.position, opened.dynamics[i]!)).toBeLessThan(1e-4));
 
   // a close-up flies to the actor's face (eyes mid-frame) and puts the phone on it; Duplicate
   // keeps a copy of it as the director's own shot

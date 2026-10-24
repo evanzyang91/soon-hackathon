@@ -38,6 +38,8 @@ export type Change =
   | 'loading'
   | 'cameras'
   | 'clock'
+  /** resetScene() ran: the scene is back at its top (the Shots panel lets its shot go). */
+  | 'reset'
   | 'phone'
   | 'lines'
   | 'view'
@@ -503,6 +505,30 @@ export class Director {
   resetClock() {
     this.runtime?.setTime(0);
     this.emit('clock');
+    this.broadcast(true);
+  }
+
+  /**
+   * Back to the top of the scene (the top bar's Reset, key 0, Camera › Back to 0:00). A take being
+   * recorded stops first and is kept. The clock pauses at 0:00; the line being spoken, "Play
+   * scene", the caption and the speech bubbles stop. Walk-ins and the background props follow the
+   * clock, so they are back where they start, and every actor stands on its current mark (the
+   * blocking plus the director's moves, which stay) in its idle. The view flies to the scene's
+   * start view (the Wide master when nobody chose a start camera) and lets the selected shot go;
+   * the phone stays on its shot and follows the clock. Look, shots, edits and takes are untouched.
+   */
+  resetScene() {
+    const rt = this.runtime;
+    if (!rt) return;
+    if (this.recorder.recording) void this.stopRecording();
+    this.stopLines();
+    rt.playing = false;
+    rt.setTime(0);
+    const sc = rt.manifest.startCamera;
+    this.flyTo((isDefaultStart(sc) ? this.suggestedShots()[0] : undefined) ?? sc);
+    if (this.selection?.type === 'camera') this.select(null);
+    this.emit('clock');
+    this.emit('reset');
     this.broadcast(true);
   }
 
