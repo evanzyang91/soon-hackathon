@@ -121,7 +121,7 @@ interface LensSpec {
 const toLog = (v: number, lo: number, hi: number) => Math.log(v / lo) / Math.log(hi / lo);
 const fromLog = (t: number, lo: number, hi: number) => lo * (hi / lo) ** t;
 const FOCUS: LensSpec = logSpec('dof.focusDistance', 'Focus', FOCUS_MIN_M, FOCUS_MAX_M, (d) => d.focusDistance, (d, v) => ({ ...d, focusDistance: clampFocus(v) }), (v) => (v < 10 ? `${v.toFixed(2)} m` : `${v.toFixed(0)} m`));
-const FSTOP: LensSpec = logSpec('dof.fStop', 'Aperture', 0.95, 22, (d) => d.fStop, (d, v) => ({ ...d, fStop: Math.round(v * 10) / 10 }), (v) => `f/${v < 10 ? v.toFixed(1) : v.toFixed(0)}`);
+const FSTOP: LensSpec = logSpec('dof.fStop', 'Aperture', 0.95, 22, (d) => d.fStop, (d, v) => ({ ...d, fStop: Math.min(22, Math.max(0.95, v)) }), (v) => `f/${v < 10 ? v.toFixed(1) : v.toFixed(0)}`);
 
 // light sliders (per light)
 interface LightSpec {
@@ -309,7 +309,7 @@ export function mountLookPanel(director: Director): LookPanel {
   }
 
   function lensSlider(spec: LensSpec): HTMLElement {
-    const input = h('input', { type: 'range', min: 0, max: 1, step: 0.001, 'data-testid': `look-${spec.key}` });
+    const input = h('input', { type: 'range', min: 0, max: 1, step: 0.005, 'data-testid': `look-${spec.key}` });
     const out = h('span', { class: 'look-val' });
     input.addEventListener('input', () => changeDof((d) => spec.set(d, fromLog(Number(input.value), spec.lo, spec.hi)), spec.key));
     input.addEventListener('change', () => session.seal());
@@ -508,6 +508,9 @@ export function mountLookPanel(director: Director): LookPanel {
       overrideBox.disabled = !active;
       overrideBox.checked = !!activeOverride();
       overrideLabel.textContent = active ? `Own lens for camera “${active.name}”` : 'Own lens per camera (drop one first)';
+      overrideLabel.title = activeOverride()
+        ? `Focus / aperture above are camera “${active?.name}”'s: the phone on it (and the PiP) use them; the director view keeps the scene lens`
+        : 'Give the active camera its own depth of field; the phone attached to it adopts it';
     });
 
     body.append(
