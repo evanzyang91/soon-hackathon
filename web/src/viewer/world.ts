@@ -9,6 +9,7 @@ import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
+import { gazeTargets } from './gaze';
 import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
 import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
@@ -153,6 +154,8 @@ class LoadedScene implements SceneRuntime {
   playing = false;
   speakingLineId: string | null = null;
   private placeholderGroup: THREE.Group | null = null;
+  /** dialogue line id → speaking character id */
+  private readonly lineSpeaker: Map<string, string>;
   private lineToken = 0;
   private readonly cancelWaits = new Set<() => void>();
   private disposed = false;
@@ -168,6 +171,7 @@ class LoadedScene implements SceneRuntime {
   ) {
     this.quality = quality;
     const { plan, world } = manifest;
+    this.lineSpeaker = new Map(plan.dialogue.map((l) => [l.id, l.characterId]));
     this.scene.name = `scene:${plan.slug}`;
     this.scene.background = new THREE.Color(SKY[plan.timeOfDay]);
     this.spark = createSpark(renderer, sparkOptions);
@@ -222,7 +226,24 @@ class LoadedScene implements SceneRuntime {
     if (this.disposed) return;
     if (this.playing) this.time += dt;
     this.dynamics.update(this.time);
+    this.aimHeads();
     for (const a of this.actors.values()) a.update(dt, this.time);
+  }
+
+  /** Heads turn toward whoever speaks, else toward the nearest partner (viewer/gaze.ts). */
+  private aimHeads() {
+    if (this.actors.size < 2) return;
+    const speaker = this.speakingLineId ? (this.lineSpeaker.get(this.speakingLineId) ?? null) : null;
+    const cast = [...this.actors.values()].map((a) => ({
+      id: a.characterId,
+      x: a.object.position.x,
+      z: a.object.position.z,
+    }));
+    const targets = gazeTargets(cast, speaker);
+    for (const a of this.actors.values()) {
+      const t = targets.get(a.characterId);
+      a.lookAt?.(t ? (this.actors.get(t)?.object.position ?? null) : null);
+    }
   }
 
   setTime(t: number) {
