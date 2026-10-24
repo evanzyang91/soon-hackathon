@@ -14,7 +14,11 @@
 // WS     /ws                         shared/protocol.ts
 //
 // GET    /api/projects/:id/scenes/:n/edits            → SceneEdits (shared/look.ts); 200 with defaults when absent
-// PUT    /api/projects/:id/scenes/:n/edits            body SceneEdits (revision must match current, else 409) → SceneEdits
+// PUT    /api/projects/:id/scenes/:n/edits            body SceneEdits (revision must match current, else 409 with
+//                                                     { error, current: SceneEdits } so the client can merge) → SceneEdits
+//        SceneState.look rules: the laptop sends the FULL live look while it has unsaved changes or an active
+//        per-camera lens override, at ≤ 10 Hz; the phone keeps the last live look until it has fetched the
+//        announced `editsRevision`, then the file is the truth.
 // POST   /api/projects/:id/scenes/:n/reprompt         body { prompt: string, selection?: { point?: Vec3, region?: {center, size, shape} },
 //                                                     view?: { image: string (jpeg base64 ≤ 300 KB), position, quaternion, fovDeg, aspect } }
 //                                                     → { plan: EditPlan, edits: SceneEdits }  (cheap scopes are applied and saved;

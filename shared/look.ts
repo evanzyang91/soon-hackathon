@@ -51,7 +51,7 @@ export const Look = z.object({
     })
     .prefault({}),
   lights: z.array(Light).default([]),
-  /** 0 = scene lighting untouched; 1 = only the Look's lights brighten the splats. */
+  /** 1 = the scene's baked lighting untouched; 0 = only the Look's lights brighten the splats. */
   ambient: unit.default(1),
 });
 export type Look = z.infer<typeof Look>;

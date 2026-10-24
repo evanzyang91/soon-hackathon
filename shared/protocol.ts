@@ -10,6 +10,15 @@ export const DropCamera = z.object({
   position: Vec3,
   quaternion: Quat,
   fovDeg: z.number(),
+  /** Optional per-camera lens override (merged over the scene Look while this camera is active). */
+  lens: z
+    .object({
+      fovDeg: z.number().min(10).max(120).optional(),
+      dof: z
+        .object({ enabled: z.boolean(), focusDistance: z.number().positive(), fStop: z.number().min(0.95).max(22) })
+        .optional(),
+    })
+    .optional(),
 });
 export type DropCamera = z.infer<typeof DropCamera>;
 
