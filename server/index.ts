@@ -7,7 +7,7 @@ import { extname, join, normalize } from 'node:path';
 import { env, keyPresence } from './env.ts';
 import { loadOrCreateCerts, lanAddresses } from './https.ts';
 import { attachRelay, newRoom } from './relay.ts';
-import { handlePipelineRequest } from './pipeline/routes.ts';
+import { handlePipelineRequest, resumePipelines } from './pipeline/routes.ts';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -93,6 +93,8 @@ async function main() {
   });
 
   attachRelay(server, { viteHmr: vite?.ws });
+  // Pick up projects whose pipeline was interrupted by a previous process exit.
+  Promise.resolve(resumePipelines()).catch((e) => console.error('resume failed', e));
   server.listen(env.port, '0.0.0.0', () => {
     console.log(`\nPreviz Stage ${env.mock ? '(MOCK)' : ''}`);
     console.log(`  laptop: https://localhost:${env.port}/`);
