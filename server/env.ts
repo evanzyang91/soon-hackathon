@@ -1,4 +1,8 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+
+// .env.local wins over .env (dotenv never overrides a variable that is already set).
+config({ path: '.env.local', quiet: true });
+config({ path: '.env', quiet: true });
 
 const flag = (v: string | undefined) => v === '1' || v === 'true';
 
