@@ -1,0 +1,412 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3EE2DE0A69ABD4B266CCA4A3 /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAAA6EAC1944C20BDEF5FF4 /* JoinView.swift */; };
+		5465A1CEBE92FD0AA079A543 /* WebStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15B4F56BDD20FDE2F0116CAB /* WebStage.swift */; };
+		5A795B91B3662413BE91959E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6C9A5E7DF04674F5757937EC /* Assets.xcassets */; };
+		63127F670DA94189E44855AB /* PrevizCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A273A0E39A6E7CD84D7C7E5 /* PrevizCameraApp.swift */; };
+		645361F61930328199812C7E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CEAC06064CC7634F7BD14F /* AppModel.swift */; };
+		65356F25AAFAFCC6F1037978 /* DevTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = A186DB6587E139FA3F57B9A3 /* DevTrust.swift */; };
+		873E24A768328E0FF41D7DB0 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE9F61755F35A67D7F73DBC9 /* QRScanner.swift */; };
+		BF9132109B8AD943F431143A /* PrevizCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2291206424D821F6CB3ADA0E /* PrevizCore */; };
+		D03968D42F66AFA6E05741B9 /* StageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772D69DE0B7A35A55B73CED8 /* StageView.swift */; };
+		E651F6CF5AC780F59A76D583 /* RelayConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EDC4F8D910C6242F6FBEF30 /* RelayConnection.swift */; };
+		EB2430CDF2CD6689078A2030 /* ARTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D13F81559A61DB8979362DAC /* ARTracker.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		15B4F56BDD20FDE2F0116CAB /* WebStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebStage.swift; sourceTree = "<group>"; };
+		1EDC4F8D910C6242F6FBEF30 /* RelayConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayConnection.swift; sourceTree = "<group>"; };
+		5097D28F9BF409E3995C7243 /* PrevizCamera.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PrevizCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6A273A0E39A6E7CD84D7C7E5 /* PrevizCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrevizCameraApp.swift; sourceTree = "<group>"; };
+		6BAAA6EAC1944C20BDEF5FF4 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		6C9A5E7DF04674F5757937EC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		772D69DE0B7A35A55B73CED8 /* StageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageView.swift; sourceTree = "<group>"; };
+		961FCCBABD0B5FEB3832AE2E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A186DB6587E139FA3F57B9A3 /* DevTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevTrust.swift; sourceTree = "<group>"; };
+		A6CEAC06064CC7634F7BD14F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		AE9F61755F35A67D7F73DBC9 /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
+		D13F81559A61DB8979362DAC /* ARTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARTracker.swift; sourceTree = "<group>"; };
+		DEE80196481FA7C12AB27544 /* PrevizCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PrevizCore; path = PrevizCore; sourceTree = SOURCE_ROOT; };
+		E2FF1F5305E8DA8BBD1D142B /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		92D4B6B9AF47B4970506B769 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF9132109B8AD943F431143A /* PrevizCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		14EF8EAABCB2A194D550B30F /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				E2FF1F5305E8DA8BBD1D142B /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		39124F1A100D1F4F359B2723 /* PrevizCamera */ = {
+			isa = PBXGroup;
+			children = (
+				6C9A5E7DF04674F5757937EC /* Assets.xcassets */,
+				961FCCBABD0B5FEB3832AE2E /* Info.plist */,
+				80439D08324200EF0FEC64CB /* Sources */,
+			);
+			path = PrevizCamera;
+			sourceTree = "<group>";
+		};
+		6A8BA54CFC3974B2F60B70EC /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				DEE80196481FA7C12AB27544 /* PrevizCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		80439D08324200EF0FEC64CB /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A6CEAC06064CC7634F7BD14F /* AppModel.swift */,
+				D13F81559A61DB8979362DAC /* ARTracker.swift */,
+				A186DB6587E139FA3F57B9A3 /* DevTrust.swift */,
+				6BAAA6EAC1944C20BDEF5FF4 /* JoinView.swift */,
+				6A273A0E39A6E7CD84D7C7E5 /* PrevizCameraApp.swift */,
+				AE9F61755F35A67D7F73DBC9 /* QRScanner.swift */,
+				1EDC4F8D910C6242F6FBEF30 /* RelayConnection.swift */,
+				772D69DE0B7A35A55B73CED8 /* StageView.swift */,
+				15B4F56BDD20FDE2F0116CAB /* WebStage.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		9A09A2F75058B1E577FC6ECC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5097D28F9BF409E3995C7243 /* PrevizCamera.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DEF37E589F2B5110ED324EE8 = {
+			isa = PBXGroup;
+			children = (
+				14EF8EAABCB2A194D550B30F /* Config */,
+				6A8BA54CFC3974B2F60B70EC /* Packages */,
+				39124F1A100D1F4F359B2723 /* PrevizCamera */,
+				9A09A2F75058B1E577FC6ECC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		78BCD6C17BBD98D3C8E9FB28 /* PrevizCamera */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 29A4A067299736400E7EA336 /* Build configuration list for PBXNativeTarget "PrevizCamera" */;
+			buildPhases = (
+				021FF58C406F8CC0FD25DC48 /* Sources */,
+				57A795F3F342A0E6EE987683 /* Resources */,
+				92D4B6B9AF47B4970506B769 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PrevizCamera;
+			packageProductDependencies = (
+				2291206424D821F6CB3ADA0E /* PrevizCore */,
+			);
+			productName = PrevizCamera;
+			productReference = 5097D28F9BF409E3995C7243 /* PrevizCamera.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6FCBEAD69BCF153662640E63 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					78BCD6C17BBD98D3C8E9FB28 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 4A51F93EF4316BAA11F6AC4D /* Build configuration list for PBXProject "PrevizCamera" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = DEF37E589F2B5110ED324EE8;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				E42E424215A22826C6B013D6 /* XCLocalSwiftPackageReference "PrevizCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9A09A2F75058B1E577FC6ECC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				78BCD6C17BBD98D3C8E9FB28 /* PrevizCamera */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		57A795F3F342A0E6EE987683 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A795B91B3662413BE91959E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		021FF58C406F8CC0FD25DC48 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EB2430CDF2CD6689078A2030 /* ARTracker.swift in Sources */,
+				645361F61930328199812C7E /* AppModel.swift in Sources */,
+				65356F25AAFAFCC6F1037978 /* DevTrust.swift in Sources */,
+				3EE2DE0A69ABD4B266CCA4A3 /* JoinView.swift in Sources */,
+				63127F670DA94189E44855AB /* PrevizCameraApp.swift in Sources */,
+				873E24A768328E0FF41D7DB0 /* QRScanner.swift in Sources */,
+				E651F6CF5AC780F59A76D583 /* RelayConnection.swift in Sources */,
+				D03968D42F66AFA6E05741B9 /* StageView.swift in Sources */,
+				5465A1CEBE92FD0AA079A543 /* WebStage.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		8392D71FCF54D05539DFFBD0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2FF1F5305E8DA8BBD1D142B /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PrevizCamera/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		954AB1644980F77C6F3A57B9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AD4789D2F0A169F16D3F9397 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B6306D29F2FB2624BEC8846A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2FF1F5305E8DA8BBD1D142B /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PrevizCamera/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		29A4A067299736400E7EA336 /* Build configuration list for PBXNativeTarget "PrevizCamera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B6306D29F2FB2624BEC8846A /* Debug */,
+				8392D71FCF54D05539DFFBD0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4A51F93EF4316BAA11F6AC4D /* Build configuration list for PBXProject "PrevizCamera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				954AB1644980F77C6F3A57B9 /* Debug */,
+				AD4789D2F0A169F16D3F9397 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E42E424215A22826C6B013D6 /* XCLocalSwiftPackageReference "PrevizCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = PrevizCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2291206424D821F6CB3ADA0E /* PrevizCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PrevizCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 6FCBEAD69BCF153662640E63 /* Project object */;
+}

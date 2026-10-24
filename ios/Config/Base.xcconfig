@@ -1,0 +1,11 @@
+// Signing and identity for PrevizCamera. project.yml leaves these out on purpose so that a
+// local, uncommitted override survives `xcodegen generate`.
+//
+// To build to your iPhone: copy Local.xcconfig.example to Local.xcconfig (gitignored) and set
+// your team ID and a bundle ID that is unique to you (personal teams cannot reuse IDs).
+
+PRODUCT_BUNDLE_IDENTIFIER = dev.previz.camera
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"
