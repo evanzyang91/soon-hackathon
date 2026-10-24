@@ -15,7 +15,7 @@ import {
   type ActorSequence,
   type GaussianPly,
   type LoopRange,
-} from './sequence';
+} from '@shared/actor-sequence';
 import { projectCandidates } from './common';
 
 type SplatAsset = Extract<ActorAsset, { kind: 'splat-sequence' }>;

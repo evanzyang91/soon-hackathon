@@ -23,8 +23,8 @@ import { fileURLToPath } from 'node:url';
 import type { ActorAsset, Character } from '../../shared/schema.ts';
 import { env } from '../env.ts';
 import { exists } from './fsutil.ts';
-import { measurePly, parseGaussianPly, validateSequence } from '../../web/src/viewer/actors/sequence.ts';
-import { tintFor } from '../../web/src/viewer/actors/tint.ts';
+import { measurePly, parseGaussianPly, validateSequence } from '../../shared/actor-sequence.ts';
+import { tintFor } from '../../shared/tint.ts';
 
 export interface BuildActorOptions {
   character: Character;

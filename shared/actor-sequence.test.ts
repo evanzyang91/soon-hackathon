@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { decodeMotionFrame, measurePly, parseGaussianPly, validateSequence, type MotionRecord } from './sequence';
+import { decodeMotionFrame, measurePly, parseGaussianPly, validateSequence, type MotionRecord } from './actor-sequence';
 
-const REPO = fileURLToPath(new URL('../../../../', import.meta.url));
+const REPO = fileURLToPath(new URL('../', import.meta.url));
 const hasNumpy = (() => {
   try {
     execFileSync('python3', ['-c', 'import numpy'], { stdio: 'ignore' });
