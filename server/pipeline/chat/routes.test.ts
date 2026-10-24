@@ -99,7 +99,9 @@ beforeAll(async () => {
     if (
       await handleChatRequest(req, res, parts, url, host, {
         planner: { mock: false, call },
-        waitMs: 50,
+        // the fake store's work finishes at once; the budget only has to cover the chat.json and
+        // log.txt writes that settle an action, which take longer under the full suite's load
+        waitMs: 2000,
       })
     )
       return;
@@ -270,7 +272,7 @@ describe('chat (fake Claude, generated project)', () => {
       await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen1.id })
     ).json()) as ChatResponse;
     expect(calls).toEqual(['amend', 'regenerate 1']);
-    // the fake world stage is already done: the watch settles at once
+    // the fake world stage is already done: the watch settles within the route's wait budget
     expect(confirmed.chat.messages.find((x) => x.id === m.id)!.actions![2]!.status).toBe('done');
     const declined = (await (
       await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen2.id, decline: true })
