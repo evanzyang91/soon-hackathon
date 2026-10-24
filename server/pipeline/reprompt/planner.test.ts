@@ -282,7 +282,9 @@ describe('real planner path (injected Claude call)', () => {
     expect(seen!.system).toMatch(/cheapest scope that satisfies the prompt/);
     expect(JSON.stringify(seen!.schema)).toMatch(/"regions"/);
     expect(r.source).toBe('claude');
-    expect(r.plan.needsTarget).toEqual([{ opId: 'region-c-1', label: 'bus shelter roof' }]);
+    expect(r.plan.needsTarget).toEqual([
+      { opId: 'region-c-1', label: 'bus shelter roof', box: { x: 0.1, y: 0.1, w: 0.4, h: 0.2 }, confidence: 0.9 },
+    ]);
     expect(located!.content[1]).toMatchObject({ type: 'text' });
     expect(JSON.stringify(located!.content[1])).toMatch(/640×360/);
     expect(r.targets).toEqual([{ opId: 'region-c-1', label: 'bus shelter roof', box: { x: 0.1, y: 0.1, w: 0.4, h: 0.2 }, confidence: 0.9 }]);
