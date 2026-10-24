@@ -124,6 +124,8 @@ const debug = {
   /** Phone camera position = anchor + offset + nudge (as rendered, when 3D is drawing). */
   cameraPosition: [0, 1.6, 0] as Vec3,
   recording: false,
+  /** The director's look as rendered here: name, edits.json revision, frames through the post pass. */
+  look: { name: 'Default', revision: -1, postFrames: 0 },
   permission: 'unknown' as string,
   start: () => start(),
   recenter: () => recenter(),
@@ -280,15 +282,22 @@ async function initView() {
   try {
     const { PhoneView } = await import('./view.ts');
     view = new PhoneView(ui.glCanvas, ui.vfCanvas, QUALITY, { voice: VOICE });
+    // the director's look: show its name briefly when it changes
+    view.look.onName = (name) => ui.toast(`Look: ${name}`, 1800);
     governor.onChange = (level, reason) => {
       debug.renderLevel = level;
       const lvl = LEVELS[level]!;
       console.info(`[phone] render level ${level} (${reason})`);
       view?.setPixelRatio(lvl.pixelRatio);
+      // the first step down drops the look's bloom (the rest of the grade is one cheap pass)
+      view?.setLookQuality({ bloom: level < 1 });
       if (!lvl.render3d)
         ui.toast('3D paused — this device renders too slowly. Pose streaming continues.', 4000);
     };
-    if (scene) void loadScene(scene.manifestUrl);
+    if (scene) {
+      view.applySceneState(scene);
+      void loadScene(scene.manifestUrl);
+    }
   } catch (err) {
     console.warn('[phone] 3D view unavailable', err);
     viewUnavailable = true;
@@ -408,6 +417,7 @@ function onScene(s: SceneState) {
     void loadScene(s.manifestUrl);
   }
   refreshAnchor();
+  view?.applySceneState(s);
   const cap = captionFor(manifest, s.speakingLineId);
   ui.setCaption(cap ? `${cap.speaker}: ${cap.text}` : '');
 }
@@ -568,6 +578,7 @@ function frame(now: number) {
     fpsAt = now;
     fpsFrames = debug.framesRendered;
     ui.setPerf(perfLabel(perfState()));
+    if (view) debug.look = { name: view.look.look.name, revision: view.look.revision, postFrames: view.postFrames };
   }
   if (view && now - lastVoiceCheck > 100) {
     lastVoiceCheck = now;

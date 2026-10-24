@@ -2,7 +2,10 @@
 // phone's pose, falling back to the 2D viewfinder whenever 3D is unavailable. Never throws into the
 // caller — pose streaming must keep running whatever happens here.
 import * as THREE from 'three';
+import { defaultLook, Look } from '@shared/look';
+import type { SceneState } from '@shared/protocol';
 import type { Quat, Vec3 } from '@shared/schema';
+import { fetchEdits } from '../viewer/look/edits-client.ts';
 import { ViewportRenderer } from '../viewer/render.ts';
 import type { SparkOptions } from '../viewer/spark.ts';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world.ts';
@@ -59,6 +62,97 @@ export interface VoiceState {
   level: number;
 }
 
+/**
+ * The director's look on the phone: edits.json (re-fetched whenever SceneState.editsRevision moves)
+ * with the live look from SceneState on top while the laptop has unsaved changes. The live look
+ * is kept until the file has caught up with the announced revision, so a save never flickers
+ * back to the previous grade.
+ */
+export class PhoneLook {
+  private key = '';
+  private fileLook: Look | null = null;
+  private fetched = -1;
+  private wanted = 0;
+  private live: Look | null = null;
+  private inflight: Promise<void> | null = null;
+  private applied = '';
+  private lastName: string | null = null;
+  /** The look's name changed (the HUD shows it briefly). */
+  onName?: (name: string) => void;
+
+  constructor(
+    private readonly runtime: () => SceneRuntime | null,
+    private readonly load: typeof fetchEdits = fetchEdits,
+  ) {}
+
+  /** What the phone renders now (defaults until anything arrives). */
+  get look(): Look {
+    return this.live ?? this.fileLook ?? defaultLook();
+  }
+
+  get revision(): number {
+    return this.fetched;
+  }
+
+  update(s: SceneState): void {
+    const key = `${s.projectId}/${s.sceneIndex}`;
+    if (key !== this.key) {
+      this.key = key;
+      this.fileLook = null;
+      this.fetched = -1;
+      this.live = null;
+    }
+    this.wanted = s.editsRevision ?? 0;
+    if (s.look) {
+      const parsed = Look.safeParse(s.look);
+      if (parsed.success) this.live = parsed.data;
+    } else if (this.fetched >= this.wanted) this.live = null;
+    if (this.fetched < this.wanted || this.fetched < 0) this.refetch(s.projectId, s.sceneIndex, key);
+    this.apply();
+  }
+
+  private refetch(projectId: string, sceneIndex: number, key: string): void {
+    if (this.inflight) return;
+    this.inflight = this.load(projectId, sceneIndex)
+      .then((doc) => {
+        if (key !== this.key) return;
+        this.fileLook = doc.look;
+        this.fetched = doc.revision;
+        if (this.fetched >= this.wanted) this.live = null;
+        const rt = this.runtime();
+        if (rt) rt.edits = doc;
+        this.apply();
+      })
+      .catch((err) => {
+        // no edits for this scene (ad-hoc manifest): the live look still applies
+        console.warn('[phone] edits fetch failed', err);
+        if (key === this.key) this.fetched = Math.max(this.fetched, 0);
+      })
+      .finally(() => {
+        this.inflight = null;
+        // the laptop announced a newer revision while this fetch was in flight
+        if (key === this.key && this.fetched >= 0 && this.fetched < this.wanted)
+          setTimeout(() => this.refetch(projectId, sceneIndex, key), 250);
+      });
+  }
+
+  /** Applies the current look to the loaded scene (call again after a scene load). */
+  apply(force = false): void {
+    const look = this.look;
+    const rt = this.runtime();
+    const json = JSON.stringify(look);
+    if (rt && (force || json !== this.applied)) {
+      this.applied = json;
+      rt.setLook(look);
+    }
+    if (look.name !== this.lastName) {
+      const first = this.lastName === null;
+      this.lastName = look.name;
+      if (!first || look.name !== 'Default') this.onName?.(look.name);
+    }
+  }
+}
+
 /** Mobile-friendly Spark settings (WP A defaults are tuned for the laptop), applied at load. */
 export const MOBILE_SPARK: SparkOptions = {
   maxStdDev: 2, // √4: the low end of Spark's acceptable range
@@ -90,6 +184,9 @@ export class PhoneView {
   /** One listener for every scene, riding on the phone camera so voices are positional. */
   private listener: THREE.AudioListener | null = null;
   private stopLinesAt: number | null = null;
+  /** The director's grade / lens / lights (edits.json + the live look). */
+  readonly look = new PhoneLook(() => this.runtime);
+  private lookQuality = { bloom: true };
 
   constructor(
     private readonly glCanvas: HTMLCanvasElement,
@@ -100,7 +197,11 @@ export class PhoneView {
     this.vf = vfCanvas.getContext('2d');
     try {
       // Same renderer setup as the laptop (no MSAA, sRGB); pixel ratio capped at 1.5 for phones.
-      this.viewport = new ViewportRenderer(glCanvas, { maxPixelRatio: 1.5 });
+      // The look's bloom runs at half resolution with one blur iteration (mobile GPUs).
+      this.viewport = new ViewportRenderer(glCanvas, {
+        maxPixelRatio: 1.5,
+        post: { bloomScale: 0.5, bloomIterations: 1 },
+      });
       glCanvas.addEventListener('webglcontextlost', (e) => {
         e.preventDefault();
         this.fail('WebGL context lost');
@@ -159,6 +260,8 @@ export class PhoneView {
       this.viewport.setScene(rt.scene);
       this.runtime?.dispose();
       this.runtime = rt;
+      rt.look.quality = { ...this.lookQuality };
+      this.look.apply(true);
       this.lastSpeaking = null;
       this.stopLinesAt = null;
       this.mode = 'webgl';
@@ -228,6 +331,26 @@ export class PhoneView {
   /** What is on screen right now. */
   get shown(): ViewMode {
     return this.shownMode;
+  }
+
+  /** SceneState from the laptop: the look (edits revision + live look) follows it. */
+  applySceneState(s: SceneState): void {
+    try {
+      this.look.update(s);
+    } catch (err) {
+      console.warn('[phone] look update failed', err);
+    }
+  }
+
+  /** Cheaper look when the device renders slowly (render-governor level ≥ 1 drops bloom). */
+  setLookQuality(q: { bloom: boolean }): void {
+    this.lookQuality = { ...q };
+    if (this.runtime) this.runtime.look.quality = { ...q };
+  }
+
+  /** Frames graded by the look's post pass (debug / e2e). */
+  get postFrames(): number {
+    return this.viewport?.postFrames.main ?? 0;
   }
 
   /** Render resolution multiplier (capped by devicePixelRatio). */
