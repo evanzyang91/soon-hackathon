@@ -1,0 +1,137 @@
+/* Edit tab (edit-panel.ts): scoped re-prompting */
+.edit-panel {
+  gap: 8px;
+}
+.edit-panel h2 .on {
+  background: #4a3a12;
+  border-color: var(--warn);
+}
+.edit-input {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.edit-prompt {
+  flex: 1;
+  resize: vertical;
+  min-height: 40px;
+}
+.edit-selrow {
+  gap: 4px;
+  align-items: center;
+}
+.edit-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.edit-summary {
+  line-height: 1.45;
+}
+.edit-question {
+  color: var(--accent-2);
+}
+.chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--line);
+  background: #222a35;
+  color: var(--text);
+  vertical-align: 1px;
+}
+.chip.scope-look {
+  background: #1f3550;
+  border-color: #2f5f93;
+}
+.chip.scope-transform {
+  background: #24402f;
+  border-color: #3a7a52;
+}
+.chip.scope-prop {
+  background: #3a2f4f;
+  border-color: #6a54a0;
+}
+.chip.scope-region {
+  background: #4a3a12;
+  border-color: var(--warn);
+}
+.chip.scope-regen {
+  background: #4f1f24;
+  border-color: var(--bad);
+}
+.chip.scope-clarify {
+  background: #333a44;
+}
+.edit-card {
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 8px;
+  background: #241f12;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edit-h3 {
+  display: flex;
+  align-items: center;
+  margin: 4px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.edit-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+.edit-entry {
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+}
+.edit-op {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.edit-banner {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(36, 31, 18, 0.92);
+  border: 1px solid var(--warn);
+  color: var(--accent-2);
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 5;
+}
+#stage.edit-target {
+  outline: 2px solid var(--warn);
+  outline-offset: -2px;
+}
+canvas.edit-picking {
+  cursor: crosshair;
+}
+.edit-rect,
+.edit-target-box {
+  position: absolute;
+  border: 1.5px dashed var(--accent-2);
+  background: rgba(255, 210, 63, 0.08);
+  pointer-events: none;
+  z-index: 4;
+}
+.edit-target-box {
+  border-style: solid;
+  border-color: #4fe0ff;
+  background: rgba(79, 224, 255, 0.06);
+}
