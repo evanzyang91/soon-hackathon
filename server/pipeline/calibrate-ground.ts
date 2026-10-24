@@ -179,9 +179,14 @@ function toFieldFrame(asset: WorldAsset, positions: Float32Array): void {
 //               one-cell step instead of being smeared over its neighbours.
 //   5. crop     the grid shrinks to the cells with ground (an interior's room, not 16 × 15 m).
 //
-// Holes stay null; shared/ground.ts's sampler bridges them from the nearest ground. The decode
-// prefers world_full.spz (1.9M splats, ~1 s): 4× the 500k tier's density gives far more columns
-// enough splats to decide (see docs/PLAN.md "Coordinate conventions").
+// Holes stay null; shared/ground.ts's sampler bridges them from the nearest ground.
+//
+// Tiers: the k500 SPZ is what the laptop and the phone draw by default, so it decides every
+// column it has the splats for (~70 % of the grid on the outdoor worlds). Marble's tiers are
+// optimised separately and the full tier's ground sits 0.5-1.1 cm lower outdoors, so world_full.spz
+// (1.9M splats, 4× as dense, ~0.3 s with decodeSpzPoints) only fills the columns k500 cannot
+// decide, shifted by the median k500 - full difference on the columns both decide: 90-93 %
+// coverage on the city street and the rooftop instead of 72 / 71 %.
 
 export const GROUND_FILE = 'ground.json';
 /** Bump when the rule changes: a stored field of another version is measured again. */
@@ -218,8 +223,13 @@ export interface FieldOptions {
   minLayer?: number;
   /** Blocking marks (xz, m at Marble's scale): the grid grows to include each ± 2 m. */
   marks?: readonly (readonly [number, number])[];
-  /** The source for `method`, e.g. "world_full.spz, 1.92M splats". */
+  /** The source for `method`, e.g. "world_500k.spz, 500k splats". */
   source?: string;
+  /**
+   * A denser tier of the same world (world_full.spz) for the columns the main points cannot
+   * decide, levelled to them by the median difference on the columns both decide.
+   */
+  fill?: FieldPoints & { source?: string };
 }
 
 export interface Layer {
@@ -289,10 +299,10 @@ export function fieldMethod(cell: number, minLayer: number, source?: string): st
 
 /**
  * The ground height field of splats in the frame shared/ground.ts documents (Y up, Marble's scale
- * and plane); null when no column holds ground.
+ * and plane); null when no column holds ground. With `o.fill`, the main points (the tier the
+ * viewer draws) decide every column they can and the fill tier the rest, levelled to them.
  */
 export function buildGroundField(pts: FieldPoints, o: FieldOptions = {}): GroundField | null {
-  const { positions, opacities, surfaceUp } = pts;
   const cell = o.cell ?? 0.25;
   const minLayer = o.minLayer ?? 8;
   let [x0, x1] = o.x ?? [-8, 8];
@@ -310,37 +320,55 @@ export function buildGroundField(pts: FieldPoints, o: FieldOptions = {}): Ground
   const cols = Math.max(1, Math.ceil((x1 - x0) / cell - 1e-9));
   const rows = Math.max(1, Math.ceil((z1 - z0) / cell - 1e-9));
   const N = cols * rows;
-  const cellOf = (i: number): number => {
-    if (opacities[i]! < OPACITY || (surfaceUp && surfaceUp[i]! < UP_MIN)) return -1;
-    const y = positions[3 * i + 1]!;
-    if (!(y >= FIELD_Y[0] && y < FIELD_Y[1])) return -1;
-    const ci = Math.floor((positions[3 * i]! - x0) / cell);
-    const ck = Math.floor((positions[3 * i + 2]! - z0) / cell);
-    return ci >= 0 && ck >= 0 && ci < cols && ck < rows ? ck * cols + ci : -1;
+  // 0-1: each column's candidate layers, lowest first
+  const columnLayers = ({ positions, opacities, surfaceUp }: FieldPoints): Layer[][] => {
+    const cellOf = (i: number): number => {
+      if (opacities[i]! < OPACITY || (surfaceUp && surfaceUp[i]! < UP_MIN)) return -1;
+      const y = positions[3 * i + 1]!;
+      if (!(y >= FIELD_Y[0] && y < FIELD_Y[1])) return -1;
+      const ci = Math.floor((positions[3 * i]! - x0) / cell);
+      const ck = Math.floor((positions[3 * i + 2]! - z0) / cell);
+      return ci >= 0 && ck >= 0 && ci < cols && ck < rows ? ck * cols + ci : -1;
+    };
+    // counting sort of the in-window heights by column
+    const start = new Uint32Array(N + 1);
+    for (let i = 0; i < opacities.length; i++) {
+      const c = cellOf(i);
+      if (c >= 0) start[c + 1]!++;
+    }
+    for (let c = 0; c < N; c++) start[c + 1]! += start[c]!;
+    const ys = new Float32Array(start[N]!);
+    const next = start.slice(0, N);
+    for (let i = 0; i < opacities.length; i++) {
+      const c = cellOf(i);
+      if (c >= 0) ys[next[c]!++] = positions[3 * i + 1]!;
+    }
+    return Array.from({ length: N }, (_, c) => groundLayers(ys.subarray(start[c]!, start[c + 1]!).sort(), minLayer));
   };
-  // counting sort of the in-window heights by column
-  const start = new Uint32Array(N + 1);
-  for (let i = 0; i < opacities.length; i++) {
-    const c = cellOf(i);
-    if (c >= 0) start[c + 1]!++;
+  const layers = columnLayers(pts);
+  let source = o.source;
+  if (o.fill) {
+    // tiers are separately optimised: their ground differs by ~1 cm (full lower outdoors), so the
+    // fill is shifted onto the main tier by the median difference where both decide
+    const extra = columnLayers(o.fill);
+    const diffs: number[] = [];
+    for (let c = 0; c < N; c++) {
+      const a = layers[c]![0];
+      const b = extra[c]![0];
+      if (a && b && Math.abs(a.y - b.y) < 0.1) diffs.push(a.y - b.y);
+    }
+    const shift = diffs.length >= 20 ? medianOf(diffs) : 0;
+    let filled = 0;
+    for (let c = 0; c < N; c++) {
+      if (layers[c]!.length || !extra[c]!.length) continue;
+      layers[c] = extra[c]!.map((l) => ({ y: l.y + shift, n: l.n }));
+      filled++;
+    }
+    source = `${o.source ?? 'main tier'}; ${filled} more columns from ${o.fill.source ?? 'the fill tier'}, ${shift >= 0 ? '+' : ''}${(shift * 100).toFixed(1)} cm to level them`;
   }
-  for (let c = 0; c < N; c++) start[c + 1]! += start[c]!;
-  const ys = new Float32Array(start[N]!);
-  const fill = start.slice(0, N);
-  for (let i = 0; i < opacities.length; i++) {
-    const c = cellOf(i);
-    if (c >= 0) ys[fill[c]!++] = positions[3 * i + 1]!;
-  }
-  // 1-2: candidates per column, the lowest picked
-  const layers: Layer[][] = [];
-  const pick: (number | null)[] = [];
-  const count: number[] = [];
-  for (let c = 0; c < N; c++) {
-    const l = groundLayers(ys.subarray(start[c]!, start[c + 1]!).sort(), minLayer);
-    layers.push(l);
-    pick.push(l[0]?.y ?? null);
-    count.push(l[0]?.n ?? 0);
-  }
+  // 2: the lowest candidate is the ground
+  const pick: (number | null)[] = layers.map((l) => l[0]?.y ?? null);
+  const count: number[] = layers.map((l) => l[0]?.n ?? 0);
   const around = (src: (number | null)[], c: number, r: number, self: boolean) => {
     const ci = c % cols;
     const ck = (c - ci) / cols;
@@ -410,7 +438,7 @@ export function buildGroundField(pts: FieldPoints, o: FieldOptions = {}): Ground
     rows: k1 - k0 + 1,
     heights: outH,
     counts: outN,
-    method: fieldMethod(cell, minLayer, o.source),
+    method: fieldMethod(cell, minLayer, source),
   });
 }
 
@@ -450,43 +478,45 @@ export function describeField(
   return L.join('\n');
 }
 
-/** Splat positions of a world dir in the field's frame; the full SPZ when there is one. */
-async function fieldPoints(
+/** Splat positions of one SPZ tier of a world dir in the field's frame (evidence scripts use it too). */
+export async function fieldPoints(
   worldDir: string,
   asset: WorldAsset,
-  tier: 'full' | 'k500' = asset.spz.full ? 'full' : 'k500',
+  tier: 'full' | 'k500' = 'k500',
 ): Promise<FieldPoints & { source: string }> {
   const name = asset.spz[tier] ?? asset.spz.k500;
-  let bytes: Uint8Array;
-  try {
-    bytes = new Uint8Array(await readFile(join(worldDir, name)));
-  } catch (e) {
-    if (name === asset.spz.k500) throw e;
-    return fieldPoints(worldDir, asset, 'k500'); // a copy without its full tier
-  }
-  const { positions, opacities, surfaceUp } = decodeSpzPoints(bytes);
+  const { positions, opacities, surfaceUp } = decodeSpzPoints(new Uint8Array(await readFile(join(worldDir, name))));
   toFieldFrame(asset, positions);
   const n = opacities.length;
   const size = n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}k`;
   return { positions, opacities, surfaceUp, source: `${name}, ${size} splats` };
 }
 
-export interface WorldFieldOptions extends Omit<FieldOptions, 'marks' | 'source'> {
+export interface WorldFieldOptions extends Omit<FieldOptions, 'marks' | 'source' | 'fill'> {
   /** Blocking marks in SCENE metres (the calibrated scale): divided by the factor here. */
   marks?: readonly (readonly [number, number])[];
+  /** One tier only (comparisons); default: k500 decides, full fills. */
   tier?: 'full' | 'k500';
 }
 
-/** The ground field of a world dir (its world-asset.json's SPZ); null when no column holds ground. */
+/**
+ * The ground field of a world dir; null when no column holds ground. The k500 tier (what the
+ * laptop and the phone draw by default) decides every column it can; world_full.spz, 4× as dense,
+ * fills the columns k500 has too few splats for (most of the far and side ground), levelled to it.
+ */
 export async function groundField(
   worldDir: string,
   asset: WorldAsset,
   o: WorldFieldOptions = {},
 ): Promise<GroundField | null> {
-  const { source, ...pts } = await fieldPoints(worldDir, asset, o.tier);
+  const { source, ...pts } = await fieldPoints(worldDir, asset, o.tier ?? 'k500');
+  const fill =
+    !o.tier && asset.spz.full && asset.spz.full !== asset.spz.k500
+      ? await fieldPoints(worldDir, asset, 'full').catch(() => undefined) // a copy without its full tier
+      : undefined;
   const f = calibrationFactor(asset);
   const marks = o.marks?.map(([x, z]) => [x / f, z / f] as const);
-  return buildGroundField(pts, { ...o, marks, source });
+  return buildGroundField(pts, { ...o, marks, source, fill });
 }
 
 /** The world dir's stored field when it exists and is of the current rule version, else null. */

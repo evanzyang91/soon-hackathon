@@ -112,4 +112,18 @@ describe('ground field', () => {
     expect(covered).toBe(cells - 8); // only the bench's 4 × 2 cells are holes
     expect(f.method).toMatch(/^previz ground v1: /);
   });
+
+  it('fills the columns the drawn tier cannot decide from a denser tier, levelled to it', () => {
+    const all = street();
+    // the "k500" tier lost the left metre; the "full" tier sits 1.2 cm lower everywhere
+    const keep = [...Array(all.opacities.length).keys()].filter((i) => all.positions[3 * i]! >= -1);
+    const pick = (a: Float32Array, n: number) => Float32Array.from(keep.flatMap((i) => [...a.subarray(n * i, n * i + n)]));
+    const main = { positions: pick(all.positions, 3), opacities: pick(all.opacities, 1), surfaceUp: pick(all.surfaceUp, 1) };
+    const fill = { ...all, positions: all.positions.map((v, j) => (j % 3 === 1 ? v - 0.012 : v)), source: 'full' };
+    const f = buildGroundField(main, { x: [-2, 2], z: [-4, 0], fill })!;
+    expect(f.origin[0]).toBe(-2);
+    expect(sampleGround(f, -1.625, -3.625, 0)).toBeCloseTo(-0.2, 2); // filled, back on the main tier's level
+    expect(sampleGround(f, 0.375, -3.625, 0)).toBeCloseTo(-0.2, 2);
+    expect(f.method).toMatch(/64 more columns from full, \+1\.2 cm to level them/);
+  });
 });
