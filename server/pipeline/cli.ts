@@ -24,6 +24,7 @@ import {
   formatReport,
   previousCalibration,
   readWorldAsset,
+  redecide,
   renderBeforeAfter,
   writeCalibration,
 } from './calibrate.ts';
@@ -131,7 +132,8 @@ async function main() {
         );
       const worldDir = resolve(dir);
       const asset = await readWorldAsset(worldDir);
-      let report = flags.reuse === true ? await previousCalibration(worldDir, asset.worldId) : null;
+      const prev = flags.reuse === true ? await previousCalibration(worldDir, asset.worldId) : null;
+      let report = prev && redecide(prev);
       if (flags.reuse === true && !report) log('no previous scale-calibration.json for this world; measuring');
       if (!report) {
         const vision = flags['no-vision'] !== true && env.calibrateVision;
