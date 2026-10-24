@@ -11,7 +11,7 @@ import { Euler, Quaternion } from 'three';
 import type { PhonePose, SceneState, ServerMessage } from '@shared/protocol';
 import { SceneManifest, type Quat, type Vec3 } from '@shared/schema';
 import { parseExternalPose, type ExternalPose } from './external.ts';
-import { clampFov, DEFAULT_FOV, focalLabel, pinchFov } from './fov.ts';
+import { clampFov, DEFAULT_FOV, pinchFov } from './fov.ts';
 import { Gestures } from './gestures.ts';
 import { KeyboardWalk, TouchStick } from './joystick.ts';
 import { HandheldNudge } from './nudge.ts';
@@ -19,17 +19,17 @@ import { RelayClient, relayUrl, type ConnState } from './relay-client.ts';
 import {
   anchorFor,
   captionFor,
-  clockLabel,
   DialogueActivity,
   SceneClockTracker,
+  shotEntries,
+  shotLabel,
   type Anchor,
 } from './scene-sync.ts';
 import { OrientationTracker, screenAngle, toQuat } from './sensors.ts';
 import { LEVELS, perfLabel, RenderGovernor, type PerfState } from './render-governor.ts';
 import { PoseThrottle, poseKey } from './throttle.ts';
 import { unlockAudio } from './audio.ts';
-import { bindUi } from './ui.ts';
-import { attitudeOf } from './viewfinder.ts';
+import { bindUi, type CamMenu, type LinkLevel } from './ui.ts';
 import { enterFullscreenLandscape, keepScreenOn, requestSensorPermission } from './platform.ts';
 import type { PhoneView } from './view.ts';
 import { cameraPosition, headingOf, NO_WALK, Walker, type WalkInput } from './walk.ts';
@@ -48,6 +48,12 @@ const QUALITY =
   (['k100', 'k500', 'full'] as const).find((q) => q === params.get('quality')) ?? 'k500';
 /** The joystick never takes the camera closer than this to the floor (y = 0). */
 const MIN_EYE_HEIGHT = 0.15;
+/** ?perf=1 shows the render rate + governor level (bottom right). */
+const PERF = params.get('perf') === '1';
+/** The drag / pinch hint shows once per browser (first start without motion sensors). */
+const HINT_KEY = 'previz:phone-hint';
+/** The start-up handshake (connecting → open → laptop) gets no toasts for this long. */
+const LINK_QUIET_MS = 4000;
 
 const ui = bindUi();
 const tracker = new OrientationTracker();
@@ -76,8 +82,11 @@ let lastPumpAt = performance.now();
 let gestures: Gestures | null = null;
 /** The 3D module failed to load: only the viewfinder can show. */
 let viewUnavailable = false;
-/** Manifest URL the "press Play" hint was last shown for. */
-let hintedScene: string | null = null;
+/** The connection dot's level, and whether a change of it is news yet (after the start-up). */
+let linkLevel: LinkLevel | null = null;
+let linkQuiet = true;
+/** "Add shot from here" was sent: the next new shot the laptop puts the phone on is it. */
+let addPending: { at: number; known: Set<string> } | null = null;
 let stick: TouchStick | null = null;
 let heightSlider: TouchStick | null = null;
 let keys: KeyboardWalk | null = null;
@@ -125,8 +134,10 @@ const debug = {
   actors: {} as Record<string, string | null>,
   yawOffset: 0,
   anchor,
-  /** The laptop is running the scene (clock + dialogue): the ACTION button shows CUT. */
+  /** The laptop is running the scene (clock + dialogue): the play button shows pause. */
   sceneRunning: false,
+  /** The HUD's label: "1B · Two-shot · 35 mm" or "Handheld · 35 mm". */
+  label: '',
   /** AudioContext state: 'none' until the start tap creates it, then suspended / running / … */
   audio: 'none' as AudioContextState | 'none' | 'interrupted',
   /** An actor's voice is playing on the phone right now. */
@@ -209,7 +220,11 @@ function start(): void {
   const permission = SIM ? Promise.resolve('not-needed' as const) : requestSensorPermission();
   if (!SIM) void enterFullscreenLandscape();
   void keepScreenOn();
-  ui.showHud(room);
+  ui.showHud();
+  setTimeout(() => {
+    linkQuiet = false;
+    if (linkLevel !== 'ok') ui.toast('Waiting for the laptop…', 2400);
+  }, LINK_QUIET_MS);
   history.replaceState(null, '', withParam('room', room));
 
   permission.then((p) => {
@@ -260,7 +275,7 @@ function start(): void {
     room,
     onState: (s) => {
       debug.conn = s;
-      ui.setConn(s);
+      updateLink();
     },
     onMessage,
   });
@@ -273,7 +288,7 @@ function start(): void {
   });
   stick.onDoubleTap = () => {
     resetWalk();
-    ui.toast(`Back at ${anchor.name}`);
+    ui.toast(anchor.key.startsWith('cam:') ? 'Back on the shot' : 'Back at the start');
   };
   heightSlider = new TouchStick(ui.height.zone, ui.height.zone, ui.height.knob, {
     radius: 56,
@@ -284,16 +299,27 @@ function start(): void {
 
   ui.onRecenter(() => {
     recenter();
-    ui.toast(`Recentered to ${anchor.name}`);
+    ui.toast('Recentered');
   });
   ui.onShutter(() => {
     relay?.send({ type: 'cmd', cmd: 'shutter' });
     ui.flash();
   });
   ui.onRecord(() => setRecording(!recording, true));
-  ui.onNextCamera(() => relay?.send({ type: 'cmd', cmd: 'next-camera' }));
-  ui.onAction(() => sendSceneCommand('play-scene'));
-  ui.onNextLine(() => sendSceneCommand('next-line'));
+  ui.onCam(() => (ui.camMenuOpen ? ui.closeCamMenu() : openCamMenu()));
+  ui.onPlay(
+    () => sendSceneCommand('play-scene'),
+    () => {
+      if (sendSceneCommand('next-line')) ui.toast('Next line');
+    },
+  );
+  ui.onLabelSwipe((dir) => {
+    const shots = shotEntries(scene);
+    if (!shots.length) return;
+    const i = shots.findIndex((s) => s.id === scene?.activeCameraId);
+    const next = i < 0 ? (dir > 0 ? 0 : shots.length - 1) : (i + dir + shots.length) % shots.length;
+    selectCamera(shots[next]!.id);
+  });
   boot();
 }
 
@@ -307,7 +333,7 @@ function startExternal(): void {
   debug.started = true;
   debug.room = initialRoom;
   document.body.dataset.pose = 'external'; // phone.html hides the page's own controls
-  ui.showHud(initialRoom);
+  ui.showHud();
   window.__previzPose = onExternalPose;
   window.__previzMessage = (msg) => {
     if (typeof msg?.type === 'string') onMessage(msg);
@@ -345,7 +371,7 @@ function onExternalPose(raw: unknown) {
   debug.offset = p.offset;
   if (p.fovDeg !== fovDeg) {
     fovDeg = p.fovDeg;
-    ui.setLens(focalLabel(fovDeg));
+    updateLabel();
   }
   setRecording(p.recording, false);
 }
@@ -369,7 +395,11 @@ function toNative(msg: { type: 'ready' } | { type: 'log'; message: string }) {
 function enableManualLook() {
   if (!gestures || gestures.lookEnabled) return;
   gestures.lookEnabled = true;
-  ui.setHint('Drag to look · pinch / wheel to zoom');
+  // once per browser: the frame stays clear after that
+  if (!storageFlag(HINT_KEY)) {
+    storageFlag(HINT_KEY, true);
+    ui.toast('Drag to look · pinch / wheel to zoom', 4000, { hold: true });
+  }
   // Start level, facing the anchor (the pending recenter applies on this first sample).
   if (!tracker.hasSample) tracker.setCameraQuaternion(new Quaternion());
 }
@@ -423,10 +453,7 @@ function listenSensors() {
     }
     debug.orientationEvents++;
     if (firstSensor && AUTO_RECENTER) tracker.recenter(anchor.yaw);
-    if (firstSensor && gestures?.lookEnabled && !SIM) {
-      gestures.lookEnabled = false;
-      ui.setHint('');
-    }
+    if (firstSensor && gestures?.lookEnabled && !SIM) gestures.lookEnabled = false;
   });
   window.addEventListener('devicemotion', (e: DeviceMotionEvent) => {
     const a = e.acceleration;
@@ -464,16 +491,74 @@ function walkInput(): WalkInput {
 
 function setFov(f: number) {
   fovDeg = clampFov(f);
-  ui.setLens(focalLabel(fovDeg));
+  updateLabel();
 }
 
-/** ACTION / CUT and Line ›: the laptop owns the scene clock and the dialogue. */
-function sendSceneCommand(cmd: 'play-scene' | 'next-line') {
-  if (!scene || !debug.peers.laptop) {
-    ui.toast('No scene yet — open one on the laptop');
+function updateLabel() {
+  debug.label = shotLabel(scene, fovDeg);
+  ui.setLabel(debug.label);
+}
+
+/** The connection dot: green = the laptop is there, amber = on the way / waiting, red = cut off. */
+function updateLink() {
+  const c = debug.conn;
+  const level: LinkLevel =
+    c === 'open' ? (debug.peers.laptop ? 'ok' : 'wait') : c === 'closed' ? 'bad' : 'wait';
+  const text =
+    level === 'ok'
+      ? 'Connected to the laptop'
+      : c === 'open'
+        ? 'Waiting for the laptop'
+        : c === 'closed'
+          ? 'Disconnected'
+          : c === 'reconnecting'
+            ? 'Reconnecting…'
+            : 'Connecting…';
+  ui.setLink(c, level, text);
+  // ?pose=external: the app shows its own link
+  if (level === linkLevel || EXTERNAL) return;
+  linkLevel = level;
+  // the start-up handshake is not news: the first green ends it
+  if (linkQuiet) {
+    if (level === 'ok') linkQuiet = false;
     return;
   }
-  relay?.send({ type: 'cmd', cmd });
+  ui.toast(text, level === 'ok' ? 1800 : 2400);
+}
+
+/** Play / stop, the next line, a shot: the laptop owns the clock, the dialogue and the list. */
+function laptopReady(): boolean {
+  if (scene && debug.peers.laptop && relay?.state === 'open') return true;
+  ui.toast('No scene yet — open one on the laptop');
+  return false;
+}
+
+function sendSceneCommand(cmd: 'play-scene' | 'next-line'): boolean {
+  if (!laptopReady()) return false;
+  return !!relay?.send({ type: 'cmd', cmd });
+}
+
+/** Attach to a shot (null: handheld); the laptop answers with the new SceneState. */
+function selectCamera(cameraId: string | null) {
+  if (!laptopReady()) return;
+  relay?.send({ type: 'cmd', cmd: 'select-camera', cameraId });
+}
+
+/** "Add shot from here": the laptop adds the phone's view as a shot and puts the phone on it. */
+function addShot() {
+  if (!laptopReady() || !scene) return;
+  addPending = { at: performance.now(), known: new Set(scene.cameras.map((c) => c.id)) };
+  relay?.send({ type: 'cmd', cmd: 'add-shot' });
+}
+
+/** The popover's rows: the scene's shots, the one the phone is on marked (null: handheld). */
+function camMenu(): CamMenu {
+  const on = anchor.key.startsWith('cam:') ? (scene?.activeCameraId ?? null) : null;
+  return { shots: shotEntries(scene), current: on };
+}
+
+function openCamMenu() {
+  ui.openCamMenu(camMenu(), { pick: selectCamera, add: addShot });
 }
 
 function setRecording(on: boolean, fromUser: boolean) {
@@ -491,7 +576,7 @@ function onMessage(msg: ServerMessage) {
   switch (msg.type) {
     case 'peers':
       debug.peers = { laptop: msg.laptop, phones: msg.phones };
-      ui.setPeers(msg.laptop);
+      updateLink();
       break;
     case 'scene':
       onScene(msg);
@@ -525,16 +610,34 @@ function onScene(s: SceneState) {
   view?.applySceneState(s);
   const cap = captionFor(manifest, s.speakingLineId);
   ui.setCaption(cap ? `${cap.speaker}: ${cap.text}` : '');
+  ui.updateCamMenu(camMenu());
+  // the shot "Add shot from here" made: the laptop put the phone on a shot it did not have
+  if (addPending && s.activeCameraId && !addPending.known.has(s.activeCameraId)) {
+    const shot = shotEntries(s).find((e) => e.id === s.activeCameraId);
+    if (shot) ui.toast(`Shot ${shot.number} added`);
+    addPending = null;
+  } else if (addPending && performance.now() - addPending.at > 5000) addPending = null;
 }
 
 function refreshAnchor() {
+  const prev = anchor;
   const next = anchorFor(scene, manifest);
-  const changed = next.key !== anchor.key;
+  const changed = next.key !== prev.key;
   anchor = next;
   debug.anchor = next;
-  ui.setCameraName(next.name);
+  updateLabel();
   // ?pose=external: the app's pose carries its own fov, offset and heading
   if (changed && !EXTERNAL) {
+    if (prev.key.startsWith('cam:') && next.key.startsWith('start:')) {
+      // off the shot, handheld: the view stays where it is (same spot, heading and lens), now
+      // walked from the scene's start camera
+      const o = walker.offset;
+      const p = prev.position;
+      const n = next.position;
+      walker.place([p[0] + o[0] - n[0], p[1] + o[1] - n[1], p[2] + o[2] - n[2]]);
+      debug.offset = walker.offset;
+      return;
+    }
     setFov(next.fovDeg);
     // walking is relative to the attached camera: a new camera starts where it stands
     resetWalk();
@@ -551,8 +654,6 @@ async function fetchManifest(url: string) {
     if (url !== manifestUrlLoaded) return;
     manifest = parsed.data;
     refreshAnchor();
-    // no 3D load to wait for: the scene is as loaded as it gets
-    if (NO_3D || viewUnavailable || (view && !view.canRender3d)) sceneReady(url);
     if (scene) {
       const cap = captionFor(manifest, scene.speakingLineId);
       ui.setCaption(cap ? `${cap.speaker}: ${cap.text}` : '');
@@ -566,14 +667,6 @@ async function fetchManifest(url: string) {
 async function loadScene(url: string) {
   if (!view) return;
   await view.load(url);
-  if (view.sceneRuntime?.manifestUrl === url || view.loadFailed || !view.canRender3d) sceneReady(url);
-}
-
-/** A newly loaded scene that is not playing gets a hint about who starts it. */
-function sceneReady(url: string) {
-  if (url !== manifestUrlLoaded || hintedScene === url) return;
-  hintedScene = url;
-  if (!clock.isPlaying) ui.toast('Laptop: press Play or tap ACTION to start the scene', 2000);
 }
 
 // -- loops -------------------------------------------------------------------------------------
@@ -675,19 +768,14 @@ function frame(now: number) {
   } else {
     ui.drawFallback(toQuat(q), fovDeg, off, NO_3D ? '3D disabled (?3d=0)' : 'loading 3D…');
   }
-  const a = attitudeOf(q);
-  ui.setAttitude(
-    `HDG ${a.headingDeg.toFixed(0).padStart(3, '0')}° TILT ${a.pitchDeg.toFixed(0)}° ROLL ${a.rollDeg.toFixed(0)}°`,
-  );
   if (recording) ui.setRecordTime((now - recordStartedAt) / 1000);
   debug.sceneRunning = dialogue.running(scene, now);
-  ui.setAction(debug.sceneRunning);
-  ui.setClock(scene ? clockLabel(clock.time(now), clock.isPlaying) : '', clock.isPlaying);
+  ui.setPlaying(debug.sceneRunning);
   if (now - fpsAt >= 1000) {
     debug.fps = Math.round(((debug.framesRendered - fpsFrames) * 10000) / (now - fpsAt)) / 10;
     fpsAt = now;
     fpsFrames = debug.framesRendered;
-    ui.setPerf(perfLabel(perfState()));
+    if (PERF) ui.setPerf(perfLabel(perfState()));
     if (EXTERNAL) mirrorNativeConn();
     if (view) debug.look = { name: view.look.look.name, revision: view.look.revision, postFrames: view.postFrames };
   }
@@ -701,16 +789,16 @@ function frame(now: number) {
     }
     if (debug.audioPlaying) debug.audioPeak = Math.max(debug.audioPeak, v.level);
   }
-  ui.setWalkReadout(walkReadout(walker.offset));
 }
 
-/** "1.2 m · ↑0.4 m" away from the attached camera; '' while standing on it. */
-function walkReadout(o: Vec3): string {
-  const flat = Math.hypot(o[0], o[2]);
-  const parts: string[] = [];
-  if (flat >= 0.05) parts.push(`↔ ${flat.toFixed(1)} m`);
-  if (Math.abs(o[1]) >= 0.05) parts.push(`${o[1] > 0 ? '↑' : '↓'} ${Math.abs(o[1]).toFixed(1)} m`);
-  return parts.length ? `${parts.join(' · ')} from ${anchor.name}` : '';
+/** A remembered yes / no in localStorage (private mode or blocked storage: never remembered). */
+function storageFlag(key: string, set?: boolean): boolean {
+  try {
+    if (set !== undefined) localStorage.setItem(key, set ? '1' : '0');
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return set ?? false;
+  }
 }
 
 function withParam(key: string, value: string) {

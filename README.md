@@ -560,6 +560,16 @@ edit](docs/images/reprompt-phone-parity.png), [the snow caveat](docs/images/repr
 4. The laptop now shows a pink phone frustum and a PHONE picture-in-picture. The phone is attached
    to the shot selected in the Shots mode (or the scene's start view); **Re-center** maps the phone's
    current heading onto that camera's heading.
+5. On the phone, the camera button (right edge, under Record) opens the scene's shot list: pick a
+   shot to go there (the laptop's Shots mode selects it too), **Handheld (free)** to leave the shot
+   where you stand, or **Add shot from here** to put what the phone sees on the laptop's shot list as
+   the next shot (frame grabbed, saved with the project) and stay on it.
+
+![The phone's HUD before and after: one label, a dot, the camera controls](docs/images/phone-minimal-before-after.png)
+
+| | |
+| --- | --- |
+| ![The camera popover: the scene's shots, Handheld, Add shot from here](docs/images/phone-camera-popover.png) | ![Add shot from here: shot 1F on the laptop's list and on the phone](docs/images/phone-add-shot.png) |
 
 ## ARKit camera (prototype)
 
@@ -604,19 +614,23 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | --- | --- |
 | move / turn the phone | frame the shot: pan, tilt, roll, plus handheld sway |
 | joystick (bottom left, left thumb) | walk forward / back / sideways along the camera's heading, up to 1.5 m/s |
-| double-tap the joystick | back to the attached camera |
+| double-tap the joystick | back to the attached shot |
 | height slider (right) | raise / lower the camera (±2 m) |
 | pinch (wheel in `?sim=1`) | lens |
-| **ACTION** / **CUT** | start the scene on the laptop (dialogue in order + clock) / stop it |
-| **Line ›** | the laptop plays the next dialogue line |
-| **Recenter** | the phone's heading → the attached camera's heading (keeps where you walked) |
-| **Shutter**, **Record**, **Cam ›** | laptop frame (PNG), laptop take, next shot in the shot list |
+| **camera button** (right edge, bottom) | the shot list as a popover: a shot (number, name, lens; yours marked), **Handheld (free)**, **Add shot from here** |
+| swipe the label sideways | next / previous shot |
+| **play** (top right) | play the scene on the laptop (dialogue in order + clock) / stop it; hold it for the next line |
+| recenter (crosshair, above the shutter) | the phone's heading → the attached shot's heading (keeps where you walked) |
+| **Shutter**, **Record** | laptop frame (PNG), laptop take |
 | `?sim=1`: drag, W A S D / arrows, Q / E | look, walk, height |
 
-The phone shows the shot's number and name (`1B · Two-shot`), lens and scene clock (▶ / ⏸), the line being spoken, how far
-you have walked, and its render rate (`48 fps · full`, `3D paused`). The actors speak on the
-phone as well (positional, from the phone camera); "Tap to start" unlocks audio on iOS, and
-`?voice=0` mutes the phone if the laptop's speakers are in the room. Details and debug hooks:
+The frame keeps one quiet label at the top, the shot's number, name and lens (`1B · Two-shot · 35
+mm`, or `Handheld · 35 mm` off a shot), with a dot for the link (green: the laptop is there; amber:
+connecting or waiting for it; red: cut off; a toast says when it changes), the red time badge
+while recording, and the line being spoken. The room code stays on the start screen, the drag /
+pinch hint shows once, and the render rate only with `?perf=1`. The actors speak on the phone as
+well (positional, from the phone camera); "Tap to start" unlocks audio on iOS, and `?voice=0`
+mutes the phone if the laptop's speakers are in the room. Details and debug hooks:
 `web/src/phone/README.md`.
 
 ## Real Marble generation
@@ -884,7 +898,8 @@ second browser context as the phone (`/phone.html?sim=1`, synthetic `deviceorien
 checks that manifests validate and every asset is served, the splat world renders with real
 colour, props move, a clicked line shows a caption and plays WebAudio, the phone's pose turns the
 laptop's frustum gizmo and feeds the PiP, the phone captions the line the laptop plays, recenter /
-shutter / next-camera cross the relay both ways, the phone renders WebGL on its own, the
+shutter cross the relay both ways, the phone's camera popover puts it on another shot and adds its
+view as a new shot on the laptop's list, the phone renders WebGL on its own, the
 certificate / health / room endpoints work, and the fantasy fixture comes out as a fantasy: its
 style, a look per scene, the forest and hall sets, a seeded edits.json, a dragon, and a laptop
 frame that opens graded (about 10 % mean difference from the same frame with a neutral look), and

@@ -52,8 +52,11 @@ export interface ShotsPanel {
   selected(): string | null;
   /** Flies to a shot, selects it and puts the phone on it (null: deselect). */
   select(id: string | null): void;
-  /** The current view as a new shot ("Shot 1F"), selected, with its frame grabbed (C). */
-  addShot(): Promise<Shot | null>;
+  /**
+   * The current view as a new shot ("Shot 1F"), selected, with its frame grabbed (C); `from`: a
+   * given camera instead (the phone's "Add shot from here"), optionally named.
+   */
+  addShot(from?: ShotFrom): Promise<Shot | null>;
   /** Grabs the frame of a shot (default the selected one) from the view at it (F). */
   grabFrame(id?: string): Promise<boolean>;
   /** Grabs a frame for every shot without one (the view visits each, then comes back). */
@@ -65,6 +68,16 @@ export interface ShotsPanel {
   guideAspect(): GuideAspect;
   setGuideAspect(a: GuideAspect): void;
   onChange(fn: () => void): () => void;
+}
+
+/** A camera to add as a shot instead of the view (the phone's view). */
+export interface ShotFrom {
+  position: Vec3;
+  quaternion: Quat;
+  fovDeg: number;
+  name?: string;
+  /** Who asked, for the toast ("Shot 1F added from the phone"). */
+  by?: string;
 }
 
 export interface ShotsPanelOptions {
@@ -464,19 +477,21 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
   }
 
   // ---- actions ------------------------------------------------------------------------------------
-  async function addShot(): Promise<Shot | null> {
+  async function addShot(from?: ShotFrom): Promise<Shot | null> {
     const rt = director.runtime;
     if (!rt || !client?.loaded) return null;
     const src = director.mainCamera();
     const { rect, height } = rectNow();
     const i = shots().length;
-    const position = round3(src.position.toArray()) as Vec3;
+    // the phone's view is a shot as it is (its lens is the shot's); the director's view opens
+    // wider than the shot for the guide's matte
+    const position = round3(from ? from.position : src.position.toArray()) as Vec3;
     const shot: Shot = {
       id: uid(),
-      name: `Shot ${num(i)}`,
+      name: from?.name?.trim().slice(0, 60) || `Shot ${num(i)}`,
       position,
-      quaternion: round3(src.quaternion.toArray()) as Quat,
-      fovDeg: clampFov(shotFovForView(src.fov, height, rect.height)),
+      quaternion: round3(from ? from.quaternion : src.quaternion.toArray()) as Quat,
+      fovDeg: clampFov(from ? from.fovDeg : shotFovForView(src.fov, height, rect.height)),
       heightM: heightAt(rt, position),
       lines: [],
       source: 'director',
@@ -484,8 +499,8 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
     edit((l) => [...l, shot]);
     opts.showMode();
     // from the director's view the camera is already there; from the phone's it flies there
-    select(shot.id, { fly: director.viewFromPhone ? 'jump' : 'stay' });
-    opts.toast(`Added shot ${num(i)}`);
+    select(shot.id, { fly: from || director.viewFromPhone ? 'jump' : 'stay' });
+    opts.toast(from?.by ? `Shot ${num(i)} added from ${from.by}` : `Added shot ${num(i)}`);
     await grabFrame(shot.id, 1);
     return find(shot.id);
   }
@@ -777,6 +792,16 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
     if (c === 'scene' || c === 'loading') void open(director.runtime);
     if (c === 'cameras') reconcile();
   });
+  // the phone's camera popover: picking a shot is clicking its row (the view flies there, unless
+  // the director is looking through the phone, which then follows it there); Handheld only lets
+  // the phone off its shot; Add shot from here is Add shot with the phone's view
+  director.phoneShots = {
+    select: (id) => {
+      if (!id || director.viewFromPhone || !find(id)) return director.setActiveCamera(id);
+      select(id);
+    },
+    add: (view, name) => void addShot({ ...view, name, by: 'the phone' }),
+  };
   render();
 
   const panel: ShotsPanel = {

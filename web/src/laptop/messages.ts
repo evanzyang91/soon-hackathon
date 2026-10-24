@@ -96,7 +96,7 @@ export function phoneAnchor(
 
 /**
  * The dialogue line after `lastId` in scene order, wrapping to the first (the first line when
- * nothing has played yet); null for a scene without dialogue. The phone's "Line ›" button.
+ * nothing has played yet); null for a scene without dialogue. The phone's hold on play.
  */
 export function nextLineId(
   dialogue: readonly { id: string; order: number }[],

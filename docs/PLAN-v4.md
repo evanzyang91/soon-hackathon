@@ -74,6 +74,11 @@ marked), "Free (handheld)", and **"Add shot from here"**, which places the phone
 as a new shot on both the laptop's shot list and the phone (`PhoneCommand` `select-camera` /
 `add-shot`; the laptop owns the list and broadcasts `SceneState.cameras`).
 
+**Result (P1).** As above. Picking a shot on the phone is clicking its Shots row; Handheld keeps the
+view where it stands; Add shot from here is the laptop's Add shot at the phone's pose and lens (frame
+grabbed). Hold play = next line; a sideways swipe on the label steps through the shots. Evidence:
+`docs/images/phone-minimal-before-after.png`, `phone-camera-popover.png`, `phone-add-shot.png`.
+
 ## Props by import or by prompt (2026-10-25)
 
 Besides the procedural kinds, a director can put their own object in the scene: **Import a 3D model**

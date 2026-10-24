@@ -173,6 +173,12 @@ export class Walker {
     this.pos.set(0, 0, 0);
     this.vel.set(0, 0, 0);
   }
+
+  /** Stand still at `offset` from the attached camera (a new anchor, the view kept in place). */
+  place(offset: Vec3): void {
+    this.pos.set(offset[0], offset[1], offset[2]);
+    this.vel.set(0, 0, 0);
+  }
 }
 
 /** Where the phone camera is: anchor + walk offset + handheld nudge (the laptop adds the same). */
