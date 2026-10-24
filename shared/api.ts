@@ -1,6 +1,9 @@
 // HTTP API between the browsers and server/index.ts. Owned by the lead.
 //
-// POST   /api/projects              body { title?: string, screenplay: string }  → ProjectStatus (202)
+// POST   /api/projects              body { title?: string, screenplay: string, draft?: boolean,
+//                                           attachments?: string[] (upload ids) }  → ProjectStatus (202)
+//        draft: true runs only the parse stage; the director amends the plan in the project chat
+//        and starts the rest with /generate. Default false: everything runs (as before).
 // GET    /api/projects               → ProjectStatus[]
 // GET    /api/projects/:id           → ProjectStatus
 // POST   /api/projects/:id/retry     body { sceneIndex: number, stage: StageName } → ProjectStatus
@@ -8,7 +11,25 @@
 //        rebuilds one character at that detail (high ≈ 5 min per actor on Modal) and, when it
 //        succeeds, rewrites every scene manifest to reference the new build; the previous build
 //        stays in place until then.
-// GET    /projects/:id/**            static built assets (manifests, spz, ply, mp3, glb)
+// GET    /projects/:id/**            static built assets (manifests, spz, ply, mp3, glb, uploads)
+//
+// Project chat (shared/chat.ts; the screenplay box is the first message of a conversation):
+// POST   /api/projects/:id/uploads   raw image body (content-type image/png | image/jpeg | image/webp,
+//                                    ≤ 12 MB, query ?name=<original file name>) → Attachment (201);
+//                                    stored as uploads/<sha256-16>.<ext> (same bytes → same id),
+//                                    served at /projects/:id/uploads/<file>
+// GET    /api/projects/:id/chat      → ProjectChat (200; an empty thread when nothing was sent yet)
+// POST   /api/projects/:id/chat      body ChatRequest { text, attachments?: [{ id, hint? }] }
+//                                    → ChatResponse { chat: ProjectChat, status: ProjectStatus }
+//        The server appends the user message, asks the chat planner (Claude with the images, or
+//        the MOCK keyword planner) for a reply + actions, applies every free action at once
+//        (plan patches, reference assignments, dialogue → TTS, actor rebuilds), returns expensive
+//        ones (world regeneration: ~5 min + 1,580 credits; re-plan of a live project) as
+//        needs-confirm, and appends the assistant message. Synchronous (5–20 s).
+// POST   /api/projects/:id/chat/confirm  body { messageId, actionId } → ChatResponse
+//        runs one needs-confirm action (the action's status becomes running / done / failed).
+// POST   /api/projects/:id/generate  → ProjectStatus (202): starts world / actors / tts for a
+//                                    draft project (no-op when already generating).
 // GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts } }
 // GET    /api/rooms/new              → { room: string, phoneUrl: string }   (relay)
 // WS     /ws                         shared/protocol.ts
@@ -41,4 +62,9 @@ export const api = {
   edits: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/edits`,
   reprompt: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/reprompt`,
   regen: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/regen`,
+  uploads: (id: string) => `/api/projects/${id}/uploads`,
+  upload: (id: string, file: string) => `/projects/${id}/${file}`,
+  chat: (id: string) => `/api/projects/${id}/chat`,
+  chatConfirm: (id: string) => `/api/projects/${id}/chat/confirm`,
+  generate: (id: string) => `/api/projects/${id}/generate`,
 } as const;
