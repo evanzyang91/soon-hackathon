@@ -9,30 +9,63 @@
   </head>
   <body>
     <header id="topbar">
+      <button
+        id="drawer-toggle"
+        type="button"
+        class="top-icon"
+        data-testid="drawer-toggle"
+        aria-expanded="true"
+        title="Show / hide the projects drawer: new project, every project and its scenes ( [ )"
+      >
+        ☰
+      </button>
       <span class="brand">Previz Stage</span>
-      <span id="health" class="badge">…</span>
+      <span id="health" class="badge" title="Which API keys the server has">…</span>
+      <span class="top-sep"></span>
+      <span id="hud-title"></span>
+      <span id="hud-badges"></span>
+      <button
+        id="top-look"
+        type="button"
+        class="badge look"
+        data-testid="look-badge"
+        hidden
+        title="The scene's look (grade, lens, lights): open the Look tab"
+      ></button>
       <span class="spacer"></span>
-      <span class="muted small">
-        WASD fly · Q/E down/up · Shift fast · right-drag look · double-click mouselook · wheel zoom
-        · Space play · C drop cam · V phone view · R record
-      </span>
+      <span id="top-clock" class="top-clock" title="Scene clock (moving props, dialogue sync)">0:00.0</span>
+      <button id="top-play" type="button" data-testid="top-play" title="Play / pause the scene clock (Space)">
+        ▶ Play
+      </button>
+      <span class="top-sep"></span>
+      <button id="top-undo" type="button" class="top-icon" data-testid="top-undo" title="Undo (⌘Z)">↶</button>
+      <button id="top-redo" type="button" class="top-icon" data-testid="top-redo" title="Redo (⇧⌘Z)">↷</button>
+      <button id="top-help" type="button" class="top-icon" data-testid="help" title="Keyboard and mouse cheatsheet (?)">
+        ?
+      </button>
     </header>
 
-    <aside id="left" class="panel">
+    <aside id="left" class="panel drawer" aria-label="Projects">
       <section class="card">
         <h2>New project</h2>
-        <input id="pp-title" placeholder="Title (optional)" data-testid="title" />
+        <input id="pp-title" placeholder="Title (optional)" data-testid="title" title="Project title (optional)" />
         <textarea
           id="pp-screenplay"
-          rows="12"
+          rows="10"
           spellcheck="false"
           placeholder="Paste a screenplay (Fountain or plain text)…"
           data-testid="screenplay"
         ></textarea>
         <div class="row">
-          <button id="pp-sample" type="button">Sample</button>
+          <button id="pp-sample" type="button" title="Fill in the sample screenplay (The Last Bus)">Sample</button>
           <span class="spacer"></span>
-          <button id="pp-generate" class="primary" type="button" data-testid="generate">
+          <button
+            id="pp-generate"
+            class="primary"
+            type="button"
+            data-testid="generate"
+            title="Plan the scenes, then build their worlds, actors and voices"
+          >
             Generate
           </button>
         </div>
@@ -47,89 +80,151 @@
     <main id="stage">
       <canvas id="viewport" data-testid="viewport"></canvas>
       <div id="hud-top">
-        <span id="hud-title"></span>
-        <span id="hud-badges"></span>
         <span class="spacer"></span>
-        <select id="hud-quality" title="Splat resolution">
-          <option value="k100">100k</option>
-          <option value="k500" selected>500k</option>
-          <option value="full">full</option>
-        </select>
         <button id="hud-grid" type="button" title="Ground grid at y = 0 (G)">Grid</button>
-        <button id="hud-collider" type="button" title="Collider mesh">Collider</button>
-        <button id="hud-pip" type="button" class="on" title="Picture-in-picture">PiP</button>
-        <button id="hud-reload" type="button" title="Reload scene">Reload</button>
-        <button id="hud-still" type="button" title="Save a still from the phone camera">
-          Still
+        <button id="hud-collider" type="button" title="Collider mesh (what keeps dragged actors out of walls)">
+          Collider
         </button>
-        <button id="hud-record" type="button" data-testid="record">Record take</button>
+        <button id="hud-pip" type="button" class="on" title="Picture-in-picture of the phone / active camera">PiP</button>
+        <button id="hud-reload" type="button" title="Reload the scene">Reload</button>
       </div>
       <div id="hud-empty" class="hud-center">
         <h1>Previz Stage</h1>
-        <p>Paste a screenplay and press Generate, or open a ready scene from the list.</p>
+        <p>Paste a screenplay in the projects drawer (☰) and press Generate, or open a ready scene.</p>
       </div>
       <div id="hud-loading" class="hud-center small" hidden></div>
       <div id="pip-frame" hidden><span id="pip-label"></span></div>
       <div id="hud-caption" hidden data-testid="caption"></div>
       <div id="hud-rec" hidden></div>
+      <div id="hud-toast" hidden data-testid="toast" role="status"></div>
     </main>
 
     <aside id="right" class="panel">
-      <section class="card">
-        <h2>Phone camera</h2>
-        <div class="pair">
-          <img id="ph-qr" width="176" height="176" alt="" data-testid="pair-qr" />
-          <div class="pair-side">
-            <div id="ph-status" class="small" data-testid="phone-status"></div>
-            <input id="ph-url" class="small" spellcheck="false" title="Phone URL (editable)" />
-            <div id="ph-hint" class="warn small"></div>
-            <div class="row wrap">
-              <button id="ph-recenter" type="button" data-testid="recenter">Re-center phone</button>
-              <button id="ph-view" type="button" data-testid="view-from-phone">
-                View: director
-              </button>
-              <button id="ph-new" type="button" title="New room code">New room</button>
+      <div id="pane-scene" class="pane" data-pane="scene">
+        <section class="card">
+          <h2>Scene</h2>
+          <div id="st-scenes"></div>
+        </section>
+        <section class="card">
+          <h2>World</h2>
+          <div class="row">
+            <label for="hud-quality" class="small muted">Splats</label>
+            <select id="hud-quality" title="Splat resolution of the world (more = sharper, slower)">
+              <option value="k100">100k</option>
+              <option value="k500" selected>500k</option>
+              <option value="full">full</option>
+            </select>
+            <span class="spacer"></span>
+            <span id="st-world-kind" class="small muted"></span>
+          </div>
+          <div id="st-world" class="small"></div>
+        </section>
+        <section class="card">
+          <h2>Cast</h2>
+          <div id="st-cast" class="actors" data-testid="actors"></div>
+        </section>
+        <section class="card grow">
+          <h2>Objects</h2>
+          <div id="st-objects"></div>
+        </section>
+      </div>
+
+      <div id="pane-shoot" class="pane" data-pane="shoot">
+        <section class="card">
+          <h2>Phone camera</h2>
+          <div class="pair">
+            <img id="ph-qr" width="176" height="176" alt="" data-testid="pair-qr" />
+            <div class="pair-side">
+              <div id="ph-status" class="small" data-testid="phone-status"></div>
+              <input id="ph-url" class="small" spellcheck="false" title="Phone URL (editable)" />
+              <div id="ph-hint" class="warn small"></div>
+              <div class="row wrap">
+                <button
+                  id="ph-recenter"
+                  type="button"
+                  data-testid="recenter"
+                  title="The phone's current heading becomes the attached camera's heading"
+                >
+                  Re-center phone
+                </button>
+                <button
+                  id="ph-view"
+                  type="button"
+                  data-testid="view-from-phone"
+                  title="View through the phone (V); the PiP then shows the director view"
+                >
+                  View: director
+                </button>
+                <button id="ph-new" type="button" title="New room code (re-pair the phone)">New room</button>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="card">
-        <h2>Scene clock</h2>
-        <div class="row">
-          <button id="sc-play" type="button" data-testid="play">Play</button>
-          <button id="sc-reset" type="button" title="Back to 0">⏮</button>
-          <span id="sc-clock" class="clock" data-testid="clock">0:00.0</span>
-        </div>
-      </section>
+        <section class="card">
+          <h2>Scene clock</h2>
+          <div class="row">
+            <button id="sc-play" type="button" data-testid="play" title="Play / pause the scene clock (Space)">Play</button>
+            <button id="sc-reset" type="button" title="Back to 0:00">⏮</button>
+            <span id="sc-clock" class="clock" data-testid="clock">0:00.0</span>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Cameras</h2>
-        <div class="row">
-          <input id="cam-name" placeholder="Name (optional)" />
-          <button id="cam-drop" type="button" class="primary" data-testid="drop-camera">
-            Drop
-          </button>
-        </div>
-        <div id="cam-list"></div>
-      </section>
+        <section class="card">
+          <h2>Take</h2>
+          <div class="row">
+            <button
+              id="hud-record"
+              type="button"
+              data-testid="record"
+              title="Record the view plus the dialogue audio as WebM (R)"
+            >
+              Record take
+            </button>
+            <button id="hud-still" type="button" title="Save a still (PNG) from the phone camera">Still</button>
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Suggested shots</h2>
-        <div id="shot-list"></div>
-      </section>
+        <section class="card">
+          <h2>Cameras</h2>
+          <div class="row">
+            <input id="cam-name" placeholder="Name (optional)" title="Name for the next camera" />
+            <button
+              id="cam-drop"
+              type="button"
+              class="primary"
+              data-testid="drop-camera"
+              title="Drop a camera at the current view (C)"
+            >
+              Drop
+            </button>
+          </div>
+          <div id="cam-list"></div>
+        </section>
 
-      <section class="card grow">
-        <h2>
-          Dialogue
-          <span class="spacer"></span>
-          <button id="sc-playall" type="button" class="small" data-testid="play-all">
-            Play scene
-          </button>
-          <button id="sc-stop" type="button" class="small">Stop</button>
-        </h2>
-        <div id="line-list"></div>
-      </section>
+        <section class="card">
+          <h2>Suggested shots</h2>
+          <div id="shot-list"></div>
+        </section>
+
+        <section class="card grow">
+          <h2>
+            Dialogue
+            <span class="spacer"></span>
+            <button
+              id="sc-playall"
+              type="button"
+              class="small"
+              data-testid="play-all"
+              title="Play every line in order (also starts the scene clock)"
+            >
+              Play scene
+            </button>
+            <button id="sc-stop" type="button" class="small" title="Stop the dialogue">Stop</button>
+          </h2>
+          <div id="line-list"></div>
+        </section>
+      </div>
     </aside>
 
     <script type="module" src="/src/laptop/main.ts"></script>

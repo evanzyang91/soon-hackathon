@@ -1,5 +1,6 @@
-// Left panel: screenplay input → POST /api/projects, project list with per-scene stage chips and
-// one row per character (build detail, kind, fallback) with the "High detail" rebuild button.
+// Left drawer: screenplay input → POST /api/projects and the project list with per-scene stage
+// chips. The open project's cast (one row per character: build detail, kind, fallback, the
+// "High detail" rebuild button) is rendered by the Scene tab through `actorRow`.
 import { api } from '@shared/api';
 import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
 import { createProject, getHealth, listProjects, rebuildActor, retryStage } from './api';
@@ -54,7 +55,18 @@ function busy(p: ProjectStatus) {
   );
 }
 
-export function mountProjectsPanel(director: Director) {
+export interface ProjectsPanel {
+  projects(): ProjectStatus[];
+  /** The project of the open scene (null when none / not listed yet). */
+  current(): ProjectStatus | null;
+  /** Called after every refresh (polling, a rebuild, a new project). */
+  onChange(fn: () => void): () => void;
+  /** One cast row: name, detail chip, kind, fallback, rebuild status, High detail / use standard. */
+  actorRow(p: ProjectStatus, a: ActorBuildStatus): HTMLElement;
+  refresh(): Promise<void>;
+}
+
+export function mountProjectsPanel(director: Director): ProjectsPanel {
   const title = byId<HTMLInputElement>('pp-title');
   const text = byId<HTMLTextAreaElement>('pp-screenplay');
   const status = byId('pp-status');
@@ -65,6 +77,7 @@ export function mountProjectsPanel(director: Director) {
   let apiDown = false;
   let modalKeys: boolean | null = null;
   const rebuildErrors = new Map<string, string>();
+  const listeners = new Set<() => void>();
   /** project:character → the actor detail last applied to the open scene (hot-swap trigger). */
   const applied = new Map<string, string>();
   void getHealth()
@@ -136,6 +149,7 @@ export function mountProjectsPanel(director: Director) {
       .catch((err: unknown) => {
         rebuildErrors.set(key, err instanceof Error ? err.message : String(err));
         render();
+        for (const fn of listeners) fn();
       });
   };
 
@@ -255,7 +269,11 @@ export function mountProjectsPanel(director: Director) {
             : null,
           scenes,
           p.actors?.length
-            ? h('div', { class: 'actors', 'data-testid': 'actors' }, ...p.actors.map((a) => actorRow(p, a)))
+            ? h(
+                'div',
+                { class: 'muted small project-cast', title: 'Builds and High detail: the Scene tab of an open scene' },
+                `Cast: ${p.actors.map((a) => displayName(a.name)).join(', ')}`,
+              )
             : null,
         ),
       );
@@ -287,6 +305,7 @@ export function mountProjectsPanel(director: Director) {
       }
     }
     render();
+    for (const fn of listeners) fn();
   };
 
   const poll = async () => {
@@ -297,5 +316,15 @@ export function mountProjectsPanel(director: Director) {
     if (c === 'scene') render();
   });
   void poll();
-  return () => timer && clearTimeout(timer);
+  window.addEventListener('pagehide', () => timer && clearTimeout(timer));
+  return {
+    projects: () => projects,
+    current: () => projects.find((p) => p.id === director.projectId) ?? null,
+    onChange: (fn) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    actorRow,
+    refresh,
+  };
 }
