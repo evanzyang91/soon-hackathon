@@ -24,6 +24,11 @@ export const PhonePose = z.object({
   q: Quat,
   /** Handheld translation nudge in meters, world frame, relative to the attached camera. */
   nudge: Vec3,
+  /**
+   * Walk offset in meters, world frame, driven by the phone's joystick: phone position =
+   * attached camera + offset + nudge. Reset by the phone when it attaches to another camera.
+   */
+  offset: Vec3.optional(),
   /** Vertical field of view in degrees (three.js PerspectiveCamera convention). */
   fovDeg: z.number(),
   /** Viewport width / height of the phone's render; 16:9 is assumed when absent. */
@@ -50,7 +55,17 @@ export type SceneState = z.infer<typeof SceneState>;
 
 export const PhoneCommand = z.object({
   type: z.literal('cmd'),
-  cmd: z.enum(['recenter', 'shutter', 'record-start', 'record-stop', 'next-camera']),
+  cmd: z.enum([
+    'recenter',
+    'shutter',
+    'record-start',
+    'record-stop',
+    'next-camera',
+    /** Phone → laptop: toggle "Play scene" (dialogue in order + scene clock). */
+    'play-scene',
+    /** Phone → laptop: play the next dialogue line (after the one last played). */
+    'next-line',
+  ]),
 });
 export type PhoneCommand = z.infer<typeof PhoneCommand>;
 
