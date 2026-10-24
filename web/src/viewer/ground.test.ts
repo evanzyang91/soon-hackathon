@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { GROUND_FIELD_SCHEMA, type GroundField } from '@shared/ground';
 import type { Vec3, WorldAsset } from '@shared/schema';
-import { aboveGround, groundSampler, onGround } from './ground';
+import { aboveGround, followGround, groundSampler, markY, onGround } from './ground';
 import { applyWorldTransform, worldTransform } from './transform';
 
 const asset: WorldAsset = {
@@ -47,5 +47,21 @@ describe('actor heights are stored relative to the ground', () => {
     expect(onGround([2, 0.5, -1], groundY)).toEqual([2, 0.75, -1]);
     const p: Vec3 = [-1.5, 0.25, -2.5];
     expect(aboveGround(onGround(p, groundY), groundY)).toEqual(p);
+  });
+
+  it('a walking body follows the ground it crosses; the mark height reads back without it', () => {
+    const slope = (x: number) => 0.25 * x; // rises along +x
+    const o = { position: { x: 0, y: 0.5, z: 0 }, rotation: { y: Math.PI / 2 }, userData: {} as Record<string, unknown> };
+    followGround(o, 2, (x) => slope(x)); // body 2 m behind = at x = +2: 0.5 m higher ground
+    expect(o.position.y).toBeCloseTo(1, 9);
+    expect(markY(o)).toBeCloseTo(0.5, 9);
+    followGround(o, 1, (x) => slope(x)); // halfway in
+    expect(o.position.y).toBeCloseTo(0.75, 9);
+    // an edit moves the actor (writes y): that becomes the mark height
+    o.position.y = 0.2;
+    expect(markY(o)).toBe(0.2);
+    followGround(o, 0, (x) => slope(x)); // arrived
+    expect(o.position.y).toBe(0.2);
+    expect(o.userData.walkGround).toBeUndefined();
   });
 });
