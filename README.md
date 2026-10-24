@@ -126,6 +126,14 @@ Method, the artefacts that shaped it, and the numbers are in `worker/README.md` 
    to the active dropped camera (or the scene's start camera); **Re-center** maps the phone's
    current heading onto that camera's heading.
 
+## ARKit camera (prototype)
+
+`ios/` holds a native iPhone app (SwiftUI + ARKit, generated with XcodeGen) that joins the same
+room as a phone with true 6DoF tracking. Walking moves the camera 1:1 (`PhonePose.offset`,
+`source: 'arkit'`), and the shot renders through `phone.html?pose=external` in a web view. It needs
+Xcode to build; `cd ios/PrevizCore && swift test` runs its pose and protocol tests without Xcode.
+Setup, certificate pairing, the pose math and the web contract are in `ios/README.md`.
+
 ## Controls
 
 **Laptop**
@@ -363,6 +371,7 @@ shared/           contracts (schema, protocol, api) + pure helpers shared by ser
 server/           HTTPS entry, relay, env, pipeline/ (stages, libraries, CLI)
 web/src/laptop/   director UI;  web/src/phone/  phone camera;  web/src/viewer/  shared 3D loader
 worker/           Modal LHM avatar worker (Python)
+ios/              ARKit camera app (prototype): Xcode project, PrevizCore Swift package
 fixtures/         sample screenplay, mock world, real-provider samples
 tests/            unit tests (tests/unit) and Playwright e2e (tests/e2e)
 docs/             PLAN.md and screenshots
