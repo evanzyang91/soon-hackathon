@@ -9,7 +9,9 @@
 //   2. `python3 worker/run_actor.py --image reference.png --out actors/<id>` (Orbis LHM port on
 //      Modal L4; receipt-first, so a crashed/timed-out call is recovered, never paid twice)
 //   3. -> { kind: 'splat-sequence', sequenceDir: 'actors/<id>/sequence', fps, nativeHeight
-//      (measured from frame_000.ply), heightMeters: 1.7 }
+//      (measured from frame_000.ply), heightMeters: 1.7 }. The worker also writes the runtime rig
+//      (sequence.json `rig` -> rig.json, rig-splats.bin, motion-library.json, motion-clips.bin)
+//      in the same directory; the viewer prefers it and falls back to the baked frames.
 // An existing valid actors/<id>/sequence is reused without any network call.
 // MOCK, missing keys, or ANY failure -> the free offline fallback
 //   { kind: 'glb-humanoid', glb: 'procedural:mannequin', clips, tint }
