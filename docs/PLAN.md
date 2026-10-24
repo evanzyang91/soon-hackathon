@@ -65,6 +65,9 @@ screenplay.txt/.fountain
   (S = factor × msf, ty = factor × gpo, floor still at y = 0). It is measured after download from
   collider references and Claude vision with 1.70 m mannequins; absent or 1 means Marble's scale
   was kept.
+- `WorldAsset.floorOffsetMeters` (same step, from the splats at the actors' marks; the collider
+  sits ~0.1 m below the splats outdoors and is not used) raises the world by factor × offset so
+  the visible ground is at y = 0 where the actors stand.
 
 ### Phone pose model (browser PWA)
 

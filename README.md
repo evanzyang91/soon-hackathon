@@ -23,6 +23,7 @@ laptop while the actors speak their lines.
                    ↳ world-library.ts: reuse data/marble/<slug without INT./EXT.>              │
    actors.ts       description → OpenAI reference image → LHM on Modal L4 (worker/) →          │
                    splat avatar + runtime rig; any failure → procedural mannequin (fallback)   │
+                   "High detail" per character: LHM-1B + fine-tune → actors/<id>/high/         │
                    ↳ actor-library.ts: reuse data/actors-library/<characterId>                 │
    tts.ts          each line → mp3 (ElevenLabs or OpenAI gpt-4o-mini-tts); beeps offline       │
    project.ts      orchestration → <DATA_DIR>/<id>/scene-<n>/manifest.json (shared/schema.ts) ─┘
@@ -77,6 +78,34 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
    row per scene and a chip per stage (parse, world, actors, tts, manifest). Hover a chip for the
    detail; a red (failed) or amber (fallback) chip can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
+4. Under the scenes, each character has a row: name, build detail (`standard` / `high`), kind
+   (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min per actor)** rebuilds that
+   character with LHM-1B plus a fine-tune against its reference image (see below).
+
+## High detail actors
+
+The standard actor is LHM-500M from one generated reference photo: right silhouette, soft face
+and clothing. **High detail (~5 min per actor)** in the project panel (tooltip: "LHM-1B +
+fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build
+stays until the new one lands.") calls `POST /api/projects/:id/actors/:characterId/rebuild
+{detail: 'high'}` (202). The server runs `worker/run_actor.py --detail high` in the background into
+`<project>/actors/<id>/high/`; the chip reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
+time. When the build lands, every scene manifest showing the character is rewritten to it
+(`detail: 'high'` on the ActorAsset), an existing `data/actors-library/<id>/` copy is refreshed
+(the previous one kept as `sequence.previous/`), and the open scene swaps that actor in place:
+camera, clock and the other actors stay, and a paired phone reloads the scene. A failure changes
+nothing but the chip (`high detail failed`, with the reason and **Retry high detail**); a retry
+or a server restart recovers the Modal call from its receipt instead of paying again. **use
+standard** switches back to the standard build, which is kept on disk (no GPU).
+
+Measured on LEO in `the-last-bus` (one real rebuild through the route): 123 s of L4, about $0.05
+(the button's ~5 min / ~$0.20 is a conservative upper bound). The difference is visible: the
+face, hair and stubble are sharper and match the reference photo, and the coat's wet creases come
+through. The cost is pale streaks when the face is seen from far to the side.
+
+![Standard vs high detail, same camera and pose](docs/images/actor-detail-standard-vs-high.png)
+
+Method, the artefacts that shaped it, and the numbers are in `worker/README.md` ("High detail").
 
 ## Pair the phone
 
@@ -173,8 +202,9 @@ libraries filled, `MOCK=0` on `fixtures/screenplay.fountain` spends only the Cla
 Marble returns a `metric_scale_factor`, and Orbis found it can be off by up to 2×. After every
 Marble download (and from the CLI) the pipeline measures the real scale and stores it as
 `WorldAsset.scaleCalibration`. The viewer multiplies Marble's scale by `factor`, keeping the floor at
-y = 0, and the laptop HUD shows `scale ×0.87 (door 2.04 m)` next to the scene title, with the full
-evidence in its tooltip.
+y = 0, and the laptop HUD shows `scale ×0.87 (door 2.04 m)` next to the scene title (the
+calibration's `headline`: the main reference, or `unverified`), with the full evidence in its
+tooltip.
 
 ```sh
 pnpm tsx server/pipeline/cli.ts calibrate data/marble/kitchen-morning            # print the report
@@ -227,6 +257,30 @@ Before/after pictures for the other three: [city street](docs/images/scale-city-
 [bus stop](docs/images/scale-city-bus-stop-night-before-after.png). In each, the right panel shows
 the not-applied candidate, labelled as such.
 
+### Floor offset: actors on the visible ground
+
+Marble's declared ground plane matches the splats right under its source camera (within ±2 cm on
+all four worlds), but where the actors stand 2.5–3 m out the visible ground can be lower. The same
+calibration step measures it from the splats (`calibrate-ground.ts`): at each actor's blocking mark
+(or, for a world without a scene, the usual blocking area in front of the camera), it finds the
+densest thin layer of opaque splats below knee height. The median is stored as
+`WorldAsset.floorOffsetMeters`, and the viewer raises the world by that much (× the scale factor),
+collider included, so the ground is at y = 0 where the feet are. The collider is not used for this:
+outdoors it sits about 0.1 m below the splats, and raising the world by the collider floor buries
+the actors' shoes (middle panel below).
+
+| World | Splat ground (where actors stand) | Collider floor near the camera | floorOffsetMeters |
+| --- | --- | --- | --- |
+| city-bus-stop-night (`the-last-bus`, at its marks) | MAYA +0.018 m, LEO -0.035 m | -0.124 m | **0.009** |
+| city-street-night | -0.058 / -0.038 / -0.161 m | -0.090 m | **0.058** |
+| rooftop-dusk | -0.217 / -0.197 / -0.260 m | -0.143 m | **0.217** |
+| kitchen-morning | +0.011 / +0.042 m | -0.011 m | **-0.026** |
+
+`calibrate --write` stores it (the splat half is local, about 2 s; `--reuse` re-measures it without
+a Claude call). A live project re-measures each scene's world at that scene's marks.
+
+![Bus stop at feet level: Marble's plane, collider-based, splat-based](docs/images/floor-offset-before-after.png)
+
 ### Real avatars need Modal billing
 
 The LHM stage runs on a Modal L4 GPU. Modal refuses L4 functions until the workspace has a payment
@@ -236,7 +290,8 @@ download, 162 s of L4 time, about $0.08, 72 frames at 12 fps (49 MB slim). Setup
 staging and the worker CLI are in `worker/README.md`. Copy a finished
 `<project>/actors/<id>/sequence/` into `data/actors-library/<id>/` to reuse it.
 
-Each avatar also gets a **runtime rig** (canonical splats + skin weights + SMPL-X skeleton,
+A "High detail" rebuild (LHM-1B + fine-tune, see above) costs about $0.05–0.06 and 3–4 min per
+actor (123 s of L4 measured). Each avatar also gets a **runtime rig** (canonical splats + skin weights + SMPL-X skeleton,
 2 MB instead of a 40 MB baked track): the browser animates it on the GPU from a shared library of
 text-to-motion clips (HY-Motion 1.0, generated once: listening idle, two talking loops, seated
 idle/talk, a walk cycle), so actors gesture while they talk, turn their heads to the speaker, sit
@@ -255,6 +310,7 @@ npx playwright install chromium       # once, for the e2e browser
 pnpm e2e                              # Playwright against a MOCK server on :5390 (temp DATA_DIR)
 pnpm check                            # all three
 npx tsx scripts/actor-browser-check.ts [--sequence data/actors-library/maya --gpu]
+npx tsx scripts/compare-shots.ts --base https://localhost:<your port> --col <manifest> --col <manifest> --view x,y,z:tx,ty,tz:fov --out x.png
 cd worker && python3 -m pytest -q tests
 ```
 
@@ -291,10 +347,12 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   which is approximate in very tight interiors.
 - Scale is verified only where the world has standard objects near the camera. Interiors
   (counters, doors, ceilings) measure well. The three outdoor worlds have coarse colliders and few
-  doors or benches in reach, so they stay at Marble's scale marked `low` / unverified. Outdoors
-  Marble's ground plane also sits 0.09–0.14 m above the measured floor near the camera (rooftop
-  splats: ~0.2 m), so actors at y = 0 can float slightly there. The schema has no floor-offset
-  field yet.
+  doors or benches in reach, so they stay at Marble's scale marked `low` / unverified.
+- The floor offset is one shift per world. On uneven ground the marks disagree (rooftop: -0.24 m
+  under MAYA, -0.17 m under LEO), so one actor can still float or sink a few centimetres. Setting
+  each actor's blocking `y` to the splat ground at its mark would fix that within the schema.
+- High-detail actors carry front-view texture: seen from far to the side (≳60° off the reference
+  view) the face and trousers show pale streaks. The back is unchanged.
 - Moving props are simple procedural shapes on straight looped paths, composited over the splats.
 - Takes record the laptop canvas (WebM), not the phone's own render.
 
