@@ -212,6 +212,16 @@ button.icon {
   background: #4a3a12;
   color: var(--warn);
 }
+.badge.scale {
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+.badge.scale.high {
+  color: var(--ok);
+}
+.badge.scale.low {
+  color: var(--warn);
+}
 
 /* projects */
 .project {

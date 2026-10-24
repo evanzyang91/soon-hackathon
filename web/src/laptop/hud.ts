@@ -76,6 +76,18 @@ export function mountHud(director: Director) {
       b.textContent = 'mock world';
       badges.append(b);
     }
+    // measured scale (server/pipeline/calibrate.ts): "scale ×0.87 (door 2.04 m)"; the evidence
+    // leads with the main reference at the calibrated scale, details after " · "
+    const cal = rt?.manifest.world.scaleCalibration;
+    if (cal) {
+      const b = document.createElement('span');
+      b.className = `badge scale ${cal.confidence}`;
+      b.dataset.testid = 'scale-calibration';
+      const ref = cal.evidence.split(' · ')[0]?.trim();
+      b.textContent = `scale ×${cal.factor.toFixed(2)}${ref ? ` (${ref})` : ''}`;
+      b.title = `Scale calibration: ×${cal.factor} on top of Marble's metric scale (${cal.method}, ${cal.confidence} confidence)\n${cal.evidence.split(' · ').join('\n')}`;
+      badges.append(b);
+    }
     for (const opt of quality.options)
       opt.disabled = !rt?.manifest.world.spz[opt.value as SplatQuality];
     quality.value = rt?.quality ?? director.quality;
