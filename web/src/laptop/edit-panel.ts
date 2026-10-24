@@ -32,7 +32,6 @@ import {
 } from '../viewer/edits/select';
 import type { Director } from './director';
 import { h, isTyping } from './dom';
-import { storageGet, storageSet } from './storage';
 import './edit-panel.css';
 
 export interface PlannerTarget {
@@ -72,7 +71,6 @@ const SCOPE_LABEL: Record<EditPlan['scope'], string> = {
   'world-regen': 'regen',
   clarify: 'clarify',
 };
-const TAB_KEY = 'previz:edit-tab';
 const MAX_VIEW_BYTES = 290 * 1024;
 /** JPEG data URL of the main view, ≤ 290 KB: render once and copy the canvas before it clears. */
 export function captureView(director: Director): { image: string; pose: ViewPose } | null {
@@ -109,32 +107,27 @@ export interface EditPanel {
   state(): Record<string, unknown>;
 }
 
-export function mountEditPanel(director: Director): EditPanel {
-  const right = document.getElementById('right');
-  if (!right) throw new Error('#right missing from index.html');
-
-  // ---- tab (next to the Look panel's Shoot / Look tabs) ----------------------------------------
-  let tabs = right.querySelector<HTMLElement>('.right-tabs');
-  if (!tabs) {
-    tabs = h('div', { class: 'right-tabs', role: 'tablist' });
-    right.prepend(tabs);
+/**
+ * Mounts the Edit tab. The shell (shell.ts) calls `mountEditPanel(el, director)` with the tab's
+ * section and owns the tab row; `mountEditPanel(director)` (no shell) appends its own section to
+ * #right.
+ */
+export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: Director): EditPanel {
+  const director = (target instanceof HTMLElement ? maybeDirector : target) as Director;
+  if (!director) throw new Error('mountEditPanel(el, director): director missing');
+  let section: HTMLElement;
+  if (target instanceof HTMLElement) {
+    section = target;
+    section.replaceChildren();
+    section.classList.add('card', 'grow', 'edit-panel');
+    section.id ||= 'edit-panel';
+    section.dataset.testid ||= 'edit-panel';
+  } else {
+    const right = document.getElementById('right');
+    if (!right) throw new Error('#right missing from index.html');
+    section = h('section', { class: 'card grow edit-panel', id: 'edit-panel', 'data-testid': 'edit-panel' });
+    right.append(section);
   }
-  const section = h('section', { class: 'card grow edit-panel', id: 'edit-panel', 'data-testid': 'edit-panel' });
-  right.append(section);
-  const editTab = h('button', { type: 'button', class: 'tab', 'data-tab': 'edit', 'data-testid': 'tab-edit', role: 'tab' }, 'Edit');
-  tabs.append(editTab);
-  const show = (on: boolean) => {
-    section.hidden = !on;
-    editTab.classList.toggle('on', on);
-    if (on) {
-      for (const c of [...right.children] as HTMLElement[]) if (c !== tabs && c !== section) c.hidden = true;
-      for (const b of tabs!.querySelectorAll('.tab')) if (b !== editTab) b.classList.remove('on');
-    }
-    storageSet(TAB_KEY, on);
-  };
-  editTab.addEventListener('click', () => show(true));
-  for (const b of tabs.querySelectorAll('.tab')) if (b !== editTab) b.addEventListener('click', () => show(false));
-  show(storageGet<boolean>(TAB_KEY) === true);
 
   // ---- viewport overlays ------------------------------------------------------------------------
   const stage = director.canvas.parentElement!;
@@ -223,15 +216,18 @@ export function mountEditPanel(director: Director): EditPanel {
     return false;
   };
 
-  const setSelection = (sel: RegionSelection | null) => {
+  /** The selection came from the viewport manipulator (it draws its own outline). */
+  let selectionFromDirector = false;
+  const setSelection = (sel: RegionSelection | null, fromDirector = false) => {
     selection = sel;
+    selectionFromDirector = !!sel && fromDirector;
     showGizmo();
     render();
   };
   const showGizmo = () => {
     const r = rt();
     if (r && gizmo.object.parent !== r.scene) r.scene.add(gizmo.object);
-    gizmo.set(pending?.region ?? selection);
+    gizmo.set(pending?.region ?? (selectionFromDirector ? null : selection));
     previewPending();
   };
   const previewPending = () => {
@@ -278,8 +274,9 @@ export function mountEditPanel(director: Director): EditPanel {
       queue = json.plan.needsTarget.flatMap((t) => {
         const op = json.plan.ops.find((o) => o.id === t.opId);
         if (!op || op.kind !== 'splat-region') return [];
-        const box = json.targets?.find((x) => x.opId === t.opId);
-        return [{ prompt, plan: json.plan, op, label: t.label, region: null, from: null, view: viewPose, box: box?.box } as Pending];
+        // the vision box rides on the plan (needsTarget[].box); `targets` for older servers
+        const box = t.box ?? json.targets?.find((x) => x.opId === t.opId)?.box;
+        return [{ prompt, plan: json.plan, op, label: t.label, region: null, from: null, view: viewPose, box } as Pending];
       });
       nextPending();
       return json;
@@ -603,13 +600,15 @@ export function mountEditPanel(director: Director): EditPanel {
     const plan = lastPlan?.plan;
     if (plan?.scope === 'world-regen' && plan.regen && regen === 'confirm') {
       const rg = plan.regen;
-      const change = lastPlan!.prompt.replace(/^make (it|the scene) /i, '').replace(/[.!]$/, '');
+      // "Regenerate the world with a stormy sky" from the planner's summary, else the prompt
+      const m = /^Regenerate the world (with|so that|so|to|into|as) ([^.(;,—]+)/i.exec(plan.summary);
+      const what = m ? `${m[1]} ${m[2]!.trim()}` : `for “${lastPlan!.prompt.replace(/[.!]$/, '')}”`;
       card.hidden = false;
       card.append(
         h(
           'div',
           { 'data-testid': 'regen-confirm' },
-          `Regenerate the world with ${change} — about ${rg.estimatedMinutes} min and ${rg.estimatedCredits.toLocaleString('en-US')} Marble credits. Keeps ${rg.keeps.join(', ') || 'nothing'}${rg.drops.length ? `; drops ${rg.drops.join(', ')}` : ''}.`,
+          `Regenerate the world ${what} — about ${rg.estimatedMinutes} min and ${rg.estimatedCredits.toLocaleString('en-US')} Marble credits. Keeps ${rg.keeps.join(', ') || 'nothing'}${rg.drops.length ? `; drops ${rg.drops.join(', ')}` : ''}.`,
         ),
         h('div', { class: 'muted small' }, rg.method === 'pano-inpaint' ? 'Edits the world’s panorama (layout stays) and feeds it to Marble.' : 'New text prompt for Marble (layout may change).'),
         h(
@@ -668,9 +667,16 @@ export function mountEditPanel(director: Director): EditPanel {
   }
 
   director.on((c) => {
+    // a region selected in the viewport (manipulator, "Edit ›") is the next prompt's target
+    if (c === 'region') {
+      const sel = director.pendingRegion;
+      if (JSON.stringify(sel) !== JSON.stringify(selection) && !pending) setSelection(sel ? structuredClone(sel) : null, true);
+      return;
+    }
     if (c === 'scene') {
       cancelPending();
       selection = null;
+      selectionFromDirector = false;
       selecting = false;
       const r = rt();
       if (r) {
@@ -716,7 +722,8 @@ export function mountEditPanel(director: Director): EditPanel {
         selecting = on;
         render();
       },
-      setSelection: (s: RegionSelection | null) => setSelection(s),
+      // the manipulator's "Edit ›" also calls this; a region it already shows keeps only its outline
+      setSelection: (s: RegionSelection | null) => setSelection(s, !!s && JSON.stringify(s) === JSON.stringify(director.pendingRegion)),
       toggle: (id: string, on: boolean) => save((d) => setOpEnabled(d, id, on)),
       remove: (id: string) => save((d) => removeOp(d, id)),
       undo: () => undoLast(),
