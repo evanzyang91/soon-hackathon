@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 
 // .env.local wins over .env (dotenv never overrides a variable that is already set).
@@ -25,13 +26,13 @@ export const env = {
     modalTokenSecret: process.env.MODAL_TOKEN_SECRET ?? '',
   },
   /** Project outputs; served at /projects/<id>/ . */
-  dataDir: process.env.DATA_DIR ?? new URL('../data/projects/', import.meta.url).pathname,
+  dataDir: process.env.DATA_DIR ?? fileURLToPath(new URL('../data/projects/', import.meta.url)),
   /** Pre-generated Marble worlds reused by live projects (server/pipeline/world-library.ts). */
   worldLibraryDir:
-    process.env.WORLD_LIBRARY_DIR ?? new URL('../data/marble/', import.meta.url).pathname,
+    process.env.WORLD_LIBRARY_DIR ?? fileURLToPath(new URL('../data/marble/', import.meta.url)),
   /** Pre-built LHM avatars reused by live projects (server/pipeline/actor-library.ts). */
   actorsLibraryDir:
-    process.env.ACTORS_LIBRARY_DIR ?? new URL('../data/actors-library/', import.meta.url).pathname,
+    process.env.ACTORS_LIBRARY_DIR ?? fileURLToPath(new URL('../data/actors-library/', import.meta.url)),
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */

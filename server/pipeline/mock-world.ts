@@ -8,11 +8,12 @@
 //   pnpm tsx server/pipeline/cli.ts make-mock-world
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import type { Vec3 } from '../../shared/schema.ts';
 import { encodeSpz, type Splat } from './spz.ts';
 
-export const MOCK_WORLD_DIR = new URL('../../fixtures/mock-world/', import.meta.url).pathname;
+export const MOCK_WORLD_DIR = fileURLToPath(new URL('../../fixtures/mock-world/', import.meta.url));
 
 function prng(seed: number) {
   let a = seed >>> 0;

@@ -4,6 +4,7 @@
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ViteDevServer } from 'vite';
 import { env, keyPresence } from './env.ts';
 import { loadOrCreateCerts, lanAddresses } from './https.ts';
@@ -96,7 +97,7 @@ async function main() {
         res.writeHead(404);
         res.end('not found');
       });
-      const dist = new URL('../dist/', import.meta.url).pathname;
+      const dist = fileURLToPath(new URL('../dist/', import.meta.url));
       if (await serveFile(dist, p === '/' ? '/index.html' : p, res)) return;
       res.writeHead(404);
       res.end('not found');
@@ -110,7 +111,7 @@ async function main() {
   if (dev) {
     const hmrPort = process.env.HMR_PORT ? Number(process.env.HMR_PORT) : undefined;
     vite = await (await import('vite')).createServer({
-      configFile: new URL('../web/vite.config.ts', import.meta.url).pathname,
+      configFile: fileURLToPath(new URL('../web/vite.config.ts', import.meta.url)),
       server: {
         middlewareMode: true,
         https: certs,
