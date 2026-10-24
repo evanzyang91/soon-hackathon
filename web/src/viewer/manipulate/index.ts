@@ -107,6 +107,8 @@ export interface ManipHost {
   sealLook(): void;
   /** The depth of field a dropped camera renders with; `own` = its own lens (edited in the Look tab). */
   cameraLens(id: string): { dof: Look['dof']; own: boolean } | null;
+  /** Sets a camera's own lens (when the Look tab gave it one); absent = the focus point is read-only then. */
+  setCameraLens?(id: string, dof: Look['dof']): void;
   cameras(): readonly DropCamera[];
   activeCameraId(): string | null;
   /** `persist` = end of a change (saved with the cameras); live changes reach the phone too. */
@@ -160,7 +162,7 @@ type Drag =
   | { kind: 'move'; ref: TargetRef; info: TargetInfo; raise: boolean; plane: V3; hit0: V3; start: V3; last: V3; before: Before; label: string; keyboard?: boolean }
   | { kind: 'rotate'; ref: TargetRef; info: TargetInfo; center: V3; hit0: V3; yaw0: number; last: number; before: Before; label: string }
   | { kind: 'scale'; ref: TargetRef; info: TargetInfo; center: V3; d0: number; s0: number; last: number; before: Before; label: string }
-  | { kind: 'focus'; ref: TargetRef; info: TargetInfo; o: V3; d: V3; s0: number; f0: number; last: number; before: Before; label: string }
+  | { kind: 'focus'; ref: TargetRef; info: TargetInfo; o: V3; d: V3; s0: number; f0: number; last: number; before: Before; label: string; own: string | null }
   | { kind: 'region-size'; c: V2; d0: number; size0: Vec3; before: Before }
   | { kind: 'region-move'; y: number; hit0: V3; d0: Vec3; last: Vec3; before: Before };
 
@@ -432,7 +434,7 @@ export class Manipulator {
       const lens = this.host.cameraLens(info.camera.id);
       if (lens?.dof.enabled) {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...info.camera.quaternion));
-        focus = { from: info.anchor.clone(), to: info.anchor.clone().addScaledVector(fwd, lens.dof.focusDistance), editable: !lens.own };
+        focus = { from: info.anchor.clone(), to: info.anchor.clone().addScaledVector(fwd, lens.dof.focusDistance), editable: !lens.own || !!this.host.setCameraLens };
       }
     }
     return { box: info.box, center: info.anchor, footprint: info.footprint, ring, knob, focus };
@@ -622,12 +624,12 @@ export class Manipulator {
       case 'focus': {
         const cam = info.camera;
         const lens = cam && this.host.cameraLens(cam.id);
-        if (!cam || !lens || lens.own) return;
+        if (!cam || !lens || (lens.own && !this.host.setCameraLens)) return;
         const o = cam.position as V3;
         const d = v3(new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...cam.quaternion)));
         const s0 = closestOnAxis(ptr.ray, o, d);
         if (s0 === null) return;
-        this.drag = { kind: 'focus', ref: info.ref, info, o, d, s0, f0: lens.dof.focusDistance, last: lens.dof.focusDistance, before: { type: 'look', dof: structuredClone(lens.dof) }, label: `Focus ${label}` };
+        this.drag = { kind: 'focus', ref: info.ref, info, o, d, s0, f0: lens.dof.focusDistance, last: lens.dof.focusDistance, before: { type: 'look', dof: structuredClone(lens.dof) }, label: `Focus ${label}`, own: lens.own ? cam.id : null };
         return;
       }
     }
@@ -713,7 +715,7 @@ export class Manipulator {
         const s = closestOnAxis(ptr.ray, d.o, d.d);
         if (s === null) return;
         d.last = clampFocus(d.f0 + (s - d.s0));
-        this.applyFocus(d.last, false);
+        this.applyFocus(d.last, false, undefined, undefined, d.own);
         return;
       }
       case 'region-size': {
@@ -767,7 +769,7 @@ export class Manipulator {
         this.applyScale(d.info, d.last, true, d.before, d.label);
         return;
       case 'focus':
-        this.applyFocus(d.last, true, d.before, d.label);
+        this.applyFocus(d.last, true, d.before, d.label, d.own);
         return;
       case 'region-size': {
         const reg = this.region;
@@ -916,7 +918,19 @@ export class Manipulator {
     this.transformChange(info, { scale: v }, final, before, label);
   }
 
-  private applyFocus(distance: number, final: boolean, before?: Before, label?: string) {
+  private applyFocus(distance: number, final: boolean, before?: Before, label?: string, own: string | null = null) {
+    // a camera with its own lens (Look tab: "Own lens per camera"): the focus goes to that lens
+    if (own && this.host.setCameraLens) {
+      const setOwn = this.host.setCameraLens.bind(this.host);
+      const cur = this.host.cameraLens(own)?.dof;
+      if (!cur) return;
+      const a = { ...cur, enabled: true, focusDistance: round3(distance) };
+      setOwn(own, a);
+      if (!final || before?.type !== 'look') return;
+      const b = before.dof;
+      this.host.undo.push({ label: label ?? 'Focus', undo: () => setOwn(own, b), redo: () => setOwn(own, a) });
+      return;
+    }
     const look = this.host.look();
     if (!look) return;
     this.host.setLook({ ...look, dof: { ...look.dof, enabled: true, focusDistance: round3(distance) } }, 'manip:focus');
@@ -1201,7 +1215,7 @@ export class Manipulator {
       case 'camera': {
         const cam = info.camera!;
         const lens = this.host.cameraLens(cam.id);
-        hint = `drag to move · Shift raises · ring pans${lens?.dof.enabled ? ` · green point = focus ${lens.dof.focusDistance.toFixed(2)} m${lens.own ? ' (own lens: Look tab)' : ''}` : ''}`;
+        hint = `drag to move · Shift raises · ring pans${lens?.dof.enabled ? ` · green point = focus ${lens.dof.focusDistance.toFixed(2)} m${lens.own ? (this.host.setCameraLens ? ' (this camera’s own lens)' : ' (own lens: Look tab)') : ''}` : ''}`;
         items.push(
           { label: info.active ? 'Active' : 'Make active', title: 'The phone attaches to the active camera', testid: 'manip-activate', on: info.active, disabled: info.active, onClick: () => this.host.setActiveCamera(cam.id) },
           { label: 'Look through', title: 'Fly the director view to this camera', testid: 'manip-look-through', onClick: () => this.host.lookThrough(cam) },
