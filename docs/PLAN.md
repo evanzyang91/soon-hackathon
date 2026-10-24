@@ -29,6 +29,8 @@ screenplay.txt/.fountain
         ▼
  server/pipeline/marble.ts       World Labs Marble text→world (marble-1.1), receipts, poll,
         │                        download SPZ(500k + full) + collider GLB + semantics
+        │                        → calibrate.ts (scale, floor, ground field)
+        │                        → staging.ts (Claude puts each actor's mark on the set)
         ▼
  server/pipeline/actors.ts       character description → reference image (OpenAI image) →
         │                        Modal LHM (worker/modal_lhm.py) →
@@ -107,6 +109,26 @@ screenplay.txt/.fountain
   viseme-driven jaw/mouth morphs from audio amplitude.
 - Fallback when Modal is absent or fails: rigged GLB humanoid (bundled), tinted/labelled per
   character, idle + talk animation clips.
+- Staging (server/pipeline/staging.ts + staging-vision.ts): the planner writes blocking blind
+  (1.5-4 m in front of the camera), so on a generated set actors landed in the road, on a kerb
+  line or inside a counter. After the world stage's calibration, live Marble worlds (ANTHROPIC_API_KEY,
+  never MOCK; `STAGING=0` turns it off) are staged once: labelled rings on free, floored ground the
+  start camera sees (0.5 m grid near, 1 m beyond; a 0.25 m grid and a wider view in a small room;
+  only inside the director's frame) are rendered from the start camera with a clean plate and two
+  raised side views for depth; Claude (claude-opus-5-5, structured output) picks per character a
+  ring, or the feet pixel (up to 12 m when the action names a far place), or the seat pixel for
+  someone sitting, whom they face, the pose and a one-line `Blocking.note` (walkable ground —
+  sidewalk not road, floor not furniture —, where the action says, 1.2-1.8 m apart facing each
+  other, visible, nobody behind anybody). The answer is converted against the collider
+  (correctPlacement, spacing, line of sight, who covers whom), then a second request shows it
+  rendered with mannequins on the marks plus any failures, to keep or fix what the collider
+  cannot see (a raised ad panel, glass, a post). Result: `scene-<n>/staging.json`; the manifest's
+  `plan.blocking` carries the staged marks (plan.json keeps the planner's; Reset to blocking
+  returns to them), the floor offset and ground field are re-measured at them, the Scene tab shows
+  each note. Reused while world id + the scene's blocking/action/cast are unchanged; a calibration
+  change under 10 % rescales the marks, more stages again. ~$0.12-0.15 per scene.
+  `pnpm tsx server/pipeline/cli.ts stage <projectDir> <n> [--write] [--before-after out.png]`
+  stages an existing scene (docs/images/staging-*-before-after.png).
 
 ### Dynamics
 
