@@ -22,7 +22,7 @@ import { PipelineError, isProjectId, type ProjectStore } from '../project.ts';
 import { appendOps } from '../../../web/src/viewer/edits/model.ts';
 import { loadSceneContext } from './context.ts';
 import { planEdit, type PlanInput } from './planner.ts';
-import { markRegenDone, produceRegenWorld, regenKey, regenStatus, type ProduceOptions } from './regen.ts';
+import { dropRegionEdits, markRegenDone, produceRegenWorld, regenKey, regenStatus, type ProduceOptions } from './regen.ts';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -196,36 +196,7 @@ export async function handleRepromptRequest(
       })
       .then(async (result) => {
         if (!result.ok) return;
-        const now = new Date().toISOString();
-        await editsStore
-          .update(id, n, (cur) => {
-            const dropped = cur.edits.filter((e) => e.kind === 'splat-region');
-            const labels = dropped.map((e) => (e.kind === 'splat-region' ? e.label : '')).filter(Boolean);
-            return {
-              ...cur,
-              edits: cur.edits.filter((e) => e.kind !== 'splat-region'),
-              history: [
-                ...cur.history,
-                {
-                  at: now,
-                  prompt: `regenerate: ${regen.prompt.slice(0, 200)}`,
-                  plan: EditPlan.parse({
-                    scope: 'world-regen',
-                    summary: `Regenerated the world (${result.note}). Kept ${regen.keeps.join(', ') || 'actors, look, props'}.${
-                      dropped.length
-                        ? ` Dropped ${dropped.length} region edit${dropped.length > 1 ? 's' : ''} (${labels.join(', ')}): they belonged to the old world.`
-                        : ''
-                    }`,
-                    regen,
-                  }),
-                  appliedOpIds: [],
-                },
-              ],
-            };
-          })
-          .catch((e) => {
-            if (!(e instanceof EditsNotFound)) throw e;
-          });
+        await dropRegionEdits(editsStore, id, n, { prompt: `regenerate: ${regen.prompt.slice(0, 200)}`, note: result.note, regen });
         await markRegenDone(sceneDir, regenKey(regen), result.note);
       })
       .catch((e) => console.error(`[${id}] regen failed:`, e))
