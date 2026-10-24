@@ -6,6 +6,7 @@
 import { api } from '@shared/api';
 import { effectiveProps } from '../viewer/edits/model';
 import { isPropRemoved } from '../viewer/manipulate/edits';
+import { actorHeight } from '../viewer/actors';
 import { floorOffset } from '../viewer/transform';
 import type { Director } from './director';
 import { byId, h } from './dom';
@@ -109,9 +110,27 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
       const a = builds.get(id);
       const ref: Ref = { type: 'actor', id };
       const row = a && p ? projects.actorRow(p, a) : h('div', { class: 'actor-row', 'data-character': id }, h('span', { class: 'actor-name' }, id));
-      // the plan is current (the chat may have just set the photo); the manifest is the fallback
+      // the height the actor is drawn at (viewer/actors actorHeight): body, else asset, else plan
+      const asset = rt.manifest.actors.find((x) => x.characterId === id);
+      const tall =
+        (rt.actors.get(id)?.object.userData.heightMeters as number | undefined) ??
+        (asset ? actorHeight(asset, rt.manifest.characters.find((c) => c.id === id)) : undefined);
+      const name = row.querySelector('.actor-name');
+      let after: Element | null = name;
+      if (tall) {
+        const chip = h('span', { class: 'muted small actor-height', 'data-testid': 'actor-height', title: 'Standing height: the actor is scaled to it' }, `${tall.toFixed(2)} m`);
+        if (after) after.after(chip);
+        else row.append(chip);
+        after = chip;
+      }
+      // the director's photo beside it; the plan is current (the chat may have just set it), the
+      // manifest the fallback
       const character = (p && projectPlan(p, renderCast)?.characters.find((c) => c.id === id)) ?? rt.manifest.characters.find((c) => c.id === id);
-      if (character?.referenceImage) row.prepend(characterPhoto(rt.manifest.projectId, id, character.referenceImage));
+      if (character?.referenceImage) {
+        const photo = characterPhoto(rt.manifest.projectId, id, character.referenceImage);
+        if (after) after.after(photo);
+        else row.prepend(photo);
+      }
       const tools = h(
         'div',
         { class: 'actor-tools' },
