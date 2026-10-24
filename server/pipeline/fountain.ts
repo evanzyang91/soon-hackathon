@@ -416,6 +416,24 @@ export function heuristicWorldPrompt(h: ParsedHeading): string {
   );
 }
 
+/**
+ * The mock planner's standing height: a stable 1.62–1.85 m per character id (FNV-1a), so MOCK
+ * scenes show actors of different heights; an intro that says "tall" or "short" narrows it to
+ * the top or bottom of that range.
+ */
+export function mockHeight(id: string, details = ''): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
+  const u = (h % 1000) / 999;
+  const d = details.toLowerCase();
+  const [lo, hi] = /\b(tall|lanky|towering)\b/.test(d)
+    ? [1.8, 1.85]
+    : /\b(short|petite|small)\b/.test(d)
+      ? [1.62, 1.67]
+      : [1.62, 1.85];
+  return Math.round((lo + u * (hi - lo)) * 100) / 100;
+}
+
 export function mockPlan(
   text: string,
   opts: { title?: string; log?: (m: string) => void } = {},
@@ -444,6 +462,7 @@ export function mockPlan(
         description: details
           ? `${key}: ${details}. Generic placeholder look (mock parser): full body, plain everyday clothes.`
           : `${key}: an adult of average height and build in plain everyday clothes (generic placeholder, mock parser).`,
+        heightMeters: mockHeight(id, details),
         voice: { id: voices[(characters.size * 3) % voices.length]!, gender: 'neutral' },
       });
     }
