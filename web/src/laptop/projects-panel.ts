@@ -342,7 +342,8 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
       const seen = chatSeen.get(current.id);
       chatSeen.set(current.id, rev);
       const key = `${current.id}:${director.sceneIndex}`;
-      if (seen !== undefined && seen !== rev && director.sceneIndex != null) recheck.add(key);
+      // (the first sighting checks too: the change may have landed before this panel knew the scene)
+      if (seen !== rev && director.sceneIndex != null) recheck.add(key);
       const job = current.scenes.find((j) => j.sceneIndex === director.sceneIndex);
       if (recheck.has(key) && job && sceneReady(job)) {
         recheck.delete(key);
