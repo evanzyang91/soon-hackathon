@@ -204,6 +204,47 @@ describe('stageScene', () => {
     expect(report.inputsHash).toBe(stagingInputsHash({ worldId: 'w-1', scene: scene(), characters }));
   });
 
+  it('shows a passing answer back with mannequins; a broken correction leaves the first standing', async () => {
+    const { dir } = await worldDir();
+    const reqs: { text: string; images: number }[] = [];
+    const report = await stageScene({
+      worldDir: dir,
+      scene: scene(),
+      characters,
+      openRenderer: fakeRenderer,
+      call: async (req) => {
+        const text = (req.content.at(-1) as { text: string }).text;
+        reqs.push({ text, images: req.content.filter((b) => b.type === 'image').length });
+        const first = reqs[0]!.text;
+        return message(
+          reqs.length === 1
+            ? answer([who({ characterId: 'maya', mark: labelAt(first, -1, -3), facing: 'leo' }), who({ characterId: 'leo', mark: labelAt(first, 0.5, -3.5), facing: 'maya' })])
+            : answer([who({ characterId: 'maya', mark: 'nowhere' }), who({ characterId: 'leo', mark: labelAt(first, 0.5, -3.5) })]),
+        );
+      },
+    });
+    expect(reqs).toHaveLength(2);
+    expect(reqs[1]!.images).toBeGreaterThan(reqs[0]!.images); // + the mannequin preview
+    expect(reqs[1]!.text).toMatch(/passed the automatic checks/);
+    expect(report.status).toBe('staged');
+    expect(report.blocking[0]!.position).toEqual([-1, 0, -3]);
+    expect(report.attempts[1]!.failures.join()).toMatch(/"nowhere" is not one of the labelled marks/);
+
+    const once = await stageScene({
+      worldDir: dir,
+      scene: scene(),
+      characters,
+      openRenderer: fakeRenderer,
+      review: false,
+      call: async (req) => {
+        const t = (req.content.at(-1) as { text: string }).text;
+        return message(answer([who({ characterId: 'maya', mark: labelAt(t, -1, -3) }), who({ characterId: 'leo', mark: labelAt(t, 0.5, -3.5) })]));
+      },
+    });
+    expect(once.attempts).toHaveLength(1);
+    expect(once.status).toBe('staged');
+  });
+
   it("keeps the planner's blocking when the retry fails too", async () => {
     const { dir } = await worldDir();
     const report = await stageScene({
