@@ -161,3 +161,16 @@ def test_manifest_flags_missing_frames(tmp_path):
     assert manifest["status"] == "partial"
     assert any("frame_000.ply" in p for p in manifest["problems"])
     assert any("frozen.ply" in p for p in manifest["problems"])
+
+
+def test_network_errors_mean_recover_later_not_failed():
+    import run_actor
+
+    class ClientConnectorDNSError(OSError):
+        pass
+
+    assert run_actor.network_error(ClientConnectorDNSError("Cannot connect to host clobber.modal-storage.com:443"))
+    wrapped = ValueError("Checkpoint manifest unavailable; keep the receipt and do not resubmit")
+    wrapped.__cause__ = ConnectionResetError("reset")
+    assert run_actor.network_error(wrapped)
+    assert not run_actor.network_error(ValueError("Recovery output size/hash mismatch: frozen.ply"))

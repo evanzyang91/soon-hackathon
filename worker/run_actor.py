@@ -130,6 +130,22 @@ def summarize(dest: Path, manifest: dict) -> dict:
     }
 
 
+def network_error(error: BaseException) -> bool:
+    """A dropped connection / DNS failure talking to Modal (aiohttp, grpc and socket errors are
+    OSErrors), directly or as the cause of a recovery ValueError: worth recovering again later."""
+    seen = 0
+    while error is not None and seen < 5:
+        if isinstance(error, (OSError, ConnectionError, TimeoutError)) or "DNS" in type(error).__name__:
+            return True
+        error, seen = error.__cause__ or error.__context__, seen + 1
+    return False
+
+
+def retry_later(error: BaseException, receipt: dict) -> int:
+    """Exit 3: the checkpoint is (or will be) in the Volume; --recover again, never resubmit."""
+    return result(False, 3, error=f"download interrupted, recover later: {type(error).__name__}: {error}"[:600], recoveryId=receipt["recoveryId"], network=True)
+
+
 def recover(receipt_path: Path, include_raw: bool, all_frames: bool = False) -> int:
     import modal
 
@@ -141,18 +157,27 @@ def recover(receipt_path: Path, include_raw: bool, all_frames: bool = False) -> 
         manifest = recovery.recover_outputs(
             receipt_path, volume, include_raw=include_raw, all_frames=all_frames
         )
-    except ValueError as error:
-        if "running or incomplete" not in str(error) and "unavailable" not in str(error):
+    except Exception as error:  # noqa: BLE001 - classified below
+        if network_error(error):
+            return retry_later(error, receipt)
+        if not isinstance(error, ValueError) or ("running or incomplete" not in str(error) and "unavailable" not in str(error)):
             raise
         try:  # is the remote call still going? (get with timeout=0 never blocks)
             modal.FunctionCall.from_id(receipt["functionCallId"]).get(timeout=0)
         except (TimeoutError, modal.exception.TimeoutError):
             return result(False, 3, error=str(error), recoveryId=receipt["recoveryId"], running=True)
         except Exception as call_error:  # noqa: BLE001 - the call itself failed or was cancelled
+            if network_error(call_error):
+                return retry_later(call_error, receipt)
             return result(False, 1, error=f"Modal call ended without a checkpoint: {call_error}"[:600])
-        manifest = recovery.recover_outputs(
-            receipt_path, volume, include_raw=include_raw, all_frames=all_frames
-        )
+        try:
+            manifest = recovery.recover_outputs(
+                receipt_path, volume, include_raw=include_raw, all_frames=all_frames
+            )
+        except Exception as again:  # noqa: BLE001
+            if network_error(again):
+                return retry_later(again, receipt)
+            raise
     summary = summarize(Path(receipt["destination"]), manifest)
     ok = manifest["status"] == "complete"
     return result(ok, 0 if ok else 1, **summary)
@@ -259,10 +284,15 @@ def run(a) -> int:
     print(json.dumps(call_result["report"], indent=2), flush=True)
     import modal
 
-    volume = modal.Volume.from_name(recovery.VOLUME_NAME, create_if_missing=False)
-    manifest = recovery.recover_outputs(
-        receipt_path, volume, include_raw=a.include_raw, all_frames=a.all_frames
-    )
+    try:
+        volume = modal.Volume.from_name(recovery.VOLUME_NAME, create_if_missing=False)
+        manifest = recovery.recover_outputs(
+            receipt_path, volume, include_raw=a.include_raw, all_frames=a.all_frames
+        )
+    except Exception as error:  # noqa: BLE001 - the GPU call finished; only the download broke
+        if network_error(error):
+            return retry_later(error, recovery.load_receipt(receipt_path))
+        raise
     summary = summarize(dest, manifest)
     summary["wallSeconds"] = time.time() - started
     ok = manifest["status"] == "complete"
