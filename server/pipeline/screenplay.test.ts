@@ -3,7 +3,7 @@ import { Quaternion, Vector3, Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ScreenplayPlan } from '../../shared/schema.ts';
-import { heuristicBlocking, mockPlan, parseFountain, parseHeading } from './fountain.ts';
+import { heuristicBlocking, mockHeight, mockPlan, parseFountain, parseHeading } from './fountain.ts';
 import { lookAtQuat, yawFacing } from './geometry.ts';
 import { checkDraft, parseScreenplay, type ClaudeCall, type ClaudeRequest } from './screenplay.ts';
 
@@ -38,6 +38,16 @@ describe('mock screenplay parser', () => {
     expect(maya.name).toBe('MAYA');
     expect(maya.description).toMatch(/denim jacket/);
     expect(new Set(plan.characters.map((c) => c.voice.id)).size).toBe(2);
+    // stable per-id heights in 1.62–1.85 m; THEO's intro says "tall"
+    const theo = plan.characters.find((c) => c.id === 'theo')!;
+    expect(maya.heightMeters).toBe(mockHeight('maya'));
+    expect(theo.heightMeters).toBeGreaterThanOrEqual(1.8);
+    expect(theo.heightMeters! - maya.heightMeters!).toBeGreaterThan(0.08);
+    for (const id of ['a', 'leo', 'raj', 'sam', 'alice', 'jack']) {
+      expect(mockHeight(id)).toBeGreaterThanOrEqual(1.62);
+      expect(mockHeight(id)).toBeLessThanOrEqual(1.85);
+    }
+    expect(mockHeight('ana', 'a short woman')).toBeLessThanOrEqual(1.67);
   });
 
   it('keeps dialogue in order with ids, speakers and parentheticals', () => {
@@ -248,8 +258,10 @@ function draft(overrides: { badSpeaker?: boolean } = {}) {
         gender: 'female',
         voice: 'nova',
         description: 'A woman in her 30s.',
+        heightMeters: 1.684,
       },
-      { id: 'theo', name: 'THEO', gender: 'male', voice: 'nova', description: 'A man in his 40s.' },
+      // a slip outside the contract's 0.9–2.3 m is clamped, not rejected
+      { id: 'theo', name: 'THEO', gender: 'male', voice: 'nova', description: 'A tall man in his 40s.', heightMeters: 2.6 },
     ],
     scenes: [
       s1,
@@ -287,6 +299,9 @@ describe('Claude screenplay path (fake client)', () => {
     // duplicate voice re-assigned within the gender pool
     expect(plan.characters.map((c) => c.voice.id)).toEqual(['nova', 'onyx']);
     expect(plan.characters[0]!.name).toBe('MAYA');
+    // per-character height for the actor pipeline, centimetres, within the contract's range
+    expect(plan.characters.map((c) => c.heightMeters)).toEqual([1.68, 2.3]);
+    expect(r.notes).toContain('characters.theo: heightMeters 2.6 clamped to 2.3');
     expect(r.notes.some((n) => /dropped/.test(n))).toBe(true);
   });
 

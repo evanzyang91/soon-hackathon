@@ -173,13 +173,14 @@ export function planViews(
  * (sizeConfidence ≥ 0.6, base pixel on the floor), up to `max`, one view each. The camera stands
  * 3 m from the object on the source camera's side, 1.5 m above the floor there, with a 1.70 m
  * mannequin 0.8 m beside the object, both in frame; spots the collider says are blocked or
- * hidden are skipped.
+ * hidden are skipped. `minSize` lowers the sizeConfidence bar (the before/after picture stands
+ * the mannequin by a parapet even though parapet heights are not standard).
  */
-export function planCloseups(g: ViewGeometry, located: VisionRun['located'], max = 3): PlannedView[] {
+export function planCloseups(g: ViewGeometry, located: VisionRun['located'], max = 3, minSize = 0.6): PlannedView[] {
   const seen: [number, number][] = [];
   const out: PlannedView[] = [];
   const cands = located
-    .filter((o) => o.sizeConfidence >= 0.6)
+    .filter((o) => o.sizeConfidence >= minSize)
     .sort((a, b) => b.sizeConfidence * b.pixelConfidence - a.sizeConfidence * a.pixelConfidence);
   for (const o of cands) {
     if (out.length >= max) break;
