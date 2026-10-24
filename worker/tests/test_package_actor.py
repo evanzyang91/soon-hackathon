@@ -118,7 +118,7 @@ def test_motion_track_matches_frames(tmp_path, raw, quantize):
     out = tmp_path / "sequence"
     seq = pa.package(raw, out, fps=12, loops={"idle": (0, 6)}, quantize=quantize)
     m = seq["motion"]
-    assert m["schema"] == "wander.person-motion/1"
+    assert m["schema"] == "previz.actor-motion/1"
     assert m["channels"] == ["x", "y", "z", "rot_0", "rot_1", "rot_2", "rot_3"]
     assert m["frames"] == 6 and m["splats"] == 4000 and m["frameFiles"] == seq["frames"]
     payload = (out / m["file"]).read_bytes()

@@ -334,7 +334,7 @@ libraries filled, `MOCK=0` on `fixtures/screenplay.fountain` spends only the Cla
 
 ### Scale calibration: is the world really metric?
 
-Marble returns a `metric_scale_factor`, and Orbis found it can be off by up to 2×. After every
+Marble returns a `metric_scale_factor`, but it can be off by up to 2× on some worlds. After every
 Marble download (and from the CLI) the pipeline measures the real scale and stores it as
 `WorldAsset.scaleCalibration`. The viewer multiplies Marble's scale by `factor`, keeping the floor at
 y = 0, and the laptop HUD shows `scale ×0.87 (door 2.04 m)` next to the scene title (the

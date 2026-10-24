@@ -4,9 +4,9 @@
 LHM predicts the canonical gaussians in one feed-forward pass, so fine texture (face, print,
 seams) comes out softer than the reference photo it was built from. This stage renders the
 avatar at the Multi-HMR source pose into the source camera, compares it with the reference and
-optimises the canonical gaussians for a bounded number of steps (Orbis-style, after
-``scripts/finetune_gsplat.py``: masked L1 + 0.2 D-SSIM, a quadratic tether of positions / log
-scales to their LHM values, a hard clamp on the displacement, nothing densified or pruned):
+optimises the canonical gaussians for a bounded number of steps (masked L1 + 0.2 D-SSIM, a
+quadratic tether of positions / log scales to their LHM values, a hard clamp on the
+displacement, nothing densified or pruned):
 
     colour      rgb (clamped to [0, 1], what every viewer displays)
     opacity     logit

@@ -1,12 +1,12 @@
 // Actor splat-sequence format: validation, PLY parsing and height measurement. Pure (no DOM, no
 // three) so the server (server/pipeline/actors.ts) and the browser share one implementation.
 //
-// sequence.json is written by worker/lhm_stages/package_actor.py; it keeps the Orbis person
-// sequence fields (frames, count, fps, timestamps, frame_sha256, motion = wander.person-motion/1)
-// and adds avatarFrame / bounds / nativeHeight / loops. See worker/README.md.
+// sequence.json is written by worker/lhm_stages/package_actor.py: the frame list, count, fps,
+// timestamps, frame_sha256, an optional compact motion track (previz.actor-motion/1) and
+// avatarFrame / bounds / nativeHeight / loops. See worker/README.md.
 
 export const SEQUENCE_SCHEMA = 'previz.actor-sequence/1';
-export const MOTION_SCHEMA = 'wander.person-motion/1';
+export const MOTION_SCHEMA = 'previz.actor-motion/1';
 export const MOTION_CHANNELS = ['x', 'y', 'z', 'rot_0', 'rot_1', 'rot_2', 'rot_3'] as const;
 
 export interface LoopRange {
@@ -34,7 +34,7 @@ export interface ActorSequence {
   count: number;
   fps: number;
   frame_sha256?: string[];
-  /** Missing on raw Orbis/LHM sequences: they are then OpenCV-frame and need the X flip. */
+  /** Missing on raw LHM sequences: they are then OpenCV-frame and need the X flip. */
   avatarFrame?: { up: number[]; forward: number[]; feetY: number; centered: boolean };
   nativeHeight?: number;
   loops?: { idle?: LoopRange; talk?: LoopRange; [name: string]: LoopRange | undefined };
@@ -73,7 +73,7 @@ export function validateSequence(json: unknown): ActorSequence {
   return s;
 }
 
-/** Throws unless `m` is an integrity-bound wander.person-motion/1 record for `seq`. */
+/** Throws unless `m` is an integrity-bound previz.actor-motion/1 record for `seq`. */
 export function motionUsable(m: MotionRecord, seq: Pick<ActorSequence, 'frames'>): void {
   const bytesPer = m.dtype === 'uint16' ? 2 : m.dtype === 'float32' ? 4 : 0;
   if (m.schema !== MOTION_SCHEMA) throw new Error('motion schema mismatch');
@@ -90,7 +90,7 @@ export function motionUsable(m: MotionRecord, seq: Pick<ActorSequence, 'frames'>
 }
 
 // ---------------------------------------------------------------------------------------------
-// Gaussian PLY (binary little-endian, one vertex element, all float32) — Orbis gaussian-ply.ts
+// Gaussian PLY (binary little-endian, one vertex element, all float32)
 // ---------------------------------------------------------------------------------------------
 
 export interface GaussianPly {
