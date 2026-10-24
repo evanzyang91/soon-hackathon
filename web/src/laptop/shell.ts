@@ -2,9 +2,9 @@
 // lines, background action, location), Shots (the shot list) and Camera (phone, takes, clock) —
 // with Tab cycling them; the Tools drawer over the right panel (tools.ts, T); the collapsible
 // script drawer on the left ( [ ); the top bar (brand, `Project · Sc 1 · HEADING`, the look's
-// name, clock + Play / Pause, Export, Tools, an overflow menu with undo / redo / the cheatsheet);
-// the keyboard & mouse cheatsheet, a 3-step first-run tour (fly → add a shot → pair the phone;
-// dismissible, remembered) and hover hints for buttons the panels render without one.
+// name, clock + Reset + Play / Pause, Export, Tools, an overflow menu with undo / redo / the
+// cheatsheet); the keyboard & mouse cheatsheet, a 3-step first-run tour (fly → add a shot → pair
+// the phone; dismissible, remembered) and hover hints for buttons the panels render without one.
 //
 // A mode is shown by setting its pane's `hidden`.
 import type { Director } from './director';
@@ -102,6 +102,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   setDrawer(storageGet<string>(DRAWER_KEY) !== 'closed');
 
   // ---- top bar ---------------------------------------------------------------------------------
+  const resetBtn = document.getElementById('top-reset') as HTMLButtonElement;
   const playBtn = document.getElementById('top-play') as HTMLButtonElement;
   const clock = document.getElementById('top-clock')!;
   const lookBadge = document.getElementById('top-look') as HTMLButtonElement;
@@ -132,6 +133,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') setMenu(null);
   });
+  resetBtn.addEventListener('click', () => director.resetScene());
   playBtn.addEventListener('click', () => director.togglePlay());
   lookBadge.addEventListener('click', () => tools.open('grade'));
   let undoApi: Parameters<Shell['setUndo']>[0] | null = null;
@@ -147,6 +149,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   const renderClock = () => {
     const rt = director.runtime;
     playBtn.disabled = !rt;
+    resetBtn.disabled = !rt;
     const playing = !!rt?.playing;
     const label = playing ? 'Pause' : 'Play';
     if (playBtn.getAttribute('aria-label') !== label) {
@@ -176,6 +179,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
       renderLook();
     }
     if (c === 'undo' || c === 'scene') renderUndo();
+    if (c === 'reset') toast('Scene reset');
   });
   tools.onChange(() => renderUndo());
   renderClock();
@@ -297,6 +301,7 @@ const KEYS: [string, [string, string][]][] = [
       ['C', 'add the view as a shot (frame grabbed)'],
       ['F', 'grab the selected shot’s frame again'],
       ['Space', 'play / pause the scene clock'],
+      ['0', 'reset the scene: clock to 0:00, everyone back on their marks'],
       ['R', 'record a take'],
       ['V', 'view through the phone'],
       ['T', 'tools: grade, re-prompt, objects, developer'],

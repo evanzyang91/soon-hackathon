@@ -128,7 +128,7 @@ function mountClock(director: Director) {
   const clock = byId('sc-clock');
   const playBtn = byId<HTMLButtonElement>('sc-play');
   playBtn.addEventListener('click', () => director.togglePlay());
-  byId('sc-reset').addEventListener('click', () => director.resetClock());
+  byId('sc-reset').addEventListener('click', () => director.resetScene());
   const render = () => {
     const rt = director.runtime;
     clock.textContent = fmtTime(rt?.time ?? 0);

@@ -776,6 +776,7 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
   director.on((c) => {
     if (c === 'scene' || c === 'loading') void open(director.runtime);
     if (c === 'cameras') reconcile();
+    if (c === 'reset') deselect();
   });
   render();
 
