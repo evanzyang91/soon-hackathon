@@ -57,7 +57,7 @@ The last stdout line is always `RESULT {json}`. Exit codes: 0 ok, 1 failed, 2 us
 
 | Volume path | Source |
 | --- | --- |
-| `data/pretrained_models/`, `data/gfpgan/` | LHM prior archive, 18.8 GB uncompressed tar on Alibaba OSS (~10 MB/s into Modal, ~30 min). Stream-extracted with pinned Range + If-Match, so a rerun resumes instead of restarting |
+| `data/pretrained_models/`, `data/gfpgan/` | LHM prior archive, 18.8 GB uncompressed tar on Alibaba OSS. Stream-extracted with pinned Range + If-Match, so a rerun resumes instead of restarting. Measured 2026-10-24: 2,127 s (~9 MB/s), ~$0.075 CPU |
 | `huggingface/hub/models--3DAIGC--LHM-500M-HF` | `snapshot_download` at the pinned revision |
 | `torch/hub/checkpoints/dinov2_vitl14_reg4_pretrain.pth`, `gfpgan/weights/GFPGANv1.3.pth`, `data/gfpgan/weights/{detection_Resnet50_Final,parsing_parsenet}.pth` | Same auxiliary weights Orbis stages |
 | `u2net/u2net.onnx` | rembg person matte (used when no mask is sent) |
@@ -162,13 +162,14 @@ Receipts compute `seconds × (L4 $0.000222 + 4 CPU × $0.0000131 + 64 GiB × $0.
 $0.00042/s, the same list prices Orbis uses. Orbis's single-frame LHM-500M runs on an L4 take a
 few minutes including model load. 72 extra `animation_infer_gs` calls + PLY writes add roughly a
 minute. The first call also pulls the ~15 GB image. Expect about 5–10 min and $0.15–0.25 per
-actor. One-time staging is CPU-only: ~35 min, under $0.02.
+actor. One-time staging is CPU-only. Measured: priors 2,127 s (~$0.075), model + aux 108 s (~$0.004).
 
 ## Verification status
 
 - Verified: Modal auth; the CUDA image builds on Modal (pytorch3d, diff-gaussian-rasterization
   and simple-knn compile; `import torch, pytorch3d, diff_gaussian_rasterization, gsplat, rembg;
-  from LHM.models import model_dict` passes); weight staging (`--check` audit); the full local
+  from LHM.models import model_dict` passes); every weight is staged in Volume
+  `previz-stage-lhm-cache` (`--check` reports `ready: true`); the full local
   path up to Modal's GPU refusal; packaging, motion and recovery under pytest; the browser
   playing a packaged synthetic sequence (`npx tsx scripts/actor-browser-check.ts`).
 - **Not verified:** any L4 inference (`lhm_actor.py` end to end). It needs a payment method on
