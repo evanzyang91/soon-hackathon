@@ -16,6 +16,8 @@ import {
   phoneAnchor,
   phoneCameraPose,
   phoneCommand,
+  pipRectFor,
+  poseAspect,
   poseIsFresh,
   reducePhoneLink,
   sceneStateKey,
@@ -29,7 +31,7 @@ import { storageGet, storageSet } from './storage';
 export type Change =
   'scene' | 'loading' | 'cameras' | 'clock' | 'phone' | 'lines' | 'view' | 'recording' | 'pairing';
 
-/** Phones are assumed to film landscape 16:9 (PhonePose carries no aspect). */
+/** Phone framing when its pose does not carry `aspect` (landscape 16:9). */
 export const PHONE_ASPECT = 16 / 9;
 const HEARTBEAT_MS = 250;
 
@@ -330,6 +332,11 @@ export class Director {
     return this.phone.phones > 0 || poseIsFresh(this.phone, now);
   }
 
+  /** Width / height of what the followed phone renders (its pose says; else 16:9). */
+  phoneAspect(): number {
+    return poseAspect(this.phone.lastPose, PHONE_ASPECT);
+  }
+
   /** Current phone camera pose in the world (null until the phone has sent one). */
   phonePose(): CameraPose | null {
     if (!this.phone.lastPose) return null;
@@ -464,11 +471,9 @@ export class Director {
     clearInterval(this.heartbeat);
   }
 
-  /** Computes where the PiP goes for a given canvas size (bottom-right, 16:9). */
-  static pipRectFor(width: number, height: number): PipRect {
-    const w = Math.round(Math.min(Math.max(width * 0.28, 200), 480, width - 24));
-    const h = Math.round(w / PHONE_ASPECT);
-    return { x: width - w - 12, y: height - h - 12, width: w, height: h };
+  /** Computes where the PiP goes for a given canvas size (bottom-right, `aspect` shaped). */
+  static pipRectFor(width: number, height: number, aspect = PHONE_ASPECT): PipRect {
+    return pipRectFor(width, height, aspect);
   }
 
   private frame(t: number) {
@@ -489,7 +494,8 @@ export class Director {
     const pip = this.pipSource(t);
     if (pip && this.pipEnabled && !this.recorder.recording) {
       const { width, height } = this.view.size;
-      const rect = Director.pipRectFor(width, height);
+      const aspect = pip.camera === this.phoneCamera ? this.phoneAspect() : PHONE_ASPECT;
+      const rect = Director.pipRectFor(width, height, aspect);
       this.view.renderPip(pip.camera, rect);
       this.pipRect = rect;
       this.pipLabel = pip.label;
@@ -532,7 +538,7 @@ export class Director {
     this.phoneCamera.updateMatrixWorld();
     this.phoneGizmo.object.visible = attached && !this.viewFromPhone;
     this.phoneGizmo.setPose(this.phoneCamera.position, this.phoneCamera.quaternion);
-    this.phoneGizmo.setFov(this.phoneCamera.fov, PHONE_ASPECT);
+    this.phoneGizmo.setFov(this.phoneCamera.fov, this.phoneAspect());
     this.phoneGizmo.setColor(
       poseIsFresh(this.phone, now)
         ? this.phone.lastPose?.recording

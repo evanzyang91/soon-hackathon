@@ -111,13 +111,35 @@ export interface PhoneLinkState {
   lastPose: PhonePose | null;
   /** Local performance.now() when lastPose arrived. */
   lastPoseAt: number;
+  /** Relay-stamped phoneId whose poses drive the gizmo + PiP (null until the first pose). */
+  followId: string | null;
+  /** Every phoneId seen since the room last had no phones, oldest first. */
+  seen: string[];
 }
 
 export const initialPhoneLink = (): PhoneLinkState => ({
   phones: 0,
   lastPose: null,
   lastPoseAt: 0,
+  followId: null,
+  seen: [],
 });
+
+/** A followed phone that has been silent this long (it keepalives at 4 Hz) hands over. */
+export const FOLLOW_STALE_MS = 1000;
+
+/**
+ * Which phone the laptop follows when several are paired: the most recently joined one (the
+ * first pose from a phoneId not seen before takes over), falling back to whichever phone speaks
+ * next once the followed one has been silent for FOLLOW_STALE_MS. Poses from other phones are
+ * ignored meanwhile, so two streaming phones never make the gizmo flicker between them.
+ */
+export function followsPose(state: PhoneLinkState, pose: PhonePose, now: number): boolean {
+  const id = pose.phoneId;
+  if (!id || !state.followId || id === state.followId) return true; // unstamped: legacy relay
+  if (!state.seen.includes(id)) return true;
+  return now - state.lastPoseAt > FOLLOW_STALE_MS;
+}
 
 /** Folds an incoming relay message into the phone link state (pure reducer). */
 export function reducePhoneLink(
@@ -128,11 +150,54 @@ export function reducePhoneLink(
   switch (msg.type) {
     case 'peers':
       return msg.phones > 0 ? { ...state, phones: msg.phones } : { ...initialPhoneLink() };
-    case 'pose':
-      return { ...state, phones: Math.max(1, state.phones), lastPose: msg, lastPoseAt: now };
+    case 'pose': {
+      const id = msg.phoneId ?? null;
+      const seen = id && !state.seen.includes(id) ? [...state.seen, id] : state.seen;
+      if (!followsPose(state, msg, now)) return seen === state.seen ? state : { ...state, seen };
+      return {
+        ...state,
+        phones: Math.max(1, state.phones),
+        lastPose: msg,
+        lastPoseAt: now,
+        followId: id,
+        seen,
+      };
+    }
     default:
       return state;
   }
+}
+
+/** Phone render aspect (width / height) from its pose, clamped; 16:9 when it does not say. */
+export function poseAspect(pose: PhonePose | null, fallback = 16 / 9): number {
+  const a = pose?.aspect;
+  return a && Number.isFinite(a) ? Math.min(3, Math.max(0.4, a)) : fallback;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where the PiP goes on a `width` x `height` canvas: bottom-right, `aspect` shaped, inside a box
+ * about 28% of the canvas wide (200–480 px) and at most 40% of it tall.
+ */
+export function pipRectFor(width: number, height: number, aspect = 16 / 9): Rect {
+  const a = Math.min(3, Math.max(0.4, aspect));
+  const maxW = Math.min(Math.max(width * 0.28, 200), 480, width - 24);
+  const maxH = Math.max(40, Math.min(height * 0.4, (maxW / (16 / 9)) * 1.6));
+  let w = maxW;
+  let h = w / a;
+  if (h > maxH) {
+    h = maxH;
+    w = h * a;
+  }
+  w = Math.round(w);
+  h = Math.round(h);
+  return { x: width - w - 12, y: height - h - 12, width: w, height: h };
 }
 
 export function poseIsFresh(state: PhoneLinkState, now: number, maxAgeMs = 3000): boolean {
