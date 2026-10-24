@@ -39,6 +39,14 @@ interface Body {
 
 export const PROCEDURAL_GLB = 'procedural:mannequin';
 
+/**
+ * How far a seated actor's body (and head) sits below standing height. The mannequin poses its
+ * hips at this height; splat and GLB bodies, which have no sitting motion, are lowered by it so
+ * blocking that says "sitting" still reads at a plausible seated eye line.
+ */
+export const SIT_DROP_M = 0.45;
+export const poseDrop = (pose: Pose) => (pose === 'sitting' ? SIT_DROP_M : 0);
+
 /** True when `glb` names a loadable file rather than the procedural mannequin. */
 export function wantsGlbFile(glb: string): boolean {
   return !!glb && !glb.startsWith('procedural:') && /\.(glb|gltf)(\?|#|$)/i.test(glb);
@@ -63,7 +71,8 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
   const box = new THREE.Box3().setFromObject(root);
   const h = box.max.y - box.min.y || 1.7;
   root.scale.setScalar(1.7 / h);
-  root.position.y = (-box.min.y * 1.7) / h;
+  const baseY = (-box.min.y * 1.7) / h;
+  root.position.y = baseY;
   root.traverse((o) => {
     if (o instanceof THREE.Mesh && asset.tint && o.material instanceof THREE.MeshStandardMaterial) {
       o.material = o.material.clone();
@@ -108,6 +117,7 @@ async function glbBody(asset: Extract<ActorAsset, { kind: 'glb-humanoid' }>, bas
     },
     setPose(p) {
       pose = p;
+      root.position.y = baseY - poseDrop(p); // no sitting clip: lower the standing body
     },
     dispose() {
       mixer.stopAllAction();
@@ -127,7 +137,10 @@ async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promi
         root: s.root,
         headY: s.headY,
         animate: (dt, _t, speaking) => s.animate(dt, speaking),
-        setPose: () => {}, // one captured idle/talk motion; sitting/walking are not in the sequence
+        // one captured idle/talk motion: no sitting/walking frames, so a seated actor is lowered
+        setPose: (p) => {
+          s.root.position.y = -poseDrop(p);
+        },
         debug: () => ({ frame: s.frame, frames: s.sequence.count }),
         dispose: () => s.dispose(),
       };
@@ -209,6 +222,8 @@ export async function createActor(
     },
     setPose(pose) {
       body.setPose(pose);
+      headY = body.headY - poseDrop(pose);
+      place();
     },
     update(dt, _sceneTime) {
       t += dt;
