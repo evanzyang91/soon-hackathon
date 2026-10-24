@@ -505,12 +505,13 @@ world regeneration, and with `calibrate … --write`. Library copies carry `grou
 | --- | --- | --- | --- | --- | --- |
 | bus stop (`the-last-bus`) | 63×60 | 74 % | -0.60…+0.21 m | 2.9 → 0.4 cm | 6.3 → 0.5 cm |
 | city-street-night | 64×60 | 90 % | -0.34…+0.23 m | 9.3 → 0.3 cm | 13.6 → 0.2 cm |
-| rooftop-dusk | 64×60 | 93 % | -0.33…+0.26 m | 4.0 → 0.2 cm | 23.9 → 0.1 cm |
+| rooftop-dusk (at its ×0.778 scale) | 64×60 | 93 % | -0.33…+0.26 m | 3.1 → 0.2 cm | 18.8 → 0.1 cm |
 | kitchen-morning | 24×21 (the room) | 50 % | -0.07…+0.10 m | 3.6 → 1.2 cm | — |
 
 The feet error is the gap between the feet and the k500 splats lying flat within 0.15 m of them,
-an independent look at the ground the viewer draws. For the library worlds the marks are the floor
-probes. `pnpm tsx scripts/ground-evidence.ts <worldDir> --name <n>` renders the pictures below
+an independent look at the ground the viewer draws. It is measured in scene metres; the ground
+heights are at Marble's scale, so the rooftop's ×0.778 turns its 24 cm walkway step into 19 cm.
+For the library worlds the marks are the floor probes. `pnpm tsx scripts/ground-evidence.ts <worldDir> --name <n>` renders the pictures below
 (1.70 m mannequins in GPU Chromium; feet close-ups, before | after).
 
 ![Bus stop: feet at the median floor vs on the ground field](docs/images/ground-bus-stop-before-after.png)
