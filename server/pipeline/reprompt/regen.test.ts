@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { generateWorld } from '../marble.ts';
+import { generateWorld, promptKey } from '../marble.ts';
 import { compositeMasked, decodePng, editMask, encodePng, resize, type Image } from './png.ts';
 import { imageEditPrompt, maskFor, produceRegenWorld, regenKey, type ImageEdit } from './regen.ts';
 
@@ -88,7 +88,7 @@ describe('pano-inpaint under MARBLE_DRY_RUN', () => {
     expect(seen!.prompt).toMatch(/^Make it snow/);
     const input = decodePng(seen!.image);
     expect([input.width, input.height]).toEqual([1536, 1024]); // the model's 3:2 size
-    const sentMask = decodePng(seen!.mask);
+    const sentMask = decodePng(seen!.mask!);
     expect(sentMask.channels).toBe(4);
     expect(sentMask.data[3]).toBe(0); // whole-image change: everything free
     const edited = decodePng(await readFile(join(sceneDir, 'regen', regenKey(regen), 'pano-edited.png')));
@@ -142,5 +142,6 @@ describe('marble image prompt (live path, fake API)', () => {
     expect(calls[2]!.body).toMatchObject({ world_prompt: { type: 'image', image_prompt: { source: 'media_asset', media_asset_id: 'ma-1' }, is_pano: true } });
     const receipt = JSON.parse(await readFile(join(outDir, 'marble-receipt.json'), 'utf8'));
     expect(receipt).toMatchObject({ status: 'submitted', operation_id: 'op-1', media_asset_id: 'ma-1' });
+    expect(receipt.promptSha256).toBe(await promptKey({ prompt: 'snow', imagePrompt: { file, isPano: true } }));
   });
 });

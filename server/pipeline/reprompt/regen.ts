@@ -4,35 +4,40 @@
 //     assets.imagery.pano_url) → OpenAI image edit (gpt-image-1.5, `images/edits`) with a prompt
 //     that describes only the environmental change and a mask freeing the sky or the whole image
 //     → resize back to a 2:1 panorama → upload as a Marble image prompt with `is_pano: true`.
-//   text: Marble text prompt = the plan's new world prompt.
+//   text: Marble text prompt = the plan's new world prompt; with `reference` (the director's
+//     environment photo, ScenePlan.worldReference) the photo is the image prompt and the world
+//     prompt its text — ProjectStore.regenerateWorld regenerates from the current plan this way.
 //
-// Everything lands in scene-<n>/regen/<key>/ (key = hash of method + prompt) with a receipt
-// (regen.json) per step, so a repeated or resumed request never pays twice: the downloaded and
-// edited panoramas are reused, and the Marble receipt inside regen/<key>/world/ is the usual
+// Everything lands in scene-<n>/regen/<key>/ (key = hash of method + prompt [+ photo sha]) with a
+// receipt (regen.json) per step, so a repeated or resumed request never pays twice: the downloaded
+// and edited panoramas are reused, and the Marble receipt inside regen/<key>/world/ is the usual
 // one (marble.ts). MARBLE_DRY_RUN=1 logs the exact upload + generate requests (marble-dry-run.json)
 // and produces the mock world. MOCK=1 skips the network entirely (the "edited" panorama is the
 // mock world's thumbnail).
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { EditPlan } from '../../../shared/look.ts';
+import { EditPlan } from '../../../shared/look.ts';
 import type { WorldAsset } from '../../../shared/schema.ts';
 import { env } from '../../env.ts';
+import { EditsNotFound, type EditsStore } from '../edits.ts';
 import { exists, readJson, safeEndpoint, writeJsonAtomic } from '../fsutil.ts';
-import { generateWorld, type GenerateWorldOptions } from '../marble.ts';
+import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions, type MarbleReceipt } from '../marble.ts';
 import { MOCK_WORLD_DIR } from '../mock-world.ts';
+import { IMAGE_EDIT_MODELS, openaiImageEdit, type ImageEdit } from '../openai-image.ts';
 import { compositeMasked, decodePng, EDIT_CANVAS, editMask, encodePng, isPng, resize, toRgb } from './png.ts';
 
+export { IMAGE_EDIT_MODELS, openaiImageEdit, type ImageEdit };
 export type RegenSpec = NonNullable<EditPlan['regen']>;
 export const REGEN_FILE = 'regen.json';
 /** Panorama size sent to the image model and on to Marble (2:1 equirectangular). */
 export const PANO_SIZE = { width: 2048, height: 1024 };
-export const IMAGE_EDIT_MODELS = process.env.REGEN_IMAGE_MODEL
-  ? [process.env.REGEN_IMAGE_MODEL]
-  : ['gpt-image-1.5', 'gpt-image-2', 'gpt-image-1'];
 
-export const regenKey = (r: Pick<RegenSpec, 'method' | 'prompt'>) =>
-  createHash('sha256').update(`${r.method}\n${r.prompt.trim()}`).digest('hex').slice(0, 12);
+const sha256 = (b: string | Uint8Array) => createHash('sha256').update(b).digest('hex');
+
+/** Job key: method + prompt, plus the photo's sha256 when a director's photo is the image prompt. */
+export const regenKey = (r: Pick<RegenSpec, 'method' | 'prompt'>, photoSha?: string) =>
+  sha256(`${r.method}\n${r.prompt.trim()}${photoSha ? `\nphoto:${photoSha}` : ''}`).slice(0, 12);
 
 const SKY_ONLY = /\b(sky|skies|clouds?|cloudy|overcast|sunset|sunrise|stars?|starry|moon|aurora|storm clouds)\b/i;
 const GROUND = /\b(snow|ice|icy|frost|wet|puddles?|rain|leaves|autumn|fall|winter|summer|spring|season|desert|sand|grass|flood|ground|street|road|pavement|materials?|walls?|floor)\b/i;
@@ -61,62 +66,13 @@ export interface RegenReceipt {
   mask?: 'sky' | 'whole';
   panoSource?: string;
   imageModel?: string;
+  /** The director's environment photo sent as the image prompt (project-relative upload). */
+  photo?: { file: string; sha256: string; isPano: boolean };
   error?: string;
   steps: { at: string; step: string; note: string }[];
   createdAt: string;
   updatedAt: string;
 }
-
-export type ImageEdit = (o: { image: Buffer; mask: Buffer; prompt: string; log: (m: string) => void }) => Promise<{
-  png: Buffer;
-  model: string;
-}>;
-
-/** OpenAI `POST /v1/images/edits` (multipart), first model the account has. */
-export const openaiImageEdit: ImageEdit = async ({ image, mask, prompt, log }) => {
-  let last = '';
-  let fidelity = true;
-  for (let k = 0; k < IMAGE_EDIT_MODELS.length; k++) {
-    const model = IMAGE_EDIT_MODELS[k]!;
-    const form = new FormData();
-    form.set('model', model);
-    form.set('prompt', prompt);
-    form.set('size', '1536x1024');
-    form.set('quality', process.env.REGEN_IMAGE_QUALITY ?? 'high');
-    form.set('n', '1');
-    if (fidelity) form.set('input_fidelity', 'high');
-    form.set('image', new Blob([new Uint8Array(image)], { type: 'image/png' }), 'pano.png');
-    form.set('mask', new Blob([new Uint8Array(mask)], { type: 'image/png' }), 'mask.png');
-    const t0 = Date.now();
-    const res = await fetch('https://api.openai.com/v1/images/edits', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.keys.openai}` },
-      body: form,
-      signal: AbortSignal.timeout(300_000),
-    });
-    if (!res.ok) {
-      last = `OpenAI image edit (${model}) HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-      if (res.status === 400 && fidelity && /input_fidelity/i.test(last)) {
-        log(`${model} does not take input_fidelity; retrying without it`);
-        fidelity = false;
-        k--;
-        continue;
-      }
-      if ((res.status === 400 || res.status === 404) && /model|does not exist|not found|invalid_value/i.test(last)) {
-        log(`${model} unavailable for edits; trying the next model`);
-        continue;
-      }
-      throw new Error(last);
-    }
-    const json = (await res.json()) as { data?: { b64_json?: string }[]; usage?: unknown };
-    const b64 = json.data?.[0]?.b64_json;
-    if (!b64) throw new Error(`OpenAI image edit (${model}) returned no image`);
-    const png = Buffer.from(b64, 'base64');
-    log(`image edit via ${model}: ${png.length} bytes in ${((Date.now() - t0) / 1000).toFixed(1)}s${json.usage ? ` usage ${JSON.stringify(json.usage)}` : ''}`);
-    return { png, model };
-  }
-  throw new Error(last || 'no image model configured');
-};
 
 export interface ProduceOptions {
   sceneDir: string;
@@ -127,6 +83,11 @@ export interface ProduceOptions {
   log: (m: string) => void;
   dryRun?: boolean;
   model?: string;
+  /**
+   * method 'text' only: the director's environment photo (a PNG) as the Marble image prompt, with
+   * `regen.prompt` as its text. Its sha256 joins the job key, so a new photo is a new job.
+   */
+  photo?: { file: string; isPano: boolean; source?: string };
   deps?: {
     fetch?: typeof fetch;
     imageEdit?: ImageEdit;
@@ -136,7 +97,8 @@ export interface ProduceOptions {
 
 /** Builds the new world in scene-<n>/regen/<key>/world/ and returns that directory. */
 export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: string; note: string; key: string }> {
-  const key = regenKey(o.regen);
+  const photo = o.photo && o.regen.method === 'text' ? { ...o.photo, sha256: sha256(await readFile(o.photo.file)) } : undefined;
+  const key = regenKey(o.regen, photo?.sha256);
   const jobDir = join(o.sceneDir, 'regen', key);
   const worldDir = join(jobDir, 'world');
   await mkdir(jobDir, { recursive: true });
@@ -148,6 +110,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
     method: o.regen.method,
     prompt: o.regen.prompt,
     status: 'running',
+    ...(photo ? { photo: { file: photo.source ?? photo.file, sha256: photo.sha256, isPano: photo.isPano } } : {}),
     steps: [],
     createdAt: now(),
     updatedAt: now(),
@@ -157,7 +120,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
     await writeJsonAtomic(receiptPath, r);
     o.log(`${name}: ${note}`);
   };
-  await step('start', `${o.regen.method} "${o.regen.prompt.slice(0, 120)}"`, { status: 'running' });
+  await step('start', `${o.regen.method}${photo ? ' + photo' : ''} "${o.regen.prompt.slice(0, 120)}"`, { status: 'running' });
   const gen = o.deps?.generateWorld ?? generateWorld;
   const dryRun = o.dryRun ?? env.marbleDryRun;
   try {
@@ -223,6 +186,18 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
         imagePrompt: { file: editedPath, isPano: true },
       });
       note = `regenerated from the edited panorama (${mask === 'sky' ? 'sky' : 'whole image'})`;
+    } else if (photo) {
+      await gen({
+        prompt: o.regen.prompt,
+        name: o.name,
+        outDir: worldDir,
+        model: o.model,
+        mock: o.mock,
+        dryRun,
+        log: o.log,
+        imagePrompt: { file: photo.file, isPano: photo.isPano, textPrompt: o.regen.prompt },
+      });
+      note = `regenerated from your photo${photo.isPano ? ' (360° panorama)' : ''}`;
     } else {
       await gen({ prompt: o.regen.prompt, name: o.name, outDir: worldDir, model: o.model, mock: o.mock, dryRun, log: o.log });
       note = 'regenerated from the new text prompt';
@@ -247,4 +222,69 @@ export async function markRegenDone(sceneDir: string, key: string, note: string)
 
 export async function regenStatus(sceneDir: string, regen: Pick<RegenSpec, 'method' | 'prompt'>): Promise<RegenReceipt | undefined> {
   return readJson<RegenReceipt>(join(sceneDir, 'regen', regenKey(regen), REGEN_FILE));
+}
+
+/**
+ * A world already generated from `promptSha256` (marble.ts promptKey: the prompt, plus the photo's
+ * sha for an image prompt) among the scene's current world, the worlds kept aside by earlier
+ * regenerations (world.prev-<k>/, newest first) and finished regen jobs: switching back to an
+ * earlier prompt or photo swaps that world in again instead of paying Marble twice. Only complete
+ * Marble receipts count (a dry-run or mock world was never generated).
+ */
+export async function findGeneratedWorld(sceneDir: string, promptSha256: string): Promise<string | null> {
+  const names = await readdir(sceneDir).catch(() => [] as string[]);
+  const prev = names
+    .map((n) => /^world\.prev-(\d+)$/.exec(n))
+    .filter((m): m is RegExpExecArray => !!m)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map((m) => join(sceneDir, m[0]));
+  const jobs = (await readdir(join(sceneDir, 'regen')).catch(() => [] as string[])).map((k) => join(sceneDir, 'regen', k, 'world'));
+  for (const dir of [join(sceneDir, 'world'), ...prev, ...jobs]) {
+    const r = await readJson<MarbleReceipt>(join(dir, RECEIPT_FILE)).catch(() => undefined);
+    if (r?.status === 'complete' && r.promptSha256 === promptSha256 && (await exists(join(dir, ASSET_FILE)))) return dir;
+  }
+  return null;
+}
+
+/**
+ * After a new world is in place: region edits (they cut the old world's splats) are dropped from
+ * edits.json with a history entry saying so; look, actors, props and moves are kept. A scene
+ * without edits.json yet is left alone.
+ */
+export async function dropRegionEdits(
+  edits: EditsStore,
+  projectId: string,
+  sceneIndex: number,
+  o: { prompt: string; note: string; regen: RegenSpec },
+): Promise<void> {
+  const now = new Date().toISOString();
+  await edits
+    .update(projectId, sceneIndex, (cur) => {
+      const dropped = cur.edits.filter((e) => e.kind === 'splat-region');
+      const labels = dropped.map((e) => (e.kind === 'splat-region' ? e.label : '')).filter(Boolean);
+      return {
+        ...cur,
+        edits: cur.edits.filter((e) => e.kind !== 'splat-region'),
+        history: [
+          ...cur.history,
+          {
+            at: now,
+            prompt: o.prompt,
+            plan: EditPlan.parse({
+              scope: 'world-regen',
+              summary: `Regenerated the world (${o.note}). Kept ${o.regen.keeps.join(', ') || 'actors, look, props'}.${
+                dropped.length
+                  ? ` Dropped ${dropped.length} region edit${dropped.length > 1 ? 's' : ''} (${labels.join(', ')}): they belonged to the old world.`
+                  : ''
+              }`,
+              regen: o.regen,
+            }),
+            appliedOpIds: [],
+          },
+        ],
+      };
+    })
+    .catch((e) => {
+      if (!(e instanceof EditsNotFound)) throw e;
+    });
 }

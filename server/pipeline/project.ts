@@ -26,13 +26,21 @@
 // current build stays in the manifests until the new one is ready, then every scene manifest
 // showing the character is rewritten to it. A failure changes nothing but the note.
 //
+// Director's photos (the project chat, shared/chat.ts): a character with Character.referenceImage is
+// built from that photo (actors.ts) and never from the actors library; a scene with
+// ScenePlan.worldReference is generated with the photo as Marble's image prompt and never from the
+// world library. After the plan changed on a live project the chat calls rebuildActorFromPlan
+// (actors/<id>/ set aside as prev-<k>/, rebuilt from the current character) and regenerateWorld
+// (scene-<n>/world/ set aside as world.prev-<k>/, regenerated from the current prompt + photo
+// through the scoped re-prompt regen machinery).
+//
 // Per scene, world / actors / tts run concurrently (Marble jobs capped at 3 across the server);
 // manifest follows. A failed stage is recorded with a note; the manifest is still written when the
 // world succeeded. Asset URLs inside manifests are relative to the project root
 // (/projects/<id>/), matching shared/api.ts.
 import { randomBytes } from 'node:crypto';
 import { appendFile, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { api } from '../../shared/api.ts';
 import {
   ActorAsset,
@@ -49,7 +57,7 @@ import {
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
-import { actorDirFor, buildActor, heightFor, withHeight } from './actors.ts';
+import { actorDirFor, buildActor, heightFor, photoSha, withHeight } from './actors.ts';
 import {
   calibrateWorld,
   previousCalibration,
@@ -61,9 +69,12 @@ import {
 } from './calibrate.ts';
 import { storedGroundField, writeGroundField } from './calibrate-ground.ts';
 import { parseFountain } from './fountain.ts';
+import { editsStoreFor } from './edits.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
-import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
+import { ASSET_FILE, generateWorld, promptKey, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
+import { photoToPng, readPhoto } from './photo.ts';
+import { dropRegionEdits, findGeneratedWorld, produceRegenWorld, type RegenSpec } from './reprompt/regen.ts';
 import { parseScreenplay } from './screenplay.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
@@ -84,6 +95,28 @@ export const START_CAMERA: SceneManifest['startCamera'] = {
   quaternion: [0, 0, 0, 1],
   fovDeg: 50,
 };
+
+/** scene-<n>/world-regen.json: a regenerateWorld queued or running (resumed after a restart). */
+export const WORLD_REGEN_FILE = 'world-regen.json';
+/** actors/<id>/rebuild.json: a rebuildActorFromPlan in progress (stays put when the build moves aside). */
+export const REBUILD_FILE = 'rebuild.json';
+
+interface RebuildMarker {
+  reason: 'plan';
+  startedAt: string;
+  /** 'prev-<k>' once the previous build has been moved aside ('' when there was none) */
+  retired?: string;
+  status?: 'done' | 'failed';
+}
+
+/** What a character's build is made from; a change while it builds rebuilds it once more. */
+const buildInputs = (c: Character) => JSON.stringify([c.description, c.heightMeters ?? null, c.referenceImage ?? null]);
+
+/** The asset with its files under `from` (a project-relative dir prefix) moved to `to`. */
+function relocateActor(a: ActorAsset, from: string, to: string): ActorAsset {
+  const move = (p: string) => (p.startsWith(from) ? to + p.slice(from.length) : p);
+  return a.kind === 'splat-sequence' ? { ...a, sequenceDir: move(a.sequenceDir) } : { ...a, glb: move(a.glb) };
+}
 
 export interface PipelineDeps {
   parseScreenplay: (
@@ -261,6 +294,8 @@ export class ProjectStore {
   private readonly actorBuilds = new Map<string, Promise<ActorAsset | undefined>>();
   private readonly actorErrors = new Map<string, string>();
   private readonly worldRetryFailed = new Set<string>();
+  /** `${id}:${sceneIndex}` of regenerateWorld calls queued or running in this process */
+  private readonly worldRegens = new Set<string>();
   private active = 0;
   private idleWaiters: (() => void)[] = [];
   /** <project>/chat.json (server/pipeline/chat/); each write is mirrored into chatRevision. */
@@ -462,6 +497,123 @@ export class ProjectStore {
   }
 
   /**
+   * Rebuilds a character from the CURRENT plan (description, heightMeters, referenceImage) at its
+   * current detail, in the background — the project chat calls it when a character's description,
+   * height or reference photo changed on a live project. The cached build is set aside first:
+   * actors/<id>/ moves into actors/<id>/prev-<k>/ (never deleted) and actor.json + the manifests
+   * point there, so the scene keeps playing the previous build until the new one lands; then
+   * runRebuild builds afresh (a photo is normalised and built with LHM, never an actors-library
+   * avatar, and the library is not refreshed from it) and rewrites every scene manifest showing
+   * the character. Recorded in ProjectStatus.actors[].rebuild ("… from your photo" with a photo).
+   * A character that was never built needs nothing (the actors stage reads the current plan); an
+   * actors stage still building it is waited for. When only heightMeters changed (description and
+   * photo as the manifests show them), the same build is rescaled at once: no new person, no GPU. Idempotent while a rebuild runs: a plan that
+   * changed meanwhile is rebuilt once more when it ends. Resumed after a restart (rebuild.json;
+   * a submitted Modal call is recovered, never paid twice). MOCK projects rebuild the mannequin.
+   */
+  async rebuildActorFromPlan(id: string, characterId: string): Promise<ProjectStatus> {
+    const st = await this.load(id);
+    if (!st) throw new PipelineError(`no project ${id}`, 404);
+    const plan = await this.plan(id);
+    const character = plan?.characters.find((c) => c.id === characterId);
+    if (!plan || !character) throw new PipelineError(`no character ${characterId} in ${id}`, 404);
+    if (!st.mock && !this.keys.modal)
+      throw new PipelineError('Modal keys are not set (MODAL_TOKEN_ID / MODAL_TOKEN_SECRET)', 409);
+    const projectDir = this.dir(id);
+    const stages = plan.scenes
+      .filter((sc) => sc.characterIds.includes(characterId))
+      .map((sc) => st.scenes[sc.index]?.stages.actors ?? { status: 'pending' as const });
+    const built = await exists(join(projectDir, 'actors', characterId, 'actor.json'));
+    if (st.draft || (!built && stages.every((x) => x.status === 'pending'))) {
+      await this.log(id, `rebuild ${characterId} from the plan: not built yet; the actors stage will use the current plan`);
+      return structuredClone(st);
+    }
+    await this.syncActors(st, plan);
+    const entry = st.actors!.find((a) => a.characterId === characterId)!;
+    if (entry.rebuild?.status === 'running') return structuredClone(st);
+    const startedAt = new Date().toISOString();
+    // the manifests record the character they were written with: when only the height moved, the
+    // same person is rescaled (every actor kind stands at heightMeters) instead of a new LHM build
+    const shown = await this.manifestCharacter(id, plan, characterId);
+    if (
+      built &&
+      shown &&
+      !stages.some((x) => x.status === 'running') &&
+      shown.description === character.description &&
+      (shown.referenceImage ?? null) === (character.referenceImage ?? null) &&
+      (shown.heightMeters ?? null) !== (character.heightMeters ?? null)
+    ) {
+      const cachePath = join(projectDir, 'actors', characterId, 'actor.json');
+      const raw = await readJson<{ referenceSha?: string }>(cachePath).catch(() => undefined);
+      const cached = ActorAsset.safeParse(raw);
+      if (cached.success) {
+        const asset = withHeight(cached.data, character);
+        await writeJsonAtomic(cachePath, { ...asset, ...(raw?.referenceSha ? { referenceSha: raw.referenceSha } : {}) });
+        const n = await this.pointManifestsAt(st, plan, asset, character);
+        const note = `${heightFor(character).toFixed(2)} m — only the height changed: rescaled, no rebuild · ${n} scene manifest(s) updated`;
+        entry.rebuild = { detail: entry.detail, status: 'done', note, startedAt };
+        await this.persist(id);
+        await this.log(id, `rebuild ${characterId} from the plan: ${note}`);
+        return structuredClone(st);
+      }
+    }
+    entry.rebuild = { detail: entry.detail, status: 'running', note: 'queued', startedAt };
+    await mkdir(actorDirFor(projectDir, characterId), { recursive: true });
+    await writeJsonAtomic(join(actorDirFor(projectDir, characterId), REBUILD_FILE), {
+      reason: 'plan',
+      startedAt,
+    } satisfies RebuildMarker);
+    await this.persist(id);
+    await this.log(
+      id,
+      `rebuild: ${characterId} from the plan at ${entry.detail} detail${character.referenceImage ? ` (from your photo ${character.referenceImage})` : ''}`,
+    );
+    this.enqueue(`${id}:rebuild:${characterId}`, () => this.runRebuild(id, characterId));
+    return structuredClone(st);
+  }
+
+  /**
+   * Regenerates scene N's world from the CURRENT plan (worldPrompt + worldReference) in the
+   * background — the project chat's confirmed "regenerate the world" (~5 min, Marble credits).
+   * The scoped re-prompt regen machinery does the work: produceRegenWorld builds the new world in
+   * scene-<n>/regen/<key>/world/ (the photo as the Marble image prompt with the world prompt as
+   * its text), replaceWorld moves the current world to world.prev-<k>/, swaps the new one in,
+   * calibrates it and rewrites the manifest; look, actors, props and moves stay, region edits are
+   * dropped with a note in edits.json. A world already generated from the same prompt + photo is
+   * swapped back in instead of paying twice (the current one: nothing to do). The world stage shows
+   * the progress. Idempotent while queued or running, queued behind a first generation still
+   * running, and resumed after a restart (world-regen.json; the Marble receipt is recovered). A
+   * scene whose world was never generated needs nothing: the world stage reads the current plan.
+   * MARBLE_DRY_RUN=1 logs the exact requests and swaps the mock world in.
+   */
+  async regenerateWorld(id: string, sceneIndex: number): Promise<ProjectStatus> {
+    const st = await this.load(id);
+    if (!st) throw new PipelineError(`no project ${id}`, 404);
+    const plan = await this.plan(id);
+    const job = st.scenes[sceneIndex];
+    if (!plan?.scenes[sceneIndex] || !job) throw new PipelineError(`no scene ${sceneIndex} in ${id}`, 404);
+    if (!st.mock && !this.keys.marble)
+      throw new PipelineError('WLT_API_KEY is not set: a live world cannot be regenerated', 409);
+    const key = `${id}:${sceneIndex}`;
+    if (this.worldRegens.has(key)) return structuredClone(st);
+    if (st.draft || job.stages.world.status === 'pending') {
+      await this.log(id, `[scene ${sceneIndex}] regenerate world: not generated yet; the world stage will use the current plan`);
+      return structuredClone(st);
+    }
+    this.worldRegens.add(key);
+    await writeJsonAtomic(join(this.sceneDir(id, sceneIndex), WORLD_REGEN_FILE), {
+      status: 'queued',
+      requestedAt: new Date().toISOString(),
+    });
+    // a first generation still running keeps its stage; this one is queued behind it
+    if (job.stages.world.status !== 'running')
+      await this.setStage(id, sceneIndex, 'world', { status: 'running', note: 'queued: regenerating the world from the plan' });
+    await this.log(id, `[scene ${sceneIndex}] regenerate world from the plan${plan.scenes[sceneIndex]!.worldReference ? ' (with your photo)' : ''}`);
+    this.scheduleStage(id, sceneIndex, 'world');
+    return structuredClone(st);
+  }
+
+  /**
    * Scoped re-prompt regeneration (server/pipeline/reprompt/regen.ts). Shows the scene's world
    * stage as running with `label`, runs `produce` (under the Marble job cap) to build a new world
    * directory, then moves scene-<n>/world/ to world.prev-<k>/, puts the new one in its place,
@@ -478,7 +630,16 @@ export class ProjectStore {
     const plan = await this.plan(id);
     const scene = plan?.scenes[sceneIndex];
     if (!st || !scene || !st.scenes[sceneIndex]) throw new PipelineError(`no scene ${sceneIndex} in ${id}`, 404);
-    const log = this.logger(id, `[scene ${sceneIndex}] regen: `);
+    const sceneLog = this.logger(id, `[scene ${sceneIndex}] regen: `);
+    // Marble's progress ("marble: …") shows on the world stage, like a first generation
+    const log = (m: string) => {
+      sceneLog(m);
+      const job = st.scenes[sceneIndex];
+      if (job?.stages.world.status === 'running' && m.startsWith('marble: ')) {
+        job.stages.world = { status: 'running', note: `${label.split(' · ')[0]} · ${m.slice(8)}`.slice(0, 400) };
+        void this.persist(id);
+      }
+    };
     const sceneDir = this.sceneDir(id, sceneIndex);
     const worldDir = join(sceneDir, 'world');
     await this.setStage(id, sceneIndex, 'world', { status: 'running', note: label });
@@ -936,6 +1097,8 @@ export class ProjectStore {
     const job = st?.scenes[idx];
     const scene = plan?.scenes[idx];
     if (!st || !plan || !job || !scene) return;
+    // a queued regenerateWorld (also after a restart) runs even behind a finished first generation
+    if (stage === 'world' && (await this.worldRegenQueued(id, idx))) return this.runWorldRegen(st, scene);
     const s = job.stages[stage];
     if (s.status !== 'pending' && s.status !== 'running') return; // done/failed/skipped wait for retry
     if (stage === 'world') return this.worldStage(st, scene);
@@ -951,7 +1114,9 @@ export class ProjectStore {
     const sceneLog = this.logger(id, `[scene ${idx}] world: `);
     await this.setStage(id, idx, 'world', { status: 'running', note: 'queued' });
     try {
-      const reused = await this.libraryWorld(st, scene, outDir, sceneLog);
+      // the director's photo of the place is the image prompt: never a library world
+      const photo = scene.worldReference ? await this.worldPhoto(id, scene, sceneLog) : null;
+      const reused = scene.worldReference ? null : await this.libraryWorld(st, scene, outDir, sceneLog);
       if (reused) {
         const cal = await this.calibrateStep(st, scene, outDir, reused.asset, sceneLog);
         await this.worldDone(st, idx, cal.asset, `reused library world ${reused.id}${cal.note}`);
@@ -960,7 +1125,7 @@ export class ProjectStore {
       const asset = await this.worldSem.use(async () => {
         await this.setStage(id, idx, 'world', {
           status: 'running',
-          note: offline ? 'copying mock world' : 'generating with Marble (~5 min)',
+          note: offline ? 'copying mock world' : `generating with Marble${photo?.png ? ' from your photo' : ''} (~5 min)`,
         });
         return this.deps.generateWorld({
           prompt: scene.worldPrompt,
@@ -968,6 +1133,9 @@ export class ProjectStore {
           outDir,
           model: this.model,
           mock: offline,
+          ...(photo?.png
+            ? { imagePrompt: { file: photo.png, isPano: photo.isPano, textPrompt: scene.worldPrompt } }
+            : {}),
           retryFailed: this.worldRetryFailed.delete(`${id}:${idx}`),
           log: (m) => {
             sceneLog(m);
@@ -983,13 +1151,15 @@ export class ProjectStore {
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
       const cal = await this.calibrateStep(st, scene, outDir, asset, sceneLog);
       const note =
-        asset.provider === 'marble'
+        (asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
           : st.mock
             ? 'mock world'
             : offline
               ? 'mock world (WLT_API_KEY not set)'
-              : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)';
+              : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)') +
+        (photo?.png && !offline ? ' from your photo' : '') +
+        (photo?.note ? ` — ${photo.note}` : '');
       await this.worldDone(st, idx, cal.asset, note + cal.note);
     } catch (e) {
       await this.setStage(id, idx, 'world', { status: 'failed', note: errMsg(e) });
@@ -1116,6 +1286,103 @@ export class ProjectStore {
     return { id, asset };
   }
 
+  /**
+   * The scene's environment photo as a PNG Marble can take: a PNG upload as it is, a JPEG / WebP
+   * converted once into scene-<n>/world-reference/<sha>.png. png null (+ note) when it cannot be
+   * used; the world is then generated from the text prompt.
+   */
+  private async worldPhoto(
+    id: string,
+    scene: ScenePlan,
+    log: (m: string) => void,
+  ): Promise<{ png: string | null; isPano: boolean; source: string; note?: string }> {
+    const ref = scene.worldReference!;
+    const base = { isPano: ref.isPano, source: ref.file };
+    try {
+      const photo = await readPhoto(this.dir(id), ref.file);
+      if (photo.kind === 'png') return { ...base, png: photo.path };
+      const png = join(this.sceneDir(id, scene.index), 'world-reference', `${photo.sha256.slice(0, 16)}.png`);
+      if (await exists(png)) return { ...base, png };
+      const how = await photoToPng(photo, png, log);
+      if (how) {
+        log(`your photo ${photo.file}: ${how} for the Marble upload`);
+        return { ...base, png };
+      }
+      const note = `your ${photo.kind.toUpperCase()} photo could not be converted to PNG for Marble; generated from the text prompt`;
+      log(note);
+      return { ...base, png: null, note };
+    } catch (e) {
+      const note = `${errMsg(e)}; generated from the text prompt`;
+      log(note);
+      return { ...base, png: null, note };
+    }
+  }
+
+  private async worldRegenQueued(id: string, idx: number): Promise<boolean> {
+    const m = await readJson<{ status?: string }>(join(this.sceneDir(id, idx), WORLD_REGEN_FILE)).catch(() => undefined);
+    return m?.status === 'queued';
+  }
+
+  /** regenerateWorld's background half (see there). */
+  private async runWorldRegen(st: ProjectStatus, scene: ScenePlan): Promise<void> {
+    const { id } = st;
+    const n = scene.index;
+    const sceneDir = this.sceneDir(id, n);
+    const marker = join(sceneDir, WORLD_REGEN_FILE);
+    const log = this.logger(id, `[scene ${n}] regenerate world: `);
+    const finish = (status: 'done' | 'failed', note: string) =>
+      writeJsonAtomic(marker, { status, note: note.slice(0, 400), finishedAt: new Date().toISOString() });
+    this.worldRegens.add(`${id}:${n}`);
+    try {
+      const photo = scene.worldReference ? await this.worldPhoto(id, scene, log) : null;
+      const imagePrompt = photo?.png ? { file: photo.png, isPano: photo.isPano, textPrompt: scene.worldPrompt } : undefined;
+      const target = await promptKey({ prompt: scene.worldPrompt, imagePrompt });
+      const what = imagePrompt ? 'your photo' : 'this prompt';
+      // never pay Marble twice for the same prompt + photo (MOCK worlds are free to redo)
+      const earlier = st.mock ? null : await findGeneratedWorld(sceneDir, target);
+      if (earlier && resolve(earlier) === resolve(join(sceneDir, 'world'))) {
+        const note = `already generated from ${what}: nothing to regenerate`;
+        log(note);
+        await this.setStage(id, n, 'world', { status: 'done', note });
+        await finish('done', note);
+        return;
+      }
+      const regen: RegenSpec = {
+        method: 'text',
+        prompt: scene.worldPrompt,
+        estimatedMinutes: 5,
+        estimatedCredits: 1580,
+        keeps: ['actors', 'look', 'props', 'moves'],
+        drops: [],
+      };
+      const label = `regenerating the world from ${imagePrompt ? 'your photo' : 'the plan'} · ~5 min`;
+      const result = await this.replaceWorld(id, n, label, async (stageLog) => {
+        if (earlier)
+          return { dir: earlier, note: `the world already generated from ${what} (${basename(earlier)}/) is back: no Marble call` };
+        const made = await produceRegenWorld({
+          sceneDir,
+          name: `${st.title} · ${scene.heading}`,
+          regen,
+          mock: st.mock || !this.keys.marble,
+          log: stageLog,
+          model: this.model,
+          ...(imagePrompt ? { photo: { file: imagePrompt.file, isPano: imagePrompt.isPano, source: photo!.source } } : {}),
+          deps: { generateWorld: this.deps.generateWorld },
+        });
+        return { dir: made.dir, note: made.note + (photo?.note ? ` — ${photo.note}` : '') };
+      });
+      if (result.ok)
+        await dropRegionEdits(editsStoreFor(this), id, n, { prompt: 'regenerate the world from the plan', note: result.note, regen });
+      await finish(result.ok ? 'done' : 'failed', result.note);
+    } catch (e) {
+      log(`FAILED ${errMsg(e)}`);
+      await this.setStage(id, n, 'world', { status: 'done', note: `regeneration failed: ${errMsg(e)} (current world kept)` });
+      await finish('failed', errMsg(e));
+    } finally {
+      this.worldRegens.delete(`${id}:${n}`);
+    }
+  }
+
   private characterMap(plan: ScreenplayPlan) {
     return new Map(plan.characters.map((c) => [c.id, c]));
   }
@@ -1171,18 +1438,27 @@ export class ProjectStore {
     const cachePath = join(actorDir, 'actor.json');
     const log = this.logger(st.id, `actor ${character.id}: `);
     const p = (async () => {
-      const cached = ActorAsset.safeParse(await readJson(cachePath).catch(() => undefined));
-      if (cached.success && !this.upgradable(st, cached.data, 'modal')) {
+      const raw = await readJson<{ referenceSha?: string }>(cachePath).catch(() => undefined);
+      const cached = ActorAsset.safeParse(raw);
+      // actor.json records the photo it was built from: another photo (or none any more) rebuilds
+      const sha = await photoSha(projectDir, character);
+      const samePhoto = raw?.referenceSha === sha;
+      // a running rebuild owns actors/<id>/ and rewrites the manifests itself when it lands
+      const rebuilding = st.actors?.find((a) => a.characterId === character.id)?.rebuild?.status === 'running';
+      if (cached.success && (rebuilding || (samePhoto && !this.upgradable(st, cached.data, 'modal')))) {
         // an actor.json from before per-character heights (or a re-planned script) follows the plan
         const sized = withHeight(cached.data, character);
-        if (sized !== cached.data) await writeJsonAtomic(cachePath, sized);
+        if (sized !== cached.data)
+          await writeJsonAtomic(cachePath, { ...sized, ...(raw?.referenceSha ? { referenceSha: raw.referenceSha } : {}) });
         return sized;
       }
-      if (cached.success) log('cached actor is a fallback and Modal keys are set; rebuilding');
+      if (cached.success && !samePhoto) log('the reference photo changed since the cached build; rebuilding');
+      else if (cached.success) log('cached actor is a fallback and Modal keys are set; rebuilding');
       await mkdir(actorDir, { recursive: true });
       try {
+        // a director's photo is this project's person: never the library avatar of the same id
         const found =
-          !st.mock && this.actorsLibraryDir
+          !st.mock && this.actorsLibraryDir && !character.referenceImage
             ? await findLibraryActor(this.actorsLibraryDir, character.id, log)
             : null;
         if (found) {
@@ -1193,13 +1469,13 @@ export class ProjectStore {
           log(`reused library actor ${found.sequenceDir} (no Modal call)`);
           return asset;
         }
-        const raw = await this.actorSem.use(() =>
+        const built = await this.actorSem.use(() =>
           this.deps.buildActor({ character, projectDir, sceneDir: actorDir, mock: st.mock, log }),
         );
-        const asset = await normalizeActor(ActorAsset.parse(raw), actorDir, projectDir);
-        await writeJsonAtomic(cachePath, asset);
+        const asset = await normalizeActor(ActorAsset.parse(built), actorDir, projectDir);
+        await writeJsonAtomic(cachePath, { ...asset, ...(sha ? { referenceSha: sha } : {}) });
         this.actorErrors.delete(key);
-        log(`ready (${asset.kind})`);
+        log(`ready (${asset.kind})${sha && asset.kind === 'splat-sequence' ? ' — built from your photo' : ''}`);
         return asset;
       } catch (e) {
         this.actorErrors.set(key, errMsg(e));
@@ -1220,16 +1496,20 @@ export class ProjectStore {
       const cached = ActorAsset.safeParse(
         await readJson(join(this.dir(st.id), 'actors', c.id, 'actor.json')).catch(() => undefined),
       );
-      out.push(actorBuildStatus(c, cached.success ? cached.data : undefined, prev.get(c.id)?.rebuild));
+      const old = prev.get(c.id);
+      const next = actorBuildStatus(c, cached.success ? cached.data : undefined, old?.rebuild);
+      // updated in place: a running rebuild holds its entry and records its outcome there
+      if (old) for (const k of Object.keys(old)) delete (old as Record<string, unknown>)[k];
+      out.push(old ? Object.assign(old, next) : next);
     }
     st.actors = out;
   }
 
   private async runRebuild(id: string, characterId: string): Promise<void> {
     const st = await this.load(id);
-    const plan = await this.plan(id);
+    let plan = await this.plan(id);
     const entry = st?.actors?.find((a) => a.characterId === characterId);
-    const character = plan?.characters.find((c) => c.id === characterId);
+    let character = plan?.characters.find((c) => c.id === characterId);
     if (!st || !plan || !character || entry?.rebuild?.status !== 'running') return;
     const { detail, startedAt } = entry.rebuild;
     const started = startedAt ? Date.parse(startedAt) : Date.now();
@@ -1241,19 +1521,45 @@ export class ProjectStore {
     };
     const projectDir = this.dir(id);
     const actorDir = actorDirFor(projectDir, characterId, detail);
-    await note(
-      'running',
-      detail === 'high' ? `rebuilding ${name} · ~5 min` : `switching ${name} to the standard build`,
-    );
+    const markerPath = join(actorDirFor(projectDir, characterId), REBUILD_FILE);
+    const marker = await readJson<RebuildMarker>(markerPath).catch(() => undefined);
+    const fromPlan = marker?.reason === 'plan' && marker.startedAt === startedAt ? marker : undefined;
+    let inputs = buildInputs(character);
     let cost: number | undefined;
     try {
+      if (fromPlan && fromPlan.retired === undefined) {
+        // an actors stage still building the character finishes first (same directory)
+        await note('running', `waiting for the current build of ${name}`);
+        await Promise.all(
+          plan.scenes
+            .filter((sc) => sc.characterIds.includes(characterId))
+            .map((sc) => this.chains.get(`${id}:${sc.index}:actors`)),
+        );
+        fromPlan.retired = (await this.retireActor(st, plan, characterId, log)) ?? '';
+        await writeJsonAtomic(markerPath, fromPlan);
+        this.actorBuilds.delete(`${id}:${characterId}`);
+      }
+      // the plan as it is now (the chat may have amended it while this waited)
+      plan = (await this.plan(id)) ?? plan;
+      character = plan.characters.find((c) => c.id === characterId) ?? character;
+      inputs = buildInputs(character);
+      const photo = character.referenceImage ? 'from your photo' : '';
+      await note(
+        'running',
+        fromPlan
+          ? `rebuilding ${name} ${photo || 'from the plan'} · ~${detail === 'high' ? 5 : 4} min`
+          : detail === 'high'
+            ? `rebuilding ${name} · ~5 min`
+            : `switching ${name} to the standard build`,
+      );
       await mkdir(actorDir, { recursive: true });
+      const target = character;
       const raw = await this.actorSem.use(() =>
         this.deps.buildActor({
-          character,
+          character: target,
           projectDir,
           sceneDir: actorDir,
-          mock: false,
+          mock: st.mock,
           detail,
           log: (m) => {
             log(m);
@@ -1263,35 +1569,112 @@ export class ProjectStore {
         }),
       );
       const built = await normalizeActor(ActorAsset.parse(raw), actorDir, projectDir);
-      if (built.kind !== 'splat-sequence' || built.fallback)
+      // live rebuilds must land a real avatar; MOCK projects only ever have the mannequin
+      if (built.kind === 'splat-sequence' ? built.fallback : !st.mock)
         throw new Error(`the ${detail} build came back as a ${built.fallback ? 'fallback ' : ''}${built.kind}`);
-      const { detail: _d, ...plain } = built;
-      const asset: ActorAsset = withHeight(detail === 'standard' ? plain : { ...plain, detail }, character);
-      await writeJsonAtomic(join(actorDirFor(projectDir, characterId), 'actor.json'), asset);
-      this.actorBuilds.set(`${id}:${characterId}`, Promise.resolve(asset));
-      const scenes = await this.pointManifestsAt(st, plan, asset);
-      const library = await this.refreshLibraryActor(projectDir, asset, log).catch((e) => {
-        log(`library copy not refreshed: ${errMsg(e)}`);
-        return false;
+      let asset: ActorAsset = built;
+      if (built.kind === 'splat-sequence') {
+        const { detail: _d, ...plain } = built;
+        asset = detail === 'standard' ? plain : { ...plain, detail };
+      }
+      asset = withHeight(asset, target);
+      const referenceSha = await photoSha(projectDir, target);
+      await writeJsonAtomic(join(actorDirFor(projectDir, characterId), 'actor.json'), {
+        ...asset,
+        ...(referenceSha ? { referenceSha } : {}),
       });
+      this.actorBuilds.set(`${id}:${characterId}`, Promise.resolve(asset));
+      const scenes = await this.pointManifestsAt(st, plan, asset, target);
+      // the library holds the screenplay's default people: a photo or an amended plan stays here
+      const library =
+        fromPlan || target.referenceImage
+          ? false
+          : await this.refreshLibraryActor(projectDir, asset, log).catch((e) => {
+              log(`library copy not refreshed: ${errMsg(e)}`);
+              return false;
+            });
       entry.detail = detail;
       entry.kind = asset.kind;
       delete entry.fallback;
       const done = [
         `${detail === 'high' ? 'high detail ✓' : 'standard ✓'} in ${fmtDuration(Date.now() - started)}${cost ? ` (~$${cost.toFixed(2)} GPU)` : ''}`,
+        photo,
         `${scenes} scene manifest(s) updated`,
         library ? 'library copy refreshed' : '',
+        fromPlan?.retired ? `previous build in actors/${characterId}/${fromPlan.retired}/` : '',
       ].filter(Boolean);
       await note('done', done.join(' · '));
+      if (fromPlan) await writeJsonAtomic(markerPath, { ...fromPlan, status: 'done' });
       log(`done: ${asset.kind === 'splat-sequence' ? asset.sequenceDir : ''} — ${done.join('; ')}`);
     } catch (e) {
       await note('failed', errMsg(e));
+      if (fromPlan) await writeJsonAtomic(markerPath, { ...fromPlan, status: 'failed' }).catch(() => {});
       log(`FAILED ${errMsg(e)} (the current build stays in use)`);
+    }
+    // the director changed the character while it was being built: once more, from the plan now
+    const latest = (await this.plan(id))?.characters.find((c) => c.id === characterId);
+    if (latest && buildInputs(latest) !== inputs) {
+      log('the character changed in the plan while it was being rebuilt; rebuilding from the current plan');
+      await this.rebuildActorFromPlan(id, characterId).catch((e) => log(`not rebuilt again: ${errMsg(e)}`));
     }
   }
 
-  /** Rewrites every written scene manifest that shows `asset.characterId` to use `asset`. */
-  private async pointManifestsAt(st: ProjectStatus, plan: ScreenplayPlan, asset: ActorAsset): Promise<number> {
+  /** The character as the first written manifest showing it has it (what the scene plays now). */
+  private async manifestCharacter(id: string, plan: ScreenplayPlan, characterId: string): Promise<Character | undefined> {
+    for (const scene of plan.scenes) {
+      if (!scene.characterIds.includes(characterId)) continue;
+      const m = SceneManifest.safeParse(await readJson(join(this.sceneDir(id, scene.index), 'manifest.json')).catch(() => undefined));
+      const c = m.success ? m.data.characters.find((x) => x.id === characterId) : undefined;
+      if (c) return c;
+    }
+    return undefined;
+  }
+
+  /**
+   * rebuildActorFromPlan: moves actors/<id>/ (all but earlier prev-<k>/ dirs and the rebuild
+   * marker) into actors/<id>/prev-<k>/ and points actor.json and every manifest at the moved build,
+   * so the scene keeps playing it until the rebuild lands. Returns 'prev-<k>', null when empty.
+   */
+  private async retireActor(
+    st: ProjectStatus,
+    plan: ScreenplayPlan,
+    characterId: string,
+    log: (m: string) => void,
+  ): Promise<string | null> {
+    const base = join(this.dir(st.id), 'actors', characterId);
+    const entries = (await readdir(base).catch(() => [] as string[])).filter(
+      (n) => !/^prev-\d+$/.test(n) && n !== REBUILD_FILE,
+    );
+    if (!entries.length) return null;
+    let k = 1;
+    while (await exists(join(base, `prev-${k}`))) k++;
+    const name = `prev-${k}`;
+    await mkdir(join(base, name));
+    for (const n of entries) await rename(join(base, n), join(base, name, n));
+    const raw = await readJson<{ referenceSha?: string }>(join(base, name, 'actor.json')).catch(() => undefined);
+    const cached = ActorAsset.safeParse(raw);
+    if (cached.success) {
+      const moved = relocateActor(cached.data, `actors/${characterId}/`, `actors/${characterId}/${name}/`);
+      await writeJsonAtomic(join(base, 'actor.json'), {
+        ...moved,
+        ...(raw?.referenceSha ? { referenceSha: raw.referenceSha } : {}),
+      });
+      await this.pointManifestsAt(st, plan, moved);
+    }
+    log(`previous build kept in actors/${characterId}/${name}/ (the scenes show it until the new one lands)`);
+    return name;
+  }
+
+  /**
+   * Rewrites every written scene manifest that shows `asset.characterId` to use `asset`, and to
+   * carry `character` (the plan's current description / height / photo) when given.
+   */
+  private async pointManifestsAt(
+    st: ProjectStatus,
+    plan: ScreenplayPlan,
+    asset: ActorAsset,
+    character?: Character,
+  ): Promise<number> {
     let n = 0;
     for (const scene of plan.scenes) {
       if (!scene.characterIds.includes(asset.characterId)) continue;
@@ -1302,7 +1685,10 @@ export class ProjectStore {
       const actors = has
         ? m.data.actors.map((a) => (a.characterId === asset.characterId ? asset : a))
         : [...m.data.actors, asset];
-      await writeJsonAtomic(path, SceneManifest.parse({ ...m.data, actors }));
+      const characters = character
+        ? m.data.characters.map((c) => (c.id === character.id ? character : c))
+        : m.data.characters;
+      await writeJsonAtomic(path, SceneManifest.parse({ ...m.data, actors, characters }));
       n++;
     }
     return n;
@@ -1515,3 +1901,7 @@ export const retry = (id: string, sceneIndex: number, stage: StageName) =>
   defaultStore().retry(id, sceneIndex, stage);
 export const rebuildActor = (id: string, characterId: string, detail: ActorDetail) =>
   defaultStore().rebuildActor(id, characterId, detail);
+export const rebuildActorFromPlan = (id: string, characterId: string) =>
+  defaultStore().rebuildActorFromPlan(id, characterId);
+export const regenerateWorld = (id: string, sceneIndex: number) =>
+  defaultStore().regenerateWorld(id, sceneIndex);

@@ -14,6 +14,7 @@ import { scaleHeadline } from './hud';
 import type { LookPanel } from './look-panel';
 import type { Manipulation } from './manipulate';
 import { sceneReady, type ProjectsPanel } from './projects-panel';
+import { characterPhoto, projectPlan } from './references';
 
 type Ref = NonNullable<Director['selection']>;
 
@@ -128,11 +129,21 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
       const tall =
         (rt.actors.get(id)?.object.userData.heightMeters as number | undefined) ??
         (asset ? actorHeight(asset, rt.manifest.characters.find((c) => c.id === id)) : undefined);
+      const name = row.querySelector('.actor-name');
+      let after: Element | null = name;
       if (tall) {
         const chip = h('span', { class: 'muted small actor-height', 'data-testid': 'actor-height', title: 'Standing height: the actor is scaled to it' }, `${tall.toFixed(2)} m`);
-        const name = row.querySelector('.actor-name');
-        if (name) name.after(chip);
+        if (after) after.after(chip);
         else row.append(chip);
+        after = chip;
+      }
+      // the director's photo beside it; the plan is current (the chat may have just set it), the
+      // manifest the fallback
+      const character = (p && projectPlan(p, renderCast)?.characters.find((c) => c.id === id)) ?? rt.manifest.characters.find((c) => c.id === id);
+      if (character?.referenceImage) {
+        const photo = characterPhoto(rt.manifest.projectId, id, character.referenceImage);
+        if (after) after.after(photo);
+        else row.prepend(photo);
       }
       const tools = h(
         'div',
