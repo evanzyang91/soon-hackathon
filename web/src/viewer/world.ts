@@ -8,7 +8,7 @@ import { SceneManifest, type Character, type DialogueLine } from '@shared/schema
 import { createActor, type ActorHandle } from './actors';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
-import { createSpark } from './spark';
+import { createSpark, type SparkOptions } from './spark';
 import { worldTransform } from './transform';
 
 export type SplatQuality = 'k100' | 'k500' | 'full';
@@ -18,6 +18,8 @@ export interface LoadSceneOptions {
   /** Reuse one listener across scenes; it must be parented to the camera that hears the scene. */
   listener?: THREE.AudioListener;
   quality?: SplatQuality;
+  /** SparkRenderer settings for this scene, over the Marble defaults in spark.ts. */
+  spark?: SparkOptions;
   onStatus?: (message: string) => void;
 }
 
@@ -153,12 +155,13 @@ class LoadedScene implements SceneRuntime {
     readonly listener: THREE.AudioListener,
     renderer: THREE.WebGLRenderer,
     quality: SplatQuality,
+    sparkOptions: SparkOptions = {},
   ) {
     this.quality = quality;
     const { plan, world } = manifest;
     this.scene.name = `scene:${plan.slug}`;
     this.scene.background = new THREE.Color(SKY[plan.timeOfDay]);
-    this.spark = createSpark(renderer);
+    this.spark = createSpark(renderer, sparkOptions);
     this.scene.add(this.spark);
 
     const t = worldTransform(world);
@@ -321,7 +324,15 @@ export async function loadScene(
   const assetBase = got ? bases[candidates.indexOf(got.url)]! : projectRoot;
 
   const listener = opts.listener ?? new THREE.AudioListener();
-  const rt = new LoadedScene(manifest, manifestUrl, assetBase, listener, opts.renderer, quality);
+  const rt = new LoadedScene(
+    manifest,
+    manifestUrl,
+    assetBase,
+    listener,
+    opts.renderer,
+    quality,
+    opts.spark,
+  );
   rt.setWorld(got ? await loadSplat(got.bytes, got.url) : null);
 
   if (manifest.world.colliderGlb) {

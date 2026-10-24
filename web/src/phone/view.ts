@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { Quat, Vec3 } from '@shared/schema';
 import { ViewportRenderer } from '../viewer/render.ts';
+import type { SparkOptions } from '../viewer/spark.ts';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world.ts';
 import { drawViewfinder } from './viewfinder.ts';
 
@@ -32,13 +33,13 @@ export interface FrameOptions {
 
 const DRAW: FrameOptions = { draw: true, paused: false };
 
-/** Mobile-friendly Spark settings (WP A defaults are tuned for the laptop). */
-function tuneSparkForMobile(rt: SceneRuntime) {
-  rt.spark.maxStdDev = 2; // √4: the low end of Spark's acceptable range
-  rt.spark.maxPixelRadius = 256;
-  rt.spark.minAlpha = 2 / 255;
-  rt.spark.minSortIntervalMs = 33;
-}
+/** Mobile-friendly Spark settings (WP A defaults are tuned for the laptop), applied at load. */
+export const MOBILE_SPARK: SparkOptions = {
+  maxStdDev: 2, // √4: the low end of Spark's acceptable range
+  maxPixelRadius: 256,
+  minAlpha: 2 / 255,
+  minSortIntervalMs: 33,
+};
 
 export class PhoneView {
   mode: ViewMode = 'viewfinder';
@@ -92,6 +93,7 @@ export class PhoneView {
       const rt = await loadScene(manifestUrl, {
         renderer: this.viewport.renderer,
         quality: this.quality,
+        spark: MOBILE_SPARK,
         onStatus: (m) => {
           if (token === this.loadToken) this.status = m;
         },
@@ -101,7 +103,6 @@ export class PhoneView {
         return;
       }
       rt.listener.setMasterVolume(0); // the laptop plays the dialogue; avoid echo
-      tuneSparkForMobile(rt);
       this.viewport.setScene(rt.scene);
       this.runtime?.dispose();
       this.runtime = rt;
