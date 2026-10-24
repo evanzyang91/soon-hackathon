@@ -4,7 +4,14 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
-import { SceneManifest, type ActorAsset, type Character, type DialogueLine } from '@shared/schema';
+import {
+  SceneManifest,
+  type ActorAsset,
+  type Blocking,
+  type Character,
+  type DialogueLine,
+} from '@shared/schema';
+import { performanceAt, shiftBlocking } from '@shared/beats';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
@@ -160,6 +167,12 @@ class LoadedScene implements SceneRuntime {
   readonly scene = new THREE.Scene();
   readonly worldRoot = new THREE.Group();
   readonly actors = new Map<string, ActorHandle>();
+  /**
+   * Actors whose blocking has beats: the timeline places them every frame. Their starting mark
+   * can be moved by placement correction (`userData.placementMark`) or a scene edit
+   * (`userData.editMark`); the whole choreography moves with it.
+   */
+  readonly performers = new Map<string, Blocking>();
   readonly grid: THREE.GridHelper;
   readonly spark: SparkRenderer;
   splat: SplatMesh | null = null;
@@ -263,10 +276,26 @@ class LoadedScene implements SceneRuntime {
     if (this.disposed) return;
     if (this.playing) this.time += dt;
     this.dynamics.update(this.time);
+    this.perform();
     this.aimHeads();
     for (const a of this.actors.values()) a.update(dt, this.time);
     this.sceneEdits?.update(this.time);
     this.look.update();
+  }
+
+  /** Beats: where each performing actor is at the scene time (shared/beats.ts). */
+  private perform() {
+    for (const [id, b] of this.performers) {
+      const actor = this.actors.get(id);
+      if (!actor?.perform) continue;
+      const u = actor.object.userData as {
+        editMark?: { position?: [number, number, number]; yaw?: number };
+        placementMark?: { position: [number, number, number]; yaw?: number };
+      };
+      const mark = u.editMark?.position ?? u.placementMark?.position;
+      const yaw = u.editMark?.yaw ?? u.placementMark?.yaw;
+      actor.perform(performanceAt(mark || yaw !== undefined ? shiftBlocking(b, mark ?? b.position, yaw) : b, this.time));
+    }
   }
 
   /** Heads turn toward whoever speaks, else toward the nearest partner (viewer/gaze.ts). */
@@ -366,6 +395,9 @@ class LoadedScene implements SceneRuntime {
         actor.object.position.copy(old.object.position);
         actor.object.rotation.y = old.object.rotation.y;
         actor.object.userData.placement = old.object.userData.placement;
+        actor.object.userData.placementMark = old.object.userData.placementMark;
+        actor.object.userData.editMark = old.object.userData.editMark;
+        actor.object.userData.performs = old.object.userData.performs;
         old.stopSpeaking();
         this.scene.remove(old.object);
         old.dispose();
@@ -436,6 +468,12 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
       (a, b) => Math.hypot(a[0] - r.x, a[1] - r.z) - Math.hypot(b[0] - r.x, b[1] - r.z),
     )[0];
     if (partner) actor.object.rotation.y = yawToward([r.x, r.z], partner);
+    // a performing actor starts its choreography from the corrected mark
+    if (rt.performers.has(actor.characterId))
+      actor.object.userData.placementMark = {
+        position: [r.x, 0, r.z],
+        yaw: partner ? actor.object.rotation.y : undefined,
+      };
     console.info(
       `[placement] ${actor.characterId}: moved to free floor (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
     );
@@ -508,6 +546,10 @@ export async function loadScene(
           actor.object.position.set(...b.position);
           actor.object.rotation.y = b.yaw;
           actor.setPose(b.pose ?? 'standing');
+          if (b.beats?.length) {
+            rt.performers.set(asset.characterId, b);
+            actor.object.userData.performs = true; // edits move its mark (edits/apply.ts)
+          }
         } else {
           // no blocking: line up facing the source camera, 3 m in front of it
           actor.object.position.set(-1 + unblocked++ * 1.2, 0, -3);

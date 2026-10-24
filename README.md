@@ -107,6 +107,21 @@ through. The cost is pale streaks when the face is seen from far to the side.
 
 Method, the artefacts that shaped it, and the numbers are in `worker/README.md` ("High detail").
 
+## Actors that do things (beats)
+
+Each character's blocking can carry **beats**: timed actions on the scene clock that Claude writes
+from the action lines, the parentheticals and the dialogue timing ("hurries up beside Maya, out
+of breath" → a walk to a new mark at t 0; "steps a half pace closer" on his sad line; "turns
+with her to watch the bus"). A beat can walk the actor to a mark (`moveTo`), sit or stand them
+(`pose`, or read from the action), and turn them (`yaw`). `shared/beats.ts` turns the beats into
+where the actor is, which way it faces and whether it stands, sits or walks at any scene time, so
+pressing Play, scrubbing or filming a take from the phone all see the same performance. Rigged
+avatars walk with their walk cycle locked to the distance covered (no foot sliding), stand up
+before walking off a seat, cross-fade into standing on arrival and turn at about half a turn per
+second; mannequins swing their legs in place while they move. When placement correction or a
+"move Leo closer" edit moves an actor, the whole choreography moves with its starting mark.
+Older plans without beats behave as before.
+
 ## Look development
 
 The right panel's **Look** tab grades the open scene, and the paired phone renders the same frame.
@@ -384,8 +399,10 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   True 6DoF would need a native ARKit/ARCore companion speaking the same protocol.
 - **No visemes.** A rigged LHM avatar opens its jaw with the voice's loudness (the mannequin
   too); there is no phoneme lip-sync. Seated actors sit on nothing (no chair is placed); a long
-  coat stretches at the hips when seated. A `walking` actor starts 2.4 m behind its mark and
-  walks in when the scene clock runs; the approach ignores the collider. Avatars built before the
+  coat stretches at the hips when seated. A `walking` actor without beats starts 2.4 m behind its mark and
+  walks in when the scene clock runs. Walks (that and beats) go in a straight line and ignore the
+  collider; the motion vocabulary is the shared clip library (standing, talking, sitting, walking),
+  so a beat like "slams the table" is staged by position and facing, not a matching gesture. Avatars built before the
   runtime rig (no `rig` in `sequence.json`) still play their baked idle/talk loop and are lowered
   0.45 m when seated.
 - **iOS is untested headless.** The automated tests drive desktop Chromium with synthetic sensor

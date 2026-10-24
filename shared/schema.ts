@@ -36,6 +36,24 @@ export const DialogueLine = z.object({
 });
 export type DialogueLine = z.infer<typeof DialogueLine>;
 
+/**
+ * Something an actor does at a moment of the scene (shared/beats.ts turns a blocking's beats into
+ * where the actor is, which way it faces and whether it stands, sits or walks at any scene time).
+ */
+export const Beat = z.object({
+  /** Scene clock seconds when the beat starts (a walk starts later if the previous one is not done). */
+  t: z.number().nonnegative(),
+  /** What happens, as written for a director: "crosses to the window", "sinks onto the bench". */
+  action: z.string().max(200),
+  /** Walk to this mark (metres, world frame; y is ignored, actors stay on the floor). */
+  moveTo: Vec3.optional(),
+  /** After the beat (on arrival, for a walk): stand or sit. Absent = read from `action`. */
+  pose: z.enum(['standing', 'sitting']).optional(),
+  /** After the beat: face this yaw (Blocking.yaw convention). Absent = keep / direction walked. */
+  yaw: z.number().optional(),
+});
+export type Beat = z.infer<typeof Beat>;
+
 export const Blocking = z.object({
   characterId: z.string(),
   /** Meters in the world frame (origin = Marble source camera, y = floor). */
@@ -47,6 +65,11 @@ export const Blocking = z.object({
   yaw: z.number(),
   /** 'standing' | 'sitting' | 'walking' — picks the motion loop. */
   pose: z.enum(['standing', 'sitting', 'walking']).default('standing'),
+  /**
+   * What the actor does over the scene, in time order. Absent or empty: the actor holds its mark
+   * (a 'walking' pose then walks in to it, as before).
+   */
+  beats: z.array(Beat).max(24).optional(),
 });
 export type Blocking = z.infer<typeof Blocking>;
 

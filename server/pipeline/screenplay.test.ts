@@ -290,6 +290,31 @@ describe('Claude screenplay path (fake client)', () => {
     expect(r.notes.some((n) => /dropped/.test(n))).toBe(true);
   });
 
+  it('converts beats: marks on the floor, facing → yaw from where they end up, nulls dropped', () => {
+    const d = draft();
+    const maya = d.scenes[0]!.blocking[0]! as Record<string, unknown>;
+    maya.beats = [
+      {
+        t: 3,
+        action: 'crosses to the kerb',
+        moveTo: P(1.234567, 0.4, -3),
+        facing: P(1.2, 0, 0),
+        pose: null,
+      },
+      { t: 6, action: 'sits on the bench', moveTo: null, facing: null, pose: 'sitting' },
+      { t: -1, action: 'invalid time', moveTo: null, facing: null, pose: null },
+    ];
+    const r = checkDraft(JSON.stringify(d), FIXTURE);
+    expect(r.problems).toEqual([]);
+    const beats = r.plan!.scenes[0]!.blocking[0]!.beats!;
+    expect(beats).toHaveLength(2);
+    expect(beats[0]).toMatchObject({ t: 3, action: 'crosses to the kerb', moveTo: [1.235, 0, -3] });
+    expect(beats[0]!.yaw).toBeCloseTo(Math.PI, 1); // from the kerb, facing back toward z = 0
+    expect(beats[1]).toEqual({ t: 6, action: 'sits on the bench', pose: 'sitting' });
+    // a character without beats keeps none
+    expect(r.plan!.scenes[0]!.blocking[1]!.beats).toBeUndefined();
+  });
+
   it('retries once with the validation errors fed back, then succeeds', async () => {
     const requests: ClaudeRequest[] = [];
     const replies = [JSON.stringify(draft({ badSpeaker: true })), JSON.stringify(draft())];

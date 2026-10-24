@@ -63,6 +63,12 @@ export interface SkinnedBody {
   readonly clipNames: string[];
   /** Force a library clip (review / director override); null returns to automatic selection. */
   play(name: string | null): void;
+  /**
+   * Beats (shared/beats.ts) move the actor between marks: while `walking`, the walk cycle is
+   * locked to `walked` metres so the feet keep pace with the actor's travel. Replaces the
+   * built-in walk-in to the mark from then on.
+   */
+  travel(walking: boolean, walked: number): void;
   debug(): Record<string, number>;
   dispose(): void;
 }
@@ -209,6 +215,7 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
   let wasSpeaking = false;
   let remaining = 0;
   let forced: Clip | null = null;
+  let travel: { walking: boolean; walked: number } | null = null;
   const start = phase(asset.characterId);
   const idleOf = () => (pose === 'sitting' && canSit ? sets.sitting : sets.standing);
   mixer.play(idleOf().idle[0]!, 0, start * idleOf().idle[0]!.frames / idleOf().idle[0]!.fps);
@@ -223,11 +230,17 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
     play(name) {
       forced = name === null ? null : (clips.find((c) => c.name === name) ?? null);
     },
+    travel(walking, walked) {
+      travel = { walking, walked };
+    },
     animate(dt, sceneTime, speaking, level) {
       if (speaking && !wasSpeaking) line++;
       wasSpeaking = speaking;
       let walking = false;
-      if (pose === 'walking' && walk && walkSpeed > 0) {
+      if (travel) {
+        walking = travel.walking && !!walk && strideSpeed > 0;
+        remaining = 0; // the actor object itself moves along the beat's path
+      } else if (pose === 'walking' && walk && walkSpeed > 0) {
         const st = approach(sceneTime, APPROACH_M, walkSpeed);
         remaining = st.remaining;
         walking = st.walking;
@@ -235,7 +248,9 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
       const set = idleOf();
       const want = forced ?? (walking ? walk! : speaking ? set.talk[line % set.talk.length]! : set.idle[0]!);
       const wasWalk = mixer.clip === walk && walk !== null;
-      const walkTime = walkPhase + (APPROACH_M - remaining) / (strideSpeed || 1);
+      // phase 0 of the distance lock is the passing frame (walkPhase includes the approach length)
+      const walked = travel ? travel.walked : APPROACH_M - remaining;
+      const walkTime = walkPhase + walked / (strideSpeed || 1);
       mixer.play(want, wasWalk && want !== walk ? FADE_STOP_S : FADE_S, want === walk && !forced ? walkTime : undefined);
       mixer.rate = 1;
       if (walking && mixer.clip === walk && !forced) mixer.seek(walkTime);

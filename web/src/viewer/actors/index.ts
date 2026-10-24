@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
+import type { Performance } from '@shared/beats';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { headYawToward } from '../gaze';
 import { buildMannequin, type Pose } from './mannequin';
@@ -32,6 +33,12 @@ export interface ActorHandle {
    * heads; a baked splat sequence cannot.
    */
   lookAt?(target: THREE.Vector3 | null): void;
+  /**
+   * Beats: put the actor where the timeline says (shared/beats.ts performanceAt) at this scene
+   * time. Position and pose follow at once (the clock can be scrubbed); the body turns toward the
+   * yaw at a natural rate unless it is walking (it faces where it walks).
+   */
+  perform?(p: Performance): void;
   update(dt: number, sceneTime: number): void;
   dispose(): void;
 }
@@ -49,12 +56,23 @@ interface Body {
   offset?: THREE.Vector3;
   /** Head yaw toward the look target, relative to the body (null = none). */
   look?(yaw: number | null): void;
+  /** Distance-locked walk cycle while beats move the actor (rigged splat actors). */
+  travel?(walking: boolean, walked: number): void;
   /** small numbers for tests/HUD, mirrored into object.userData.debug every update */
   debug?(): Record<string, number>;
   dispose(): void;
 }
 
 export const PROCEDURAL_GLB = 'procedural:mannequin';
+
+/** How fast an actor turns to a beat's new facing (rad/s): about half a turn in a second. */
+export const TURN_RATE = 3.5;
+
+/** `from` turned toward `to` by at most `step` radians, the short way round. */
+export function turnToward(from: number, to: number, step: number): number {
+  const d = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return Math.abs(d) <= step ? to : from + Math.sign(d) * step;
+}
 
 /**
  * How far a seated actor's body (and head) sits below standing height. The mannequin poses its
@@ -167,6 +185,7 @@ async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promi
             },
             drop: (p) => (p === 'sitting' ? (k.canSit ? SKINNED_SIT_DROP_M : SIT_DROP_M) : 0),
             look: (yaw) => k.look(yaw),
+            travel: (walking, walked) => k.travel(walking, walked),
             offset: k.offset,
             debug: () => k.debug(),
             dispose: () => k.dispose(),
@@ -249,6 +268,10 @@ export async function createActor(
 
   let t = 0;
   let speakingLine: string | null = null;
+  let pose: Performance['pose'] | null = null;
+  /** Yaw the beats want; update() turns toward it (null: no beats, rotation is the caller's). */
+  let wantYaw: number | null = null;
+  let walkingNow = false;
   let lookTarget: THREE.Vector3 | null = null;
   const handle: ActorHandle = {
     object,
@@ -274,16 +297,29 @@ export async function createActor(
     stopSpeaking() {
       speech.stop();
     },
-    setPose(pose) {
-      body.setPose(pose);
-      headY = body.headY - (body.drop ? body.drop(pose) : poseDrop(pose));
+    setPose(next) {
+      pose = next;
+      body.setPose(next);
+      headY = body.headY - (body.drop ? body.drop(next) : poseDrop(next));
       place();
+    },
+    perform(p) {
+      object.position.x = p.x;
+      object.position.z = p.z;
+      walkingNow = p.pose === 'walking';
+      // a rigged body walks with its own distance-locked cycle; others animate the walking pose
+      const bodyPose = body.travel && walkingNow ? 'standing' : p.pose;
+      if (bodyPose !== pose) handle.setPose(bodyPose);
+      body.travel?.(walkingNow, p.walked);
+      if (wantYaw === null || walkingNow) object.rotation.y = p.yaw;
+      wantYaw = p.yaw;
     },
     lookAt(target) {
       lookTarget = target ? (lookTarget ?? new THREE.Vector3()).copy(target) : null;
     },
     update(dt, sceneTime) {
       t += dt;
+      if (wantYaw !== null && !walkingNow) object.rotation.y = turnToward(object.rotation.y, wantYaw, TURN_RATE * dt);
       // actors are children of the scene root: position / rotation.y are world values
       bodyAt.copy(object.position);
       if (body.offset) bodyAt.add(bodyOffset.copy(body.offset).applyAxisAngle(THREE.Object3D.DEFAULT_UP, object.rotation.y));
