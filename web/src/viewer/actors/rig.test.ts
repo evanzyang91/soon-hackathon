@@ -27,7 +27,35 @@ import {
 } from './rig';
 
 /** SMPL-X parents (55). */
-const PARENTS = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 15, 15, 15, ...Array(15).fill(20), ...Array(15).fill(21)];
+const PARENTS = [
+  -1,
+  0,
+  0,
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  9,
+  9,
+  12,
+  13,
+  14,
+  16,
+  17,
+  18,
+  19,
+  15,
+  15,
+  15,
+  ...Array(15).fill(20),
+  ...Array(15).fill(21),
+];
 
 /** A T-pose-ish skeleton: pelvis at y 0.9, legs down, spine up; good enough for FK tests. */
 function rig(): RigJson {
@@ -55,9 +83,21 @@ function rig(): RigJson {
     joints: [],
     parents: PARENTS,
     rest,
-    sourcePose: { root: [Math.PI, 0, 0], body: Array(21).fill([0, 0, 0]), jaw: [0, 0, 0], lhand: Array(15).fill([0, 0, 0]), rhand: Array(15).fill([0, 0, 0]) },
+    sourcePose: {
+      root: [Math.PI, 0, 0],
+      body: Array(21).fill([0, 0, 0]),
+      jaw: [0, 0, 0],
+      lhand: Array(15).fill([0, 0, 0]),
+      rhand: Array(15).fill([0, 0, 0]),
+    },
     measure: { nativeHeight: 1.7, soleY: 0, footJointMinY: 0.03, soleGap: 0.03, legLength: 0.82 },
-    files: { splats: { file: 'rig-splats.bin', bytes: 44, layout: {} as RigJson['files']['splats']['layout'] } },
+    files: {
+      splats: {
+        file: 'rig-splats.bin',
+        bytes: 44,
+        layout: {} as RigJson['files']['splats']['layout'],
+      },
+    },
   };
 }
 
@@ -70,7 +110,17 @@ function clip(frames: number, turn = 0, name = 'c'): Clip {
     qFromRotvec(quats, f * CLIP_JOINTS * 4, 0, (turn * f) / frames, 0);
     root[f * 3] = 0.01 * f;
   }
-  return { name, pose: 'standing', speaking: false, fps: 30, frames, quats, root, speed: 0, legLength: 0.82 };
+  return {
+    name,
+    pose: 'standing',
+    speaking: false,
+    fps: 30,
+    frames,
+    quats,
+    root,
+    speed: 0,
+    legLength: 0.82,
+  };
 }
 
 describe('quaternion helpers', () => {
@@ -130,14 +180,32 @@ describe('clips', () => {
     const yaw0 = 2 * Math.atan2(p0.q[1]!, p0.q[3]!);
     m.play(b, 0.25, 15 / 30); // b at frame 15: yaw pi/4
     const yaws: number[] = [];
-    for (let i = 0; i < 20; i++) { // (b's test yaw ramps without wrapping until t = 1 s)
+    for (let i = 0; i < 20; i++) {
+      // (b's test yaw ramps without wrapping until t = 1 s)
       const p = m.update(1 / 60);
       yaws.push(2 * Math.atan2(p.q[1]!, p.q[3]!));
     }
     expect(Math.abs(yaws[0]! - yaw0)).toBeLessThan(0.05); // starts where a was
-    for (let i = 1; i < yaws.length; i++) expect(Math.abs(yaws[i]! - yaws[i - 1]!)).toBeLessThan(0.12);
+    for (let i = 1; i < yaws.length; i++)
+      expect(Math.abs(yaws[i]! - yaws[i - 1]!)).toBeLessThan(0.12);
     expect(m.blend).toBe(1);
     expect(m.clip).toBe(b);
+  });
+});
+
+describe('Mixer start', () => {
+  it('a clip switch before the first update starts that clip, not a fade from the T-pose', () => {
+    const a = clip(30, 0, 'a');
+    const b = clip(30, Math.PI / 2, 'b');
+    const m = new Mixer();
+    m.play(a, 0.25);
+    m.play(b, 0.25, 15 / 30); // e.g. an actor that loads mid-walk
+    const p = m.update(0); // a frozen frame: no time passes
+    expect(m.blend).toBe(1);
+    expect(2 * Math.atan2(p.q[1]!, p.q[3]!)).toBeCloseTo(Math.PI / 4, 3);
+    // every joint is a unit quaternion (an unsampled pose is all zeros)
+    for (let j = 0; j < 22; j++)
+      expect(Math.hypot(...p.q.slice(j * 4, j * 4 + 4))).toBeCloseTo(1, 5);
   });
 });
 
@@ -174,7 +242,8 @@ describe('skeleton', () => {
     for (const j of [4, 7, 15]) {
       const v = [0, 0, 0];
       qrot(v, 0, f.boneQ, j * 4, sk.rest[j * 3]!, sk.rest[j * 3 + 1]!, sk.rest[j * 3 + 2]!);
-      for (let k = 0; k < 3; k++) expect(v[k]! + f.boneT[j * 3 + k]!).toBeCloseTo(f.joints[j * 3 + k]!, 5);
+      for (let k = 0; k < 3; k++)
+        expect(v[k]! + f.boneT[j * 3 + k]!).toBeCloseTo(f.joints[j * 3 + k]!, 5);
     }
   });
 
@@ -233,7 +302,17 @@ describe('validation', () => {
       joints: 22,
       file: 'motion-clips.bin',
       bytes: buf.byteLength,
-      clips: [{ name: 'idle', pose: 'standing', speaking: false, frames, offset: 0, speed: 0, legLength: 0.8 }],
+      clips: [
+        {
+          name: 'idle',
+          pose: 'standing',
+          speaking: false,
+          frames,
+          offset: 0,
+          speed: 0,
+          legLength: 0.8,
+        },
+      ],
     };
     const [c] = parseLibrary(validateLibrary(json), buf);
     expect(c!.quats[3]).toBeCloseTo(1, 6);
