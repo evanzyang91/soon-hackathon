@@ -8,6 +8,8 @@ import type { Beat, Blocking } from './schema';
 export const WALK_SPEED = 1.2;
 /** Pause before walking off from a seat (s): the actor stands up first. */
 export const RISE_S = 0.8;
+/** How long a beat's gesture clip plays when its length is not known (s). */
+export const GESTURE_S = 3.5;
 
 export type PerformancePose = 'standing' | 'sitting' | 'walking';
 
@@ -21,6 +23,8 @@ export interface Performance {
   walked: number;
   /** Index (into the time-sorted beats) of the latest beat that has started; −1 before any. */
   beat: number;
+  /** A beat's gesture clip playing right now, `time` seconds into it (null: none). */
+  gesture: { clip: string; time: number } | null;
 }
 
 /** Yaw that faces along (dx, dz), for a model whose front is −Z. */
@@ -56,6 +60,8 @@ export function performanceAt(
   b: Pick<Blocking, 'position' | 'yaw' | 'pose' | 'beats'>,
   time: number,
   speed = WALK_SPEED,
+  /** Length of a clip in seconds (gestures play once); GESTURE_S when unknown. */
+  clipSeconds: (clip: string) => number | undefined = () => undefined,
 ): Performance {
   const beats = sortedBeats(b);
   const s: Performance = {
@@ -65,9 +71,12 @@ export function performanceAt(
     pose: beats.length ? (b.pose === 'sitting' ? 'sitting' : 'standing') : b.pose,
     walked: 0,
     beat: -1,
+    gesture: null,
   };
   /** When the previous beat finished (a walk takes time; the next beat waits for it). */
   let free = 0;
+  /** The latest gesture since the last walk: its clip and when it started. */
+  let g: { clip: string; start: number } | null = null;
   for (let i = 0; i < beats.length; i++) {
     const beat = beats[i]!;
     const start = Math.max(beat.t, free);
@@ -75,6 +84,7 @@ export function performanceAt(
     s.beat = i;
     const after = beat.pose ?? poseFromAction(beat.action);
     if (beat.moveTo) {
+      g = null; // walking off ends any gesture
       const dx = beat.moveTo[0] - s.x;
       const dz = beat.moveTo[2] - s.z;
       const dist = Math.hypot(dx, dz);
@@ -102,9 +112,12 @@ export function performanceAt(
     } else {
       free = start;
       if (after) s.pose = after;
+      if (beat.clip) g = { clip: beat.clip, start };
     }
     if (beat.yaw !== undefined) s.yaw = beat.yaw;
   }
+  if (g && time - g.start < (clipSeconds(g.clip) ?? GESTURE_S))
+    s.gesture = { clip: g.clip, time: time - g.start };
   return s;
 }
 

@@ -80,6 +80,11 @@ const Draft = z.object({
                 moveTo: Point.nullable().describe('walk to this mark, or null to stay put'),
                 facing: Point.nullable().describe('point to face afterwards, or null'),
                 pose: z.enum(['standing', 'sitting']).nullable(),
+                gesture: z
+                  .string()
+                  .nullable()
+                  .default(null)
+                  .describe('text-to-motion prompt for an on-the-spot body action, or null'),
               }),
             )
             .default([]),
@@ -129,6 +134,7 @@ Blocking (world frame)
 - "facing" is the point the character looks toward: usually the other character's position, or the origin when they address no one in particular. "pose" is sitting when the action says they sit, walking when they are described as moving, otherwise standing.
 - "position", "facing" and "pose" are where the character is when the scene starts. "beats" is what they do after that, in time order, so the scene plays out instead of everyone holding still: arriving, crossing to a spot, sitting down, standing up, turning to someone or away, pacing, leaving. Take beats from the action lines and parentheticals, and add the small motivated moves a director would give (turning toward whoever they answer, stepping closer or away on an emotional line). 0-6 beats per character; an empty list is fine for someone who really stays put.
 - Beat timing: the scene clock starts at 0 with the first line. Each dialogue line lasts about 0.4 s per word plus 0.6 s, one after another in order; time a beat to the line it belongs to. A walk takes about 1 s per 1.2 m; give "moveTo" (feet on the floor, inside the same area as the blocking) for any move, and keep marks at least 0.6 m from other characters. "facing" is where they look after the beat (null keeps the direction they walked or were facing). "pose" is sitting or standing after the beat, or null when it does not change. A character described as entering starts at the edge (2-4 m from their first mark) with pose standing and a first beat at t 0 that walks them in.
+- "gesture": when a beat is a distinct body action done on the spot (slams both hands on the table, throws up their hands, hugs themself, checks a phone, rubs their eyes, shrugs, points down the street), write it as a text-to-motion prompt: one sentence starting "A person", present tense, the body only (arms, hands, head, torso, weight), at most 25 words, no names, no camera words, no other people. null for walks (moveTo), sitting down, standing up, plain turns and beats with no visible motion. Prefer 1-3 gestures per character in a scene.
 
 Dynamics
 - Things that move through the scene according to the action lines (a car driving by, a bus, cyclists, birds, joggers), never the speaking characters. kind is car, bus, bicycle, bird, pedestrian or generic.
@@ -372,6 +378,7 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
           ...(moveTo ? { moveTo } : {}),
           ...(d.pose ? { pose: d.pose } : {}),
           ...(d.facing ? { yaw: round3(yawFacing(at, v3(d.facing))) } : {}),
+          ...(d.gesture?.trim() && !moveTo ? { gesture: d.gesture.trim().slice(0, 240) } : {}),
         });
       }
       blocking.push({

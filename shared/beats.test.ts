@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Blocking, ScreenplayPlan } from './schema';
 import {
   beatsEnd,
+  GESTURE_S,
   performanceAt,
   poseFromAction,
   RISE_S,
@@ -38,6 +39,7 @@ describe('beats → performance', () => {
       pose: 'walking',
       walked: 0,
       beat: -1,
+      gesture: null,
     });
   });
 
@@ -118,6 +120,43 @@ describe('beats → performance', () => {
         ],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('gestures', () => {
+  const b = Blocking.parse({
+    characterId: 'theo',
+    position: [0, 0, -3],
+    yaw: 0,
+    beats: [
+      {
+        t: 2,
+        action: 'throws up his hands',
+        gesture: 'A person throws both hands up.',
+        clip: 'g1',
+      },
+      { t: 3, action: 'turns away', yaw: 1 },
+      { t: 8, action: 'shrugs', clip: 'talk-2' },
+      { t: 9, action: 'walks off', moveTo: [0, 0, -6] },
+    ],
+  });
+  const len = (c: string) => (c === 'g1' ? 2.5 : undefined);
+
+  it('plays a gesture once from its beat, for the clip length, through later non-walk beats', () => {
+    expect(performanceAt(b, 1.9, WALK_SPEED, len).gesture).toBeNull();
+    expect(performanceAt(b, 2, WALK_SPEED, len).gesture).toEqual({ clip: 'g1', time: 0 });
+    expect(performanceAt(b, 3.5, WALK_SPEED, len).gesture).toEqual({ clip: 'g1', time: 1.5 });
+    expect(performanceAt(b, 4.6, WALK_SPEED, len).gesture).toBeNull(); // 2.5 s clip is over
+  });
+
+  it('an unknown length plays GESTURE_S, and walking off ends it', () => {
+    const shrug = performanceAt(b, 8.9, WALK_SPEED, len).gesture!;
+    expect(shrug.clip).toBe('talk-2');
+    expect(shrug.time).toBeCloseTo(0.9);
+    const lone = { ...b, beats: b.beats!.slice(0, 3) }; // no walk after the shrug
+    expect(performanceAt(lone, 8 + GESTURE_S - 0.01, WALK_SPEED, len).gesture?.clip).toBe('talk-2');
+    expect(performanceAt(lone, 8 + GESTURE_S + 0.01, WALK_SPEED, len).gesture).toBeNull();
+    expect(performanceAt(b, 9.1, WALK_SPEED, len).gesture).toBeNull();
   });
 });
 

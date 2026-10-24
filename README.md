@@ -122,6 +122,21 @@ second; mannequins swing their legs in place while they move. When placement cor
 "move Leo closer" edit moves an actor, the whole choreography moves with its starting mark.
 Older plans without beats behave as before.
 
+**Gestures.** A beat that is a distinct on-the-spot action ("throws up her hands", "rubs his
+eyes") also carries a `gesture`: a short text-to-motion prompt Claude writes. The manifest stage
+turns it into a `clip` the actor plays once from the beat's start, locked to the scene clock
+(scrubbing works), then cross-fades back to idle or talking; walking off ends it.
+
+- `MOTION_GEN=1` (live, Modal key): every new prompt is generated with HY-Motion 1.0 on a Modal
+  L40S (`worker/motion_library.py --gestures`, one GPU call for all new prompts in a scene),
+  turned into a one-shot clip (warm-up trimmed, facing +Z, the actor ends where it started, the
+  steadier of two seeds), cached by prompt in `data/motion-library/gestures/` (`MOTION_CACHE_DIR`)
+  and merged into `scene-<n>/motion/motion-library.json`, which the manifest points at. A prompt
+  is generated once, ever; later scenes and projects reuse it.
+- Otherwise (MOCK, no Modal key, or a failed generation): the nearest clip the actor already ships
+  with, by keyword (a shrug or a question → `talk-2`, pointing or explaining → `talk-1`, nodding or
+  watching → `idle-listen`, seated variants when sitting), or none.
+
 ## Look development
 
 The right panel's **Look** tab grades the open scene, and the paired phone renders the same frame.
@@ -402,7 +417,9 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   coat stretches at the hips when seated. A `walking` actor without beats starts 2.4 m behind its mark and
   walks in when the scene clock runs. Walks (that and beats) go in a straight line and ignore the
   collider; the motion vocabulary is the shared clip library (standing, talking, sitting, walking),
-  so a beat like "slams the table" is staged by position and facing, not a matching gesture. Avatars built before the
+  so without `MOTION_GEN` a beat like "slams the table" is staged by position and facing, not a
+  matching gesture. Generated gestures are one take each, not retargeted to props (a hand meant
+  for a table stops in the air) and play only on rigged LHM avatars. Avatars built before the
   runtime rig (no `rig` in `sequence.json`) still play their baked idle/talk loop and are lowered
   0.45 m when seated.
 - **iOS is untested headless.** The automated tests drive desktop Chromium with synthetic sensor

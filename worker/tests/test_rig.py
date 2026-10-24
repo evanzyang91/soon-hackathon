@@ -161,5 +161,30 @@ def test_encode_round_trip(tmp_path):
     assert meta[0]["frames"] == c["frames"] and meta[0]["offset"] == 0
 
 
+def test_build_gesture_is_one_shot_in_place_facing_plus_z():
+    R, T, K = raw_clip(frames=90)
+    T[:, 2] += 0.3 * np.arange(90) / 90  # a step forward the actor must not keep
+    c = ml.build_gesture("slam", "standing", R, T, K)
+    assert c["frames"] == 90 - int(ml.GESTURE_TRIM_S * ml.FPS)
+    assert np.abs(ml.yaw_of(c["R"][:, 0])).max() < 0.08  # facing +Z
+    assert np.abs(c["root"][0, [0, 2]]).max() < 1e-9  # starts on the mark
+    assert np.abs(c["root"][-1, [0, 2]]).max() < 1e-9  # and ends there
+    assert c["speed"] == 0 and not c["speaking"]
+
+
+def test_write_gesture_picks_the_steadier_seed_and_writes_a_one_clip_library(tmp_path):
+    R, T, K = raw_clip(frames=90)
+    jittery = R.copy()
+    jittery[40, 16] = rm.rotvec_to_matrix(np.array([0.0, 0.0, 1.2]))  # a one-frame arm pop
+    npz = dict(rotmats=np.stack([jittery, R]), transl=np.stack([T, T]), keypoints=np.stack([K, K]), seeds=np.array([11, 23]))
+    meta = ml.write_gesture(tmp_path, "g1", "A person slams both palms down.", "standing", npz)
+    assert meta["seed"] == 23 and meta["oneShot"] and meta["offset"] == 0
+    lib = json.loads((tmp_path / "g1.json").read_text())
+    blob = (tmp_path / "g1.bin").read_bytes()
+    assert lib["schema"] == ml.SCHEMA and lib["file"] == "g1.bin" and lib["bytes"] == len(blob)
+    assert lib["clips"][0]["prompt"] == "A person slams both palms down."
+    assert len(blob) >= meta["frames"] * (22 * 8 + 12)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

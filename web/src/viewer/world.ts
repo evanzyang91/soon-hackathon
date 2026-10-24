@@ -11,7 +11,8 @@ import {
   type Character,
   type DialogueLine,
 } from '@shared/schema';
-import { performanceAt, shiftBlocking } from '@shared/beats';
+import { performanceAt, shiftBlocking, WALK_SPEED } from '@shared/beats';
+import { parseLibrary, validateLibrary, type Clip } from './actors/rig';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
@@ -173,6 +174,10 @@ class LoadedScene implements SceneRuntime {
    * (`userData.editMark`); the whole choreography moves with it.
    */
   readonly performers = new Map<string, Blocking>();
+  /** Seconds of each generated gesture clip (manifest `motion`), so beats play them once. */
+  readonly gestureSeconds = new Map<string, number>();
+  /** The generated gesture clips themselves (a hot-swapped actor gets them too). */
+  gestureClips: Clip[] = [];
   readonly grid: THREE.GridHelper;
   readonly spark: SparkRenderer;
   splat: SplatMesh | null = null;
@@ -294,7 +299,10 @@ class LoadedScene implements SceneRuntime {
       };
       const mark = u.editMark?.position ?? u.placementMark?.position;
       const yaw = u.editMark?.yaw ?? u.placementMark?.yaw;
-      actor.perform(performanceAt(mark || yaw !== undefined ? shiftBlocking(b, mark ?? b.position, yaw) : b, this.time));
+      const blocking = mark || yaw !== undefined ? shiftBlocking(b, mark ?? b.position, yaw) : b;
+      actor.perform(
+        performanceAt(blocking, this.time, WALK_SPEED, (c) => this.gestureSeconds.get(c)),
+      );
     }
   }
 
@@ -398,6 +406,7 @@ class LoadedScene implements SceneRuntime {
         actor.object.userData.placementMark = old.object.userData.placementMark;
         actor.object.userData.editMark = old.object.userData.editMark;
         actor.object.userData.performs = old.object.userData.performs;
+        actor.addGestures?.(this.gestureClips);
         old.stopSpeaking();
         this.scene.remove(old.object);
         old.dispose();
@@ -435,6 +444,16 @@ class LoadedScene implements SceneRuntime {
     this.spark.dispose();
     this.scene.clear();
   }
+}
+
+/** A previz.motion-library/1 JSON + its clip file (beat gestures, server/pipeline/motion.ts). */
+async function loadGestureClips(url: string): Promise<Clip[]> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const lib = validateLibrary(await res.json());
+  const bin = await fetch(new URL(lib.file, url).href);
+  if (!bin.ok) throw new Error(`${lib.file}: HTTP ${bin.status}`);
+  return parseLibrary(lib, await bin.arrayBuffer());
 }
 
 /**
@@ -567,6 +586,18 @@ export async function loadScene(
   const speaker = new Map(manifest.plan.dialogue.map((l) => [l.id, l.characterId]));
   for (const a of manifest.audio) {
     if (rt.actors.has(speaker.get(a.lineId) ?? '')) void preloadAudio(rt.resolve(a.url));
+  }
+
+  // the scene's generated gesture clips load in the background; beats use them once they land
+  if (manifest.motion) {
+    void loadGestureClips(rt.resolve(manifest.motion.library))
+      .then((clips) => {
+        if (rt.isDisposed) return;
+        rt.gestureClips = clips;
+        for (const c of clips) rt.gestureSeconds.set(c.name, c.frames / c.fps);
+        for (const a of rt.actors.values()) a.addGestures?.(clips);
+      })
+      .catch((err) => console.warn('gesture clips failed to load; beats use the shared clips', err));
   }
 
   rt.dynamics = createDynamics(manifest.plan.dynamics);

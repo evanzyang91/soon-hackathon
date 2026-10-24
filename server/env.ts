@@ -17,6 +17,12 @@ export const env = {
   calibrate: process.env.CALIBRATE !== '0',
   /** The Claude-vision half of calibration (renders + 2 requests, ~$0.1/world); CALIBRATE_VISION=0 skips it. */
   calibrateVision: process.env.CALIBRATE_VISION !== '0',
+  /** Generate beat gestures with HY-Motion on Modal (server/pipeline/motion.ts); off by default. */
+  motionGen: flag(process.env.MOTION_GEN),
+  /** Generated gesture clips, cached by prompt and reused by every project. */
+  motionCacheDir:
+    process.env.MOTION_CACHE_DIR ??
+    fileURLToPath(new URL('../data/motion-library/gestures/', import.meta.url)),
   /** Let phones / tunnels start paid pipeline work (POST /api/projects/…); off by default. */
   allowRemoteSpend: flag(process.env.ALLOW_REMOTE_SPEND),
   keys: {

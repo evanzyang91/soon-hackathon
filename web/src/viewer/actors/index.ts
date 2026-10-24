@@ -17,7 +17,7 @@ import { headYawToward } from '../gaze';
 import { buildMannequin, type Pose } from './mannequin';
 import { loadSequence, loadSplatBody } from './splat-actor';
 import { loadSkinnedBody } from './skinned-actor';
-import type { RigPointer } from './rig';
+import type { Clip, RigPointer } from './rig';
 import { tintFor } from '@shared/tint';
 
 export interface ActorHandle {
@@ -39,6 +39,8 @@ export interface ActorHandle {
    * yaw at a natural rate unless it is walking (it faces where it walks).
    */
   perform?(p: Performance): void;
+  /** The scene's generated gesture clips (rigged splat actors play them during beats). */
+  addGestures?(clips: Clip[]): void;
   update(dt: number, sceneTime: number): void;
   dispose(): void;
 }
@@ -58,6 +60,9 @@ interface Body {
   look?(yaw: number | null): void;
   /** Distance-locked walk cycle while beats move the actor (rigged splat actors). */
   travel?(walking: boolean, walked: number): void;
+  /** A beat's gesture clip, `time` seconds in (rigged splat actors). */
+  gesture?(name: string | null, time: number): void;
+  addGestures?(clips: Clip[]): void;
   /** small numbers for tests/HUD, mirrored into object.userData.debug every update */
   debug?(): Record<string, number>;
   dispose(): void;
@@ -186,6 +191,8 @@ async function makeBody(asset: ActorAsset, baseUrl: string, tint: string): Promi
             drop: (p) => (p === 'sitting' ? (k.canSit ? SKINNED_SIT_DROP_M : SIT_DROP_M) : 0),
             look: (yaw) => k.look(yaw),
             travel: (walking, walked) => k.travel(walking, walked),
+            gesture: (name, time) => k.gesture(name, time),
+            addGestures: (clips) => k.addGestures(clips),
             offset: k.offset,
             debug: () => k.debug(),
             dispose: () => k.dispose(),
@@ -311,8 +318,12 @@ export async function createActor(
       const bodyPose = body.travel && walkingNow ? 'standing' : p.pose;
       if (bodyPose !== pose) handle.setPose(bodyPose);
       body.travel?.(walkingNow, p.walked);
+      body.gesture?.(p.gesture?.clip ?? null, p.gesture?.time ?? 0);
       if (wantYaw === null || walkingNow) object.rotation.y = p.yaw;
       wantYaw = p.yaw;
+    },
+    addGestures(clips) {
+      body.addGestures?.(clips);
     },
     lookAt(target) {
       lookTarget = target ? (lookTarget ?? new THREE.Vector3()).copy(target) : null;

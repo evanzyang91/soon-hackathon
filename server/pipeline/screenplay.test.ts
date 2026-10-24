@@ -302,12 +302,24 @@ describe('Claude screenplay path (fake client)', () => {
         pose: null,
       },
       { t: 6, action: 'sits on the bench', moveTo: null, facing: null, pose: 'sitting' },
+      {
+        t: 8,
+        action: 'throws up her hands',
+        moveTo: null,
+        facing: null,
+        pose: null,
+        gesture: '  A person throws both hands up in exasperation, then lets them drop.  ',
+      },
       { t: -1, action: 'invalid time', moveTo: null, facing: null, pose: null },
     ];
     const r = checkDraft(JSON.stringify(d), FIXTURE);
     expect(r.problems).toEqual([]);
     const beats = r.plan!.scenes[0]!.blocking[0]!.beats!;
-    expect(beats).toHaveLength(2);
+    expect(beats).toHaveLength(3);
+    expect(beats[2]!.gesture).toBe(
+      'A person throws both hands up in exasperation, then lets them drop.',
+    );
+    expect(beats[0]!.gesture).toBeUndefined();
     expect(beats[0]).toMatchObject({ t: 3, action: 'crosses to the kerb', moveTo: [1.235, 0, -3] });
     expect(beats[0]!.yaw).toBeCloseTo(Math.PI, 1); // from the kerb, facing back toward z = 0
     expect(beats[1]).toEqual({ t: 6, action: 'sits on the bench', pose: 'sitting' });

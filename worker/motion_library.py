@@ -4,6 +4,7 @@
     python3 worker/motion_library.py --generate   # HY-Motion on Modal (L40S, once): raw/*.npz
     python3 worker/motion_library.py --build      # numpy: raw/*.npz -> motion-library.json + motion-clips.bin
     python3 worker/motion_library.py --upload     # copy the built library into the LHM Volume
+    python3 worker/motion_library.py --gestures spec.json --out DIR   # one-shot beat gestures
 
 Generated clips (every seed, raw/) and review builds stay in data/motion-library/ (untracked);
 the built library (~160 KB) is committed in worker/motion-library/ and uploaded to the LHM Volume
@@ -327,6 +328,127 @@ def build_clip(name: str, pose: str, speaking: bool, rotmats: np.ndarray, transl
     )
 
 
+# ---------------------------------------------------------------------------------------------
+# One-shot gestures for beats ("slams both palms on the table"): played once on the scene clock
+# ---------------------------------------------------------------------------------------------
+
+GESTURE_SEEDS = [11, 23]
+#: generator warm-up trimmed from the start of a gesture take (s)
+GESTURE_TRIM_S = 0.2
+#: blend of the first / last frames toward the neighbouring idle (s), so it eases in and out
+GESTURE_EASE_S = 0.25
+
+
+def build_gesture(name: str, pose: str, rotmats: np.ndarray, transl: np.ndarray, keypoints: np.ndarray, fps=FPS) -> dict:
+    """One seed's raw motion -> a one-shot clip: facing +Z, starting and ending where it stood
+    (root x/z drift removed linearly, feet planted), generator warm-up trimmed."""
+    R, T = unwrap_yaw(rotmats.astype(np.float64), transl.astype(np.float64))
+    K = keypoints.astype(np.float64)
+    J = rest_skeleton(rotmats.astype(np.float64), K)
+    leg = float(np.mean([np.linalg.norm(J[1] - J[4]) + np.linalg.norm(J[4] - J[7]), np.linalg.norm(J[2] - J[5]) + np.linalg.norm(J[5] - J[8])]))
+    a = min(int(GESTURE_TRIM_S * fps), max(0, len(R) - 2 * fps))
+    R = R[a:].copy()
+    T = T[a:].copy()
+    n = len(R)
+    idx = np.arange(n)
+    # the heading at the start is the actor's facing; drift over the take is removed linearly
+    yaw = np.unwrap(yaw_of(R[:, 0]))
+    R[:, 0] = rot_y(-(yaw[-1] - yaw[0]) * idx / max(n - 1, 1)) @ R[:, 0]
+    T = T - T[0]
+    inplace = clip_joints(R, J, np.zeros_like(T))
+    root_xz, _, lateral = planted_root(inplace, fps, T[:, [0, 2]].copy())
+    T[:, 0], T[:, 2] = root_xz[:, 0], root_xz[:, 1]
+    for ax in (0, 2):  # end where it started: the actor's mark does not move during a gesture
+        T[:, ax] -= T[0, ax] + (T[-1, ax] - T[0, ax]) * idx / max(n - 1, 1)
+    step = pose_distance(R[1:, 1:], R[:-1, 1:])
+    return dict(
+        name=name,
+        pose=pose,
+        speaking=False,
+        R=R,
+        root=T,
+        window=[int(a), int(a + n)],
+        loopCost=0.0,
+        seamJump=0.0,
+        medianStep=float(np.median(step)),
+        maxStep=float(step.max()),
+        speed=0.0,
+        legLength=leg,
+        footSkate=foot_skate(clip_joints(R, J, T), fps),
+        lateralDrift=lateral,
+        frames=int(n),
+    )
+
+
+def gesture_score(c: dict) -> float:
+    """Lower is better: jitter (worst step vs the median) and foot skate."""
+    return c["maxStep"] / max(c["medianStep"], 1e-6) + 4 * c["footSkate"]
+
+
+def library_json(clip_file: str, blob: bytes, meta: list[dict]) -> dict:
+    return dict(
+        schema=SCHEMA,
+        fps=FPS,
+        joints=22,
+        file=clip_file,
+        bytes=len(blob),
+        sha256=hashlib.sha256(blob).hexdigest(),
+        layout="per clip at `offset`: frames x 22 x int16 [x,y,z,w]*32767 local rotations (SMPL-X joints 0..21, root = "
+        "global orientation, +Y up, faces +Z), then frames x float32 [x,y,z] root offset (source metres; x/z in place)",
+        source="HY-Motion 1.0 (tencent/HY-Motion-1.0 @620dd559, code @4e426f5a), text guidance 5.0, 50 Euler steps, 30 fps; "
+        "seamless loops by worker/motion_library.py",
+        clips=meta,
+    )
+
+
+def write_gesture(out: Path, key: str, prompt: str, pose: str, npz) -> dict:
+    """Best seed of one generated gesture -> out/<key>.json + out/<key>.bin (a one-clip library)."""
+    cands = []
+    for s in range(npz["rotmats"].shape[0]):
+        c = build_gesture(key, pose, npz["rotmats"][s], npz["transl"][s], npz["keypoints"][s])
+        c["seed"] = int(npz["seeds"][s])
+        c["prompt"] = prompt
+        cands.append(c)
+    best = min(cands, key=gesture_score)
+    blob, meta = encode([best])
+    meta[0]["oneShot"] = True
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{key}.bin").write_bytes(blob)
+    lib = library_json(f"{key}.bin", blob, meta)
+    (out / f"{key}.json").write_text(json.dumps(lib, indent=1))
+    return meta[0]
+
+
+def gestures(spec_path: str, out_dir: str) -> dict:
+    """spec: {"gestures": [{"key", "prompt", "seconds", "pose"}]} -> every key cached in out_dir
+    (generated on Modal only when out_dir/<key>.json is missing; one GPU call for all of them)."""
+    spec = json.loads(Path(spec_path).read_text())["gestures"]
+    out = Path(out_dir)
+    missing = [g for g in spec if not (out / f"{g['key']}.json").exists()]
+    report: dict = {"cached": len(spec) - len(missing), "generated": [], "estimatedComputeUSD": 0.0}
+    if missing:
+        load_auth()
+        import io
+
+        import modal
+
+        import modal_motion
+
+        prompts = [dict(name=g["key"], text=g["prompt"], seconds=float(g["seconds"])) for g in missing]
+        t0 = time.time()
+        with modal.enable_output() if os.environ.get("MOTION_MODAL_OUTPUT") else _null():
+            with modal_motion.app.run():
+                res = modal_motion.generate.remote(prompts, GESTURE_SEEDS)
+        for g in missing:
+            npz = np.load(io.BytesIO(res["clips"][g["key"]]))
+            meta = write_gesture(out, g["key"], g["prompt"], g.get("pose", "standing"), npz)
+            report["generated"].append(dict(key=g["key"], frames=meta["frames"], seed=meta["seed"]))
+        report["estimatedComputeUSD"] = res.get("estimatedComputeUSD", 0.0)
+        report["gpuSeconds"] = res.get("seconds")
+        report["wallSeconds"] = time.time() - t0
+    return report
+
+
 def score(c: dict) -> float:
     """Lower is better: raw loop mismatch (before the seam blend), the worst frame-to-frame jump
     relative to the median (jitter), and foot skate for the walk cycle."""
@@ -444,7 +566,14 @@ def main(argv=None) -> int:
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--review", action="store_true", help="with --build: every seed, for review")
     ap.add_argument("--upload", action="store_true")
+    ap.add_argument("--gestures", metavar="SPEC", help="one-shot beat gestures from a JSON spec (with --out)")
+    ap.add_argument("--out", metavar="DIR", help="with --gestures: the gesture cache directory")
     a = ap.parse_args(argv)
+    if a.gestures:
+        if not a.out:
+            ap.error("--gestures needs --out")
+        print("RESULT " + json.dumps(gestures(a.gestures, a.out)), flush=True)
+        return 0
     if a.generate is not None:
         print(json.dumps(generate(a.generate or None), indent=1))
     if a.build:

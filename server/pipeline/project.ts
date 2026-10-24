@@ -48,6 +48,7 @@ import {
   type ScenePlan,
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
+import { resolveSceneMotion } from './motion.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
 import { actorDirFor, buildActor } from './actors.ts';
 import {
@@ -1141,10 +1142,19 @@ export class ProjectStore {
           await readJson(join(sceneDir, 'audio.json')).catch(() => undefined),
         ).data ?? [];
       const ids = new Set(scene.characterIds);
+      // beat gestures → clips (generated on Modal with MOTION_GEN=1, else the shared clips)
+      const motion = await resolveSceneMotion(scene, {
+        sceneDir,
+        sceneRel: `scene-${idx}`,
+        cacheDir: env.motionCacheDir,
+        generate: env.motionGen && !this.mock && !!this.keys.modal,
+        log: (m) => void this.log(id, `[scene ${idx}] ${m}`),
+      });
       const manifest = SceneManifest.parse({
         version: 1,
         projectId: id,
-        plan: scene,
+        plan: motion.scene,
+        ...(motion.motion ? { motion: motion.motion } : {}),
         characters: plan.characters.filter((c) => ids.has(c.id)),
         world: worldAsset,
         actors: actorAssets,

@@ -69,6 +69,13 @@ export interface SkinnedBody {
    * built-in walk-in to the mark from then on.
    */
   travel(walking: boolean, walked: number): void;
+  /**
+   * A beat's gesture: play clip `name` once, `time` seconds in (locked to the scene clock, so
+   * scrubbing works); null returns to idle / talk. Unknown names are ignored.
+   */
+  gesture(name: string | null, time: number): void;
+  /** The scene's generated gesture clips (manifest `motion`), playable by `gesture` only. */
+  addGestures(clips: Clip[]): void;
   debug(): Record<string, number>;
   dispose(): void;
 }
@@ -216,6 +223,9 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
   let remaining = 0;
   let forced: Clip | null = null;
   let travel: { walking: boolean; walked: number } | null = null;
+  /** Clips a beat may play by name: this actor's library plus the scene's generated gestures. */
+  const gestures = new Map(clips.map((c) => [c.name, c]));
+  let gestureNow: { clip: Clip; time: number } | null = null;
   const start = phase(asset.characterId);
   const idleOf = () => (pose === 'sitting' && canSit ? sets.sitting : sets.standing);
   mixer.play(idleOf().idle[0]!, 0, start * idleOf().idle[0]!.frames / idleOf().idle[0]!.fps);
@@ -233,6 +243,13 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
     travel(walking, walked) {
       travel = { walking, walked };
     },
+    gesture(name, time) {
+      const clip = name ? gestures.get(name) : undefined;
+      gestureNow = clip ? { clip, time } : null;
+    },
+    addGestures(extra) {
+      for (const c of extra) gestures.set(c.name, c);
+    },
     animate(dt, sceneTime, speaking, level) {
       if (speaking && !wasSpeaking) line++;
       wasSpeaking = speaking;
@@ -246,7 +263,9 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
         walking = st.walking;
       } else remaining = 0;
       const set = idleOf();
-      const want = forced ?? (walking ? walk! : speaking ? set.talk[line % set.talk.length]! : set.idle[0]!);
+      const g = !walking && !forced ? gestureNow : null;
+      const want =
+        forced ?? (walking ? walk! : g ? g.clip : speaking ? set.talk[line % set.talk.length]! : set.idle[0]!);
       const wasWalk = mixer.clip === walk && walk !== null;
       // phase 0 of the distance lock is the passing frame (walkPhase includes the approach length)
       const walked = travel ? travel.walked : APPROACH_M - remaining;
@@ -254,7 +273,10 @@ export async function loadSkinnedBody(asset: SplatAsset, dir: string, pointer: R
       mixer.play(want, wasWalk && want !== walk ? FADE_STOP_S : FADE_S, want === walk && !forced ? walkTime : undefined);
       mixer.rate = 1;
       if (walking && mixer.clip === walk && !forced) mixer.seek(walkTime);
-      const p = mixer.update(dt, !(walking && mixer.clip === walk && !forced));
+      // a gesture is locked to the scene clock and holds its last frame (it plays once)
+      if (g && mixer.clip === g.clip) mixer.seek(Math.min(g.time, (g.clip.frames - 1) / g.clip.fps));
+      const locked = (walking && mixer.clip === walk) || (!!g && mixer.clip === g.clip);
+      const p = mixer.update(dt, !(locked && !forced));
       const k = legRatio(mixer.clip ?? want);
       rootOffset[0] = p.root[0]! * k;
       rootOffset[1] = 0;

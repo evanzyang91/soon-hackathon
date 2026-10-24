@@ -51,6 +51,16 @@ export const Beat = z.object({
   pose: z.enum(['standing', 'sitting']).optional(),
   /** After the beat: face this yaw (Blocking.yaw convention). Absent = keep / direction walked. */
   yaw: z.number().optional(),
+  /**
+   * A distinct body motion to perform on the spot, as a text-to-motion prompt ("A person slams
+   * both palms down on a table in front of them."). Absent for walks, sits and plain turns.
+   */
+  gesture: z.string().max(240).optional(),
+  /**
+   * Motion clip played once from the beat's start (set by the pipeline from `gesture`): a clip of
+   * the manifest's `motion` library (generated for this prompt) or of the actor's own library.
+   */
+  clip: z.string().optional(),
 });
 export type Beat = z.infer<typeof Beat>;
 
@@ -228,6 +238,11 @@ export const SceneManifest = z.object({
   audio: z.array(LineAudio),
   /** Default director camera when the scene opens. */
   startCamera: z.object({ position: Vec3, quaternion: Quat, fovDeg: z.number() }),
+  /**
+   * The scene's generated gesture clips (previz.motion-library/1 JSON, project-relative), played
+   * by beats whose `clip` names one of them. Absent: beats use the actors' own clips only.
+   */
+  motion: z.object({ library: z.string() }).optional(),
 });
 export type SceneManifest = z.infer<typeof SceneManifest>;
 

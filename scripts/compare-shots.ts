@@ -12,6 +12,8 @@
 //
 // --view is camera x,y,z : look-at x,y,z : vertical fov (degrees), in scene metres. More columns:
 // repeat --col <manifest> --col-title <title> (after --left / --right, if given).
+// --settle 1 keeps the clock frozen but lets animation run (dt 1/30), so clip cross-fades finish:
+// needed to see beat gestures, which a dt = 0 freeze leaves on the clip before the fade.
 import { writeFile } from 'node:fs/promises';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import * as THREE from 'three';
@@ -45,7 +47,7 @@ function parseArgs(argv: string[]) {
 }
 
 /** Freezes the director's scene: clock at `time`, every update with dt = 0 (same pose each run). */
-const FREEZE = (time: number) => `
+const FREEZE = (time: number, settle = false) => `
   window.__freezeTime = ${time};
   const iv = setInterval(() => {
     const d = window.__previz && window.__previz.director;
@@ -61,18 +63,19 @@ const FREEZE = (time: number) => `
           v.__frozen = true;
           v.setTime(window.__freezeTime);
           const up = v.update.bind(v);
-          v.update = () => up(0);
+          // the clock stays paused either way (update only advances it while playing)
+          v.update = () => up(${settle ? 1 / 30 : 0});
         }
       },
     });
   }, 0);
 `;
 
-async function shoot(browser: Browser, base: string, manifest: string, views: View[], time: number, viewport: [number, number]) {
+async function shoot(browser: Browser, base: string, manifest: string, views: View[], time: number, viewport: [number, number], settle = false) {
   const page: Page = await browser.newPage({ viewport: { width: viewport[0], height: viewport[1] }, ignoreHTTPSErrors: true });
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.addInitScript(FREEZE(time));
+  await page.addInitScript(FREEZE(time, settle));
   // HUD hidden from document start, so a dev-server reload cannot bring it back mid-capture
   await page.addInitScript(`addEventListener('DOMContentLoaded', () => {
     const st = document.createElement('style');
@@ -137,7 +140,7 @@ async function main() {
   const browser = await chromium.launch({ channel: 'chromium', headless: true, args: GPU_ARGS });
   try {
     const shot = [];
-    for (const c of cols) shot.push(await shoot(browser, o.base!, c.url, views, time, [vw, vh]));
+    for (const c of cols) shot.push(await shoot(browser, o.base!, c.url, views, time, [vw, vh], o.settle === '1'));
     const placed = (st: unknown) => (st as { actors: { id: string; position: number[] }[] }).actors.map((a) => `${a.id} ${a.position.map((v) => v.toFixed(2)).join(',')}`);
     console.log(JSON.stringify(shot.map((x) => placed(x.state))));
     const img = (b: Buffer) => `data:image/png;base64,${b.toString('base64')}`;
