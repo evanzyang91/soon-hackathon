@@ -78,8 +78,8 @@ shortcut keep working. The shortcuts are ignored while typing in the chat.
 | --- | --- |
 | Thread | User bubbles (the screenplay collapsed to its first lines, photo thumbnails captioned with their target); assistant bubbles with the reply, the planner (`mock` / `claude`) and its cost |
 | Plan card | Title; the cast (photo or initial, height, voice, description); the scenes (Marble thumbnail or the set photo, heading, time of day, world prompt, stage chips once generating; a ready scene opens on click); a prominent **Generate N scenes** while the project is a draft. Only the latest plan card is drawn in full; older ones collapse to a line |
-| Action cards | One per `ChatAction`: kind, status chip (applied / needs confirm / running / done / failed / skipped), summary, `before → after` of a plan patch, effect, note, cost, the photo it used; **Confirm** on needs-confirm (POST chat/confirm) |
-| Composer | Auto-growing box. A new project's screenplay takes Enter as a newline (⌘Enter sends); in a thread Enter sends and Shift+Enter adds a newline. Attach button, drag-and-drop and paste of images; chips with a thumbnail, the prepared size and a target picker (none / each character / each scene → the request's `hint`); Sample; **Send** and **Generate** (first message: the pre-chat Generate, everything at once; later: POST /generate after sending what was typed) |
+| Action cards | One per `ChatAction`: kind, status chip (applied / needs confirm / running / done / failed / skipped), summary, `before → after` of a plan patch, effect, note, cost, the photo it used; **Confirm** on needs-confirm (POST chat/confirm) and **Not now** (`decline: true` → skipped) |
+| Composer | Auto-growing box. A new project's screenplay takes Enter as a newline (⌘Enter sends); in a thread Enter sends and Shift+Enter adds a newline. Attach button, drag-and-drop and paste of images; chips with a thumbnail, the prepared size and a target picker (none / each character / each scene → the request's `hint`: `character:<id>`, `scene:<0-based index>` labelled “Scene 1…”); Sample; **Send** and **Generate** (first message: the pre-chat Generate, everything at once; later: POST /generate after sending what was typed) |
 | States | "Thinking" / "Uploading photo 1 of 2" placeholder while a request runs, composer read-only; errors inline with the message given back to the composer; "Reading the screenplay" while the draft parses |
 
 Images are decoded, downscaled to ≤ 1600 px on the long side and re-encoded as PNG in the browser
@@ -88,9 +88,10 @@ after). Photos attached to the very first message are uploaded once the draft ex
 second message, after the plan is read: uploads need a project id. Their character targets, picked from
 the screenplay's cue names before any plan existed, are mapped to the plan's ids.
 
-The thread is server state: refetched when `ProjectStatus.chatRevision` changes, polled with the project
+The thread is server state: a draft's thread is seeded by the server (screenplay + plan card), and every change, action status included, bumps `ProjectStatus.chatRevision`; the laptop refetches when it changes, polled with the project
 list (every 1.5 s while the draft parses, a request or an action runs). A project without a thread (created
-by the pre-chat Generate on an older server) still gets its plan card from `plan.json`. Opening a scene
+by the pre-chat Generate) still gets the screenplay bubble and its plan card from `plan.json`; the
+server's messages win whenever there are any. Opening a scene
 switches the chat to that scene's project. So does clicking a project's name in the list, and **+ New**
 starts another. A draft in progress comes back after a reload.
 

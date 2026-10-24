@@ -60,7 +60,7 @@ interface Draft {
   url: string;
   image: PreparedImage | null;
   error: string | null;
-  /** ChatRequest hint: "" | "character:<id>" | "scene:<n>" */
+  /** ChatRequest hint: "" | "character:<id>" | "scene:<0-based ScenePlan.index>" */
   hint: string;
 }
 
@@ -302,9 +302,9 @@ export function mountChatPanel(
       const t = thr(p.id);
       const rev = p.chatRevision ?? 0;
       if (p.parse.status === 'done' && t.planTried !== rev) void loadPlan(p.id, rev);
-      // an empty thread (revision 0, or a server without chat) is not fetched at all
-      if (rev > 0 && !pending.has(p.id) && (t.chat?.revision !== rev || hasRunning(t.chat)))
-        void loadChat(p.id);
+      // every change (messages, action status) bumps the revision; an empty thread (revision 0,
+      // or a server without chat) is not fetched at all
+      if (rev > 0 && !pending.has(p.id) && t.chat?.revision !== rev) void loadChat(p.id);
       if (p.parse.status === 'failed' && firstAttach.delete(p.id)) generateAfterFirst.delete(p.id);
       void flushFirst(p.id);
     }
@@ -391,14 +391,20 @@ export function mountChatPanel(
     }
   };
 
-  const confirmAction = async (id: string, messageId: string, actionId: string) => {
+  /** Runs a needs-confirm action, or (decline) marks it skipped. */
+  const confirmAction = async (
+    id: string,
+    messageId: string,
+    actionId: string,
+    decline = false,
+  ) => {
     confirming.add(actionId);
     errors.delete(id);
     renderAll();
     try {
-      accept(id, await chat.confirm(id, messageId, actionId));
+      accept(id, await chat.confirm(id, messageId, actionId, decline));
     } catch (err) {
-      errors.set(id, `Not confirmed: ${message(err)}`);
+      errors.set(id, `${decline ? 'Not declined' : 'Not confirmed'}: ${message(err)}`);
     } finally {
       confirming.delete(actionId);
       renderAll();
@@ -849,7 +855,18 @@ export function mountChatPanel(
                 title: `${a.summary}${cost ? ` (${cost})` : ''}`,
                 onclick: () => void confirmAction(p.id, m.id, a.id),
               },
-              busy ? 'Starting…' : 'Confirm',
+              busy ? 'Working…' : 'Confirm',
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                'data-testid': 'action-decline',
+                disabled: busy,
+                title: 'Keep things as they are (the card is marked skipped)',
+                onclick: () => void confirmAction(p.id, m.id, a.id, true),
+              },
+              'Not now',
             ),
             h('span', { class: 'muted small' }, 'Nothing is spent until you confirm.'),
           )

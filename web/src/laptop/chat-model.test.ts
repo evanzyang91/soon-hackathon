@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { mockPlan } from '../../../server/pipeline/fountain.ts';
 import { fitWithin, pngName } from './chat-client';
-import { patchDiff, planSummary, scriptOutline, targetOptions } from './chat-model';
+import { hintLabel, patchDiff, planSummary, scriptOutline, targetOptions } from './chat-model';
 
 const FIXTURE = readFileSync(
   new URL('../../../fixtures/screenplay.fountain', import.meta.url),
@@ -15,15 +15,22 @@ describe('chat helpers', () => {
       '',
       'character:theo',
       'character:maya',
+      'scene:0',
       'scene:1',
       'scene:2',
-      'scene:3',
     ]);
     // the first message: cue names from the text (the server resolves names as well as ids)
     expect(scriptOutline(FIXTURE)).toEqual({
       characters: ['THEO', 'MAYA'],
       headings: ['EXT. CITY STREET - NIGHT', 'INT. KITCHEN - MORNING', 'EXT. ROOFTOP - DUSK'],
     });
+    // scene hints carry the 0-based index, labelled with the director's 1-based number
+    expect(targetOptions(null, FIXTURE)[3]).toEqual({
+      value: 'scene:0',
+      label: 'Scene 1 · EXT. CITY STREET - NIGHT',
+      group: 'scene',
+    });
+    expect(hintLabel('scene:1', null)).toBe('Scene 2');
     expect(targetOptions(null, FIXTURE)[1]).toEqual({
       value: 'character:theo',
       label: 'Theo',
