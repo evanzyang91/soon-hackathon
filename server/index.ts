@@ -21,6 +21,8 @@ const MIME: Record<string, string> = {
   '.wav': 'audio/wav',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.webp': 'image/webp', // Marble thumbnails
+  '.gltf': 'model/gltf+json',
   '.css': 'text/css',
 };
 
