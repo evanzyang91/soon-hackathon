@@ -2,6 +2,8 @@
 // packaged by the real worker packager) in a bare three + Spark scene, calls speak() with the
 // mock TTS WAV and asserts: no console errors, the promise resolves after ~duration, the jaw
 // follows the audio, the splat actor switches to its talk loop, both stand ~1.7 m with feet on 0.
+// A real avatar with a runtime rig (sequence.json `rig`) is checked on its motion clips instead:
+// clip time advancing, an idle clip while silent, a talking clip while speaking, jaw following.
 //
 //   npx tsx scripts/actor-browser-check.ts [--headed] [--shots DIR] [--sequence ACTOR_DIR] [--gpu]
 //     --sequence ACTOR_DIR  check a real packaged avatar (a dir holding sequence/, e.g.
@@ -10,7 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
@@ -26,7 +28,7 @@ const fail = (m: string) => {
 
 async function main() {
   const realSeq = args.includes('--sequence') ? args[args.indexOf('--sequence') + 1]! : null;
-  if (realSeq) execFileSync('ln', ['-s', realSeq, join(fixtures, 'synth')]);
+  if (realSeq) execFileSync('ln', ['-s', resolve(realSeq), join(fixtures, 'synth')]);
   else execFileSync('python3', [join(repo, 'worker/tests/make_synthetic_actor.py'), join(fixtures, 'synth'), '--frames', '12', '--talk', '6', '--splats', '6000'], { stdio: 'inherit' });
   // --audio FILE --seconds S plays a real TTS file instead of the mock beeps
   const text = 'Did you hear that? Somebody is on the stairs.';
@@ -85,6 +87,14 @@ async function main() {
       const h = b.max[1] - b.min[1];
       console.log(`${id}: feet y=${b.min[1].toFixed(3)} height=${h.toFixed(3)} m`);
       if (Math.abs(b.min[1]) > 0.08 || h < 1.55 || h > 1.85) fail(`${id} is not standing 1.7 m on y=0: ${JSON.stringify(b)}`);
+    }
+    const seqJson0 = JSON.parse(readFileSync(join(fixtures, 'synth/sequence/sequence.json'), 'utf8'));
+    if (seqJson0.rig) {
+      await checkSkinned(page, seqJson0, `${url}fixture/line.wav`, seconds, shots);
+      const errors = [...consoleErrors, ...(await page.evaluate(() => (window as any).__harness.errors))];
+      if (errors.length) fail(`console errors:\n${errors.join('\n')}`);
+      console.log('actor browser check (runtime rig): OK');
+      return;
     }
     const idleFrames = new Set<number>();
     for (let i = 0; i < 8; i++) {
@@ -146,6 +156,36 @@ async function main() {
     if (realSeq) rmSync(join(fixtures, 'synth'), { force: true }); // the symlink, not the library
     rmSync(fixtures, { recursive: true, force: true });
   }
+}
+
+/** Rigged splat actor: clips advance, idle while silent, a talking clip + jaw while speaking. */
+async function checkSkinned(page: import('@playwright/test').Page, seq: any, wav: string, seconds: number, shots: string | null) {
+  const lib = JSON.parse(readFileSync(join(fixtures, 'synth/sequence', seq.rig.clips), 'utf8'));
+  const clipOf = (d: any) => lib.clips[d.clip] as { name: string; speaking: boolean; pose: string };
+  const d0 = await page.evaluate(() => (window as any).__harness.debug('maya'));
+  if (!d0.skinned) fail(`maya has a rig but did not load it: ${JSON.stringify(d0)}`);
+  await page.waitForTimeout(500);
+  const d1 = await page.evaluate(() => (window as any).__harness.debug('maya'));
+  if (!(d1.clipTime > d0.clipTime)) fail(`clip time not advancing: ${d0.clipTime} -> ${d1.clipTime}`);
+  if (clipOf(d1).speaking || clipOf(d1).pose !== 'standing') fail(`silent actor plays ${clipOf(d1).name}`);
+  if (shots) await page.screenshot({ path: join(shots, 'actors-idle.png') });
+  const speak = page.evaluate(([u, s]) => (window as any).__harness.speak('maya', u, s), [wav, seconds] as const);
+  await page.waitForTimeout(600);
+  const during: any[] = [];
+  for (let i = 0; i < 10; i++) {
+    during.push(await page.evaluate(() => (window as any).__harness.debug('maya')));
+    await page.waitForTimeout(80);
+  }
+  if (shots) await page.screenshot({ path: join(shots, 'actors-speaking.png') });
+  const took = await speak;
+  const names = [...new Set(during.map((d) => clipOf(d).name))];
+  const jawMax = Math.max(...during.map((d) => d.jaw));
+  console.log(`maya.speak resolved after ${took.toFixed(2)} s; clips while speaking: ${names}; jaw max ${jawMax.toFixed(3)} rad`);
+  if (!during.every((d) => clipOf(d).speaking)) fail(`talking clip not used while speaking: ${names}`);
+  if (Math.abs(took - seconds) > 1.0) fail(`maya.speak resolved after ${took}s`);
+  await page.waitForTimeout(700);
+  const back = await page.evaluate(() => (window as any).__harness.debug('maya'));
+  if (clipOf(back).speaking) fail(`still on ${clipOf(back).name} after the line`);
 }
 
 main().catch((err) => {
