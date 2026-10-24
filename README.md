@@ -188,6 +188,46 @@ More: [Look tab](docs/images/ux-look.png), [Edit tab](docs/images/ux-edit.png),
 [Shoot tab](docs/images/ux-shoot.png), [region selected](docs/images/ux-region.png),
 [cheatsheet](docs/images/ux-cheatsheet.png), [first-run tour](docs/images/ux-tour.png).
 
+## Re-prompting (Edit tab): change only what the prompt touches
+
+Type a change in the **Edit** tab ("make the pillow on the left red", "move Leo a metre closer to
+Maya", "warmer and more contrast", "make the sky stormy") and press **Send**. The current view
+(a ≤ 300 KB JPEG plus its camera) goes with the prompt, so "left" and "right" mean what you see.
+The server asks Claude for an **EditPlan**: a scope and typed ops (`shared/look.ts`). The scope
+decides the cost, and the planner must pick the cheapest one that does the job:
+
+| Scope | Examples | Cost | What happens |
+| --- | --- | --- | --- |
+| `look` | warmer, more contrast, night mood, add a key light from the left | instant | a Look patch, baked into the scene look (the Look tab keeps editing it) |
+| `transform` | move Leo closer, rotate the bench, make the car bigger | instant | actor / prop transform edit; a moved light is a look patch |
+| `prop` | add a bicycle leaning on the shelter, remove the bus | instant | procedural prop added (drag it to place) or removed |
+| `splat-region` | pillow red, remove the lamp, make the plant taller, shift the chair left | instant, no re-render | a Spark `SplatEdit` region on the world splats only: recolour, hide, move, grow / shrink |
+| `world-regen` | stormy sky, make it winter, turn the kitchen into a diner | ~5 min + 1,580 Marble credits, **asks first** | a confirm card; on **Regenerate** the world's own panorama is edited by an image model (sky-only edits keep the ground pixel-identical) and fed to Marble as an image prompt, or the text prompt is re-run; actors, look and props are kept, region edits dropped with a note |
+| `clarify` | "the thing on the left" | free | the planner asks which object you mean |
+
+A region op needs a 3D target and is never guessed: the planner uses the region you selected in
+the viewport (click the world, or **Select** in the Edit tab; Shift+drag for a box), else Claude
+vision boxes the named object in the view you sent (`needsTarget[].box`), which is raycast into a
+3D region and previewed before **Apply**; if neither works a banner asks you to click the object.
+Every applied edit lands in `scene-<n>/edits.json` with the prompt that produced it and shows in
+the panel's history, where each one can be switched off (a look op restores the values it
+replaced), deleted or undone (**Undo last**). The response always says what changed and what did
+not. Under `MOCK=1` or without an Anthropic key a keyword planner follows the same rules offline.
+
+Routes: `POST /api/projects/:id/scenes/:n/reprompt` (`{ prompt, selection?, view? }` → `{ plan,
+edits }`; cheap scopes are applied and saved, regen and clarify come back unapplied) and
+`POST …/regen` (`{ plan.regen }`, runs the world stage again; `MARBLE_DRY_RUN=1` logs the Marble
+requests instead of sending them, which is how the regen path was verified).
+
+![A clicked region recoloured: only the splats inside the sphere change](docs/images/reprompt-region-recolor.png)
+
+![Vision target: Claude's box on the shelter roof → 3D region → Apply](docs/images/reprompt-vision-target.png)
+
+![World regen, dry run: confirm card, edited panorama, logged Marble request, world swapped](docs/images/reprompt-regen-dry-run.png)
+
+More: [hide + move a region](docs/images/reprompt-region-hide-move.png), [phone parity of a region
+edit](docs/images/reprompt-phone-parity.png), [the snow caveat](docs/images/reprompt-regen-snow-caveat.png).
+
 ## Pair the phone
 
 1. Phone and laptop on the same Wi-Fi. The laptop's right panel shows a room code, a QR code and
@@ -456,14 +496,23 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   sky mask is a rule (far, and above the horizon as seen from the camera) rather than a
   segmentation: tall buildings far away can pick up some of the sky tint.
 - A camera's own lens is stored in the laptop's browser storage, next to the dropped cameras. It
-  is not in `edits.json`. The focus point in the viewport edits the scene lens; a camera with its
-  own lens shows its focus point dimmed (edit it in the Look tab).
+  is not in `edits.json`, so another laptop opening the project does not see it. The viewport's
+  focus point edits whichever lens the camera renders with (its own, else the scene's).
 - Direct manipulation: only actors are kept out of walls (props, lights and cameras move freely);
   actor and prop moves apply once the collider has settled the blocking (a second or two after a
   real world loads; the toolbar says so if you grab earlier); a prop driving along its path is
   moved by shifting its whole path and cannot be turned. Dropped cameras and lights are not scene
   edits (cameras live on the laptop, lights in the look), so the Edit tab's history does not list
   their moves; the undo stack does.
+- Re-prompting: a **season or weather regen that touches the ground does not keep the layout**:
+  when the whole panorama is editable, the image model draws a new street rather than editing the
+  360° image in place, so a real Marble regen from it would be a different-looking place. Sky-only
+  edits are safe (the original ground is composited back). Region edits: Spark has no hue blend,
+  so "hue" is a luminance-keeping multiply (strongly coloured surfaces of another hue go darker
+  instead of changing hue); grow / shrink moves splats on a 5×5×5 displacement grid but cannot
+  resize the splats themselves; "move" leaves a hole where the object was. An interrupted regen
+  resumes when re-requested, not on server restart. No real regen has been run (credits), only
+  dry runs with the request logged.
 
 ## Repository map
 
