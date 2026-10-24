@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Reference image -> LHM-500M-HF gaussian actor -> frozen PLY + looping idle/talk PLY sequence.
+"""Reference image -> LHM gaussian actor -> frozen PLY + looping idle/talk PLY sequence.
+
+Standard actors use LHM-500M-HF; "high detail" (``--model`` LHM-1B-HF + ``--finetune``) adds a
+short photometric fine-tune of the canonical gaussians against the reference right after the
+canonical inference (finetune_actor.py), so every output below comes from the fine-tuned state.
 
 Runs inside the Modal GPU image (cwd /opt/lhm). Ported from OrbisEngine
 ``worker/stages/lhm_person.py`` (mask crop, Multi-HMR source pose, head crop, canonical LHM
@@ -14,12 +18,14 @@ inference via ``infer_single_view`` + native ``animation_infer_gs`` skinning). D
 
 Outputs under --out: mask.png, observed-mask.png, pose-input.png, estimated-joints.png,
 model-input.png, head-input.png, source-pose.json, canonical-state.pt, raw/{person-posed,frozen,
-frame_NNN}.ply, frozen.ply, sequence/{sequence.json,frame_NNN.ply,motion.*}, result.json.
+frame_NNN}.ply, frozen.ply, sequence/{sequence.json,frame_NNN.ply,motion.*}, result.json
+(+ finetune.json, finetune-source.png, finetune-turns.png with --finetune).
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import gc
 import hashlib
 import importlib.util
@@ -35,6 +41,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import finetune_actor  # noqa: E402
 import idle_motion  # noqa: E402
 import package_actor  # noqa: E402
 
@@ -132,7 +139,8 @@ def preprocess(repo, source, mask):
 
 
 def prepare_head_input(raw, mask, detector):
-    """Orbis lhm_person.prepare_head_input: head detection restricted to the person mask."""
+    """Orbis lhm_person.prepare_head_input: head detection restricted to the person mask.
+    Returns (112 x 112 head crop, head box x0 y0 x1 y1 in reference pixels)."""
     import torch
 
     selected = mask > 127
@@ -147,7 +155,7 @@ def prepare_head_input(raw, mask, detector):
     if x1 <= x0 or y1 <= y0 or not selected[y0:y1, x0:x1].any():
         raise ValueError("Head box does not contain the selected person")
     head = masked[y0:y1, x0:x1]
-    return cv2.resize(head, (112, 112), interpolation=cv2.INTER_AREA)
+    return cv2.resize(head, (112, 112), interpolation=cv2.INTER_AREA), (int(x0), int(y0), int(x1), int(y1))
 
 
 def angle_between(rv_a, rv_b) -> float:
@@ -162,7 +170,13 @@ def main():
     ap.add_argument("--mask")
     ap.add_argument("--out", required=True)
     ap.add_argument("--repo", default="/opt/lhm")
-    ap.add_argument("--model", required=True)
+    ap.add_argument("--model", required=True, help="local snapshot dir of the LHM checkpoint")
+    ap.add_argument("--model-id", default="3DAIGC/LHM-500M-HF")
+    ap.add_argument("--model-revision", default="dd6392905187a91fd67b3f6962aa74481e943764")
+    ap.add_argument("--detail", default="standard", choices=("standard", "high"))
+    ap.add_argument("--finetune", action="store_true", help="fine-tune the canonical gaussians against the reference")
+    ap.add_argument("--finetune-iters", type=int, default=600)
+    ap.add_argument("--finetune-seconds", type=float, default=100)
     ap.add_argument("--frames", type=int, default=48)
     ap.add_argument("--talk-frames", type=int, default=24)
     ap.add_argument("--fps", type=float, default=12)
@@ -219,13 +233,19 @@ def main():
     person = max(people, key=lambda p: float(p["scores"]))
     pose = {k: v.detach().float().cpu() for k, v in person.items()}
     pad_left, pad_top, factor, _, _ = annotation
+    # what maps Multi-HMR's camera onto reference pixels (the fine-tune renders into it)
+    camera_annotation = (int(offset_w), int(offset_h), int(pad_left), int(pad_top), float(factor))
     joints = (pose["j2d"].numpy() - [pad_left, pad_top]) / factor - [offset_w, offset_h]
     overlay = raw.copy()
     for x, y in joints:
         cv2.circle(overlay, (round(float(x)), round(float(y))), 5, (255, 0, 0), -1)
     Image.fromarray(overlay).save(out / "estimated-joints.png")
     pose_record = {k: v.numpy().tolist() for k, v in pose.items() if k not in ("v3d", "j3d", "j2d")}
-    pose_record.update(detectedPeople=len(people), method="Official Multi-HMR on masked reference")
+    pose_record.update(
+        detectedPeople=len(people),
+        method="Official Multi-HMR on masked reference",
+        cameraAnnotation=dict(zip(("offsetW", "offsetH", "padLeft", "padTop", "factor"), camera_annotation)),
+    )
     (out / "source-pose.json").write_text(json.dumps(pose_record, indent=2))
     del estimator, tensor, K, people, person
     gc.collect()
@@ -235,8 +255,9 @@ def main():
     from LHM.utils.face_detector import FaceDetector
 
     detector = FaceDetector("./pretrained_models/gagatracker/vgghead/vgg_heads_l.trcd", device="cuda")
+    head_box = None
     try:
-        head = prepare_head_input(raw, mask, detector)
+        head, head_box = prepare_head_input(raw, mask, detector)
         head_detected = True
     except Exception as error:  # noqa: BLE001 - upstream zero-head fallback
         print("No head input; upstream zero-head fallback:", str(error), flush=True)
@@ -255,10 +276,11 @@ def main():
     from LHM.models import model_dict
     from LHM.utils.hf_hub import wrap_model_hub
 
-    print("Loading LHM-500M-HF", flush=True)
+    print(f"Loading {a.model_id}", flush=True)
     model = wrap_model_hub(model_dict["human_lrm_sapdino_bh_sd3_5"]).from_pretrained(a.model)
     model.eval()  # upstream overrides train() without returning self, so eval() is not chainable
     model.cuda()
+    timings["load"] = time.time() - t0
     params = pose_parameters(pose)
     print("Reconstructing canonical appearance", flush=True)
     with torch.inference_mode():
@@ -266,10 +288,45 @@ def main():
             image[None].cuda(), head_image.cuda(), None, None, None, None, None, smplx_params=params
         )
         params["transform_mat_neutral_pose"] = neutral
+    timings["canonical"] = time.time() - t0
+    finetune_report = None
+    if a.finetune:
+        # inference-mode tensors cannot take part in autograd: work on ordinary copies
+        attrs = [
+            dataclasses.replace(g, **{k: getattr(g, k).clone() for k in ("offset_xyz", "opacity", "rotation", "scaling", "shs")})
+            for g in attrs
+        ]
+        query = query.clone()
+        params = {k: v.clone() for k, v in params.items()}
+        neutral = params["transform_mat_neutral_pose"]
+        print("Fine-tuning against the reference (source pose, source camera)", flush=True)
+        try:
+            finetune_report = finetune_actor.finetune(
+                model,
+                attrs,
+                query,
+                params,
+                raw,
+                mask,
+                camera_annotation,
+                out,
+                head_box=head_box,
+                iters=a.finetune_iters,
+                seconds=a.finetune_seconds,
+                log=lambda m: print(m, flush=True),
+            )
+        except Exception as error:  # noqa: BLE001 - LHM's own avatar is still a complete actor
+            import traceback
+
+            finetune_report = dict(applied=False, error=f"{type(error).__name__}: {error}"[:500])
+            print("fine-tune failed (LHM output kept):", traceback.format_exc(), flush=True)
+        (out / "finetune.json").write_text(json.dumps(finetune_report, indent=2))
+        torch.cuda.empty_cache()
+        timings["finetune"] = time.time() - t0
+    with torch.inference_mode():
         posed = model.animation_infer_gs(attrs, query, params)
         posed.save_ply(str(out / "raw/person-posed.ply"))  # Orbis-equivalent source-pose output
         torch.save(dict(attrs=attrs, query=query, neutral=neutral, params=params), out / "canonical-state.pt")
-    timings["canonical"] = time.time() - t0
 
     estimated_root = pose["rotvec"][0].numpy().astype(np.float64)
     upright_root = np.array([math.pi, 0.0, 0.0])
@@ -323,6 +380,13 @@ def main():
             rootPose="upright [pi,0,0]" if use_upright else "Multi-HMR estimate",
             lowerBodyProvenance="Inferred by LHM from one generated reference image; legs held "
             "at the source pose (feet planted), only spine/neck/head/arms/jaw move",
+            detail=a.detail,
+            model=a.model_id,
+            **(
+                dict(finetune={k: finetune_report.get(k) for k in ("applied", "iterations", "sourceView", "reason", "error") if k in finetune_report})
+                if finetune_report is not None
+                else {}
+            ),
         ),
     )
     timings["package"] = time.time() - t0
@@ -346,8 +410,10 @@ def main():
         print("runtime rig export failed (baked sequence kept):", traceback.format_exc(), flush=True)
     timings["rig"] = time.time() - t0
     meta = dict(
-        model="3DAIGC/LHM-500M-HF",
-        modelRevision="dd6392905187a91fd67b3f6962aa74481e943764",
+        model=a.model_id,
+        modelRevision=a.model_revision,
+        detail=a.detail,
+        finetune=finetune_report,
         codeRevision="4f88aaeb3629249fbbddb4d0784a06962d9e1338",
         seconds=time.time() - t0,
         timings=timings,
