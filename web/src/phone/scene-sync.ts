@@ -65,6 +65,30 @@ export function captionFor(manifest: SceneManifest | null, lineId: string | null
   return { speaker: who?.name ?? line.characterId.toUpperCase(), text: line.text };
 }
 
+/**
+ * Whether the laptop is running the scene (clock playing and dialogue under way): what the
+ * phone's ACTION button shows as CUT. A line has to have been spoken within `holdMs`, which
+ * bridges the short pause the laptop leaves between lines.
+ */
+export class DialogueActivity {
+  private lastSpeakingAt = -Infinity;
+
+  constructor(private readonly holdMs = 1200) {}
+
+  update(state: SceneState, nowMs: number): void {
+    if (state.speakingLineId) this.lastSpeakingAt = nowMs;
+  }
+
+  running(state: SceneState | null, nowMs: number): boolean {
+    if (!state?.playing) return false;
+    return !!state.speakingLineId || nowMs - this.lastSpeakingAt < this.holdMs;
+  }
+
+  reset(): void {
+    this.lastSpeakingAt = -Infinity;
+  }
+}
+
 /** Extrapolates the laptop's scene clock between SceneState messages. */
 export class SceneClockTracker {
   private base = 0;
