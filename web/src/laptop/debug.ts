@@ -1,4 +1,5 @@
 // window.__previz: read-only snapshot for e2e tests and debugging from the devtools console.
+import * as THREE from 'three';
 import type { Director } from './director';
 
 export interface PrevizDebugState {
@@ -22,11 +23,47 @@ export interface PrevizDebugState {
   mainFrames: number;
   viewFromPhone: boolean;
   recording: boolean;
+  /** performance.now() of the last still (phone shutter / Still button), 0 = none yet. */
+  lastStillAt: number;
   actors: string[];
   dynamics: { id: string; position: number[]; phase: string }[];
+  /**
+   * Dialogue audio: WebAudio context state, actors whose voice is playing, loudest level now
+   * (0..1); `heard` / `peak`: who played and how loud during the current / last line (sampled
+   * every frame, so a short line cannot slip between two state() calls).
+   */
+  voice: { context: string; playing: string[]; level: number; heard: string[]; peak: number };
 }
 
 export function installDebugHook(director: Director) {
+  let peak = 0;
+  let peakLine: string | null = null;
+  const heard = new Set<string>();
+  const voice = (): PrevizDebugState['voice'] => {
+    const playing: string[] = [];
+    let level = 0;
+    for (const actor of director.runtime?.actors.values() ?? []) {
+      actor.object.traverse((o) => {
+        if (o instanceof THREE.PositionalAudio && o.isPlaying) playing.push(actor.characterId);
+      });
+      const d = actor.object.userData.debug as { level?: number } | undefined;
+      level = Math.max(level, d?.level ?? 0);
+    }
+    return { context: director.listener.context.state, playing, level, heard: [...heard], peak };
+  };
+  director.on((c) => {
+    if (c === 'lines' && director.speakingLineId && director.speakingLineId !== peakLine) {
+      peakLine = director.speakingLineId;
+      peak = 0;
+      heard.clear();
+    }
+    // 'clock' fires from the frame loop (≥ every 100 ms), right after the actors updated
+    if (c === 'clock') {
+      const v = voice();
+      peak = Math.max(peak, v.level);
+      for (const id of v.playing) heard.add(id);
+    }
+  });
   const state = (): PrevizDebugState => {
     const rt = director.runtime;
     const g = director.phoneGizmo.object;
@@ -59,8 +96,10 @@ export function installDebugHook(director: Director) {
       mainFrames: director.view.mainFrames,
       viewFromPhone: director.viewFromPhone,
       recording: director.recorder.recording,
+      lastStillAt: director.lastStillAt,
       actors: rt ? [...rt.actors.keys()] : [],
       dynamics: rt?.dynamics.positions() ?? [],
+      voice: voice(),
     };
   };
   Object.defineProperty(window, '__previz', {
