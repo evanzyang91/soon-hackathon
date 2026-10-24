@@ -9,9 +9,15 @@
 //   actors/<characterId>/   one actor per character, shared by every scene (actor.json caches it;
 //                           live projects copy a matching actors-library avatar instead of Modal)
 //   scene-<n>/world/        Marble outputs + marble-receipt.json + world-asset.json (or a copy of
-//                           a matching world-library world: live projects only, no credits)
+//                           a matching world-library world: live projects only, no credits);
+//                           scale-calibration.json once the world's scale has been measured
 //   scene-<n>/audio/        one file per dialogue line; scene-<n>/audio.json caches LineAudio[]
 //   scene-<n>/manifest.json SceneManifest, written once world/actors/tts have all settled
+//
+// A new Marble world is scale-calibrated right after download (calibrate.ts: collider references +
+// Claude vision with 1.70 m mannequins) and the result lands in world-asset.json as
+// scaleCalibration, also in the world-library copy so reuse carries it. CALIBRATE=0 or
+// `calibrate: false` turns it off; a failure never fails the world stage.
 //
 // Per scene, world / actors / tts run concurrently (Marble jobs capped at 3 across the server);
 // manifest follows. A failed stage is recorded with a note; the manifest is still written when the
@@ -35,6 +41,13 @@ import {
 import { env, keyPresence } from '../env.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
 import { buildActor } from './actors.ts';
+import {
+  calibrateWorld,
+  previousCalibration,
+  writeCalibration,
+  type CalibrateOptions,
+  type CalibrationReport,
+} from './calibrate.ts';
 import { parseFountain } from './fountain.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
@@ -61,6 +74,7 @@ export interface PipelineDeps {
     opts: { mock: boolean; log: (m: string) => void; title?: string },
   ) => Promise<ScreenplayPlan>;
   generateWorld: (opts: GenerateWorldOptions) => Promise<WorldAsset>;
+  calibrateWorld: (worldDir: string, opts: CalibrateOptions) => Promise<CalibrationReport>;
   buildActor: (opts: {
     character: Character;
     projectDir: string;
@@ -98,6 +112,10 @@ export interface StoreOptions {
    * disables. Default: env ACTORS_LIBRARY_DIR or data/actors-library.
    */
   actorsLibraryDir?: string | null;
+  /** Scale-calibrate new Marble worlds after download (default env CALIBRATE, on). */
+  calibrate?: boolean;
+  /** Include the Claude-vision half when the Anthropic key is set (default env CALIBRATE_VISION). */
+  calibrateVision?: boolean;
   maxWorldJobs?: number;
   maxActorJobs?: number;
   maxTtsJobs?: number;
@@ -176,6 +194,8 @@ export class ProjectStore {
   private readonly libraryActors = new Set<string>();
   private readonly deps: PipelineDeps;
   private readonly echo: boolean;
+  private readonly calibrate: boolean;
+  private readonly calibrateVision: boolean;
   private readonly worldSem: Semaphore;
   private readonly actorSem: Semaphore;
   private readonly ttsSem: Semaphore;
@@ -202,10 +222,13 @@ export class ProjectStore {
     this.deps = {
       parseScreenplay: o.deps?.parseScreenplay ?? parseScreenplay,
       generateWorld: o.deps?.generateWorld ?? generateWorld,
+      calibrateWorld: o.deps?.calibrateWorld ?? calibrateWorld,
       buildActor: o.deps?.buildActor ?? buildActor,
       synthesizeLine: o.deps?.synthesizeLine ?? synthesizeLine,
     };
     this.echo = o.echo ?? true;
+    this.calibrate = o.calibrate ?? env.calibrate;
+    this.calibrateVision = o.calibrateVision ?? env.calibrateVision;
     this.worldSem = new Semaphore(o.maxWorldJobs ?? 3);
     this.actorSem = new Semaphore(o.maxActorJobs ?? 2);
     this.ttsSem = new Semaphore(o.maxTtsJobs ?? 4);
@@ -552,7 +575,8 @@ export class ProjectStore {
     try {
       const reused = await this.libraryWorld(st, scene, outDir, sceneLog);
       if (reused) {
-        await this.worldDone(st, idx, reused.asset, `reused library world ${reused.id}`);
+        const cal = await this.calibrateStep(st, scene, outDir, reused.asset, sceneLog);
+        await this.worldDone(st, idx, cal.asset, `reused library world ${reused.id}${cal.note}`);
         return;
       }
       const asset = await this.worldSem.use(async () => {
@@ -579,6 +603,7 @@ export class ProjectStore {
       });
       WorldAsset.parse(asset);
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
+      const cal = await this.calibrateStep(st, scene, outDir, asset, sceneLog);
       const note =
         asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
@@ -587,10 +612,51 @@ export class ProjectStore {
             : offline
               ? 'mock world (WLT_API_KEY not set)'
               : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)';
-      await this.worldDone(st, idx, asset, note);
+      await this.worldDone(st, idx, cal.asset, note + cal.note);
     } catch (e) {
       await this.setStage(id, idx, 'world', { status: 'failed', note: errMsg(e) });
       sceneLog(`FAILED ${errMsg(e)}`);
+    }
+  }
+
+  /**
+   * Live Marble worlds only: measures the scale once (an existing scaleCalibration, e.g. carried
+   * by a library copy, or a previous scale-calibration.json for the same world id is reused) and
+   * writes it into world-asset.json and the library copy. Never throws.
+   */
+  private async calibrateStep(
+    st: ProjectStatus,
+    scene: ScenePlan,
+    outDir: string,
+    asset: WorldAsset,
+    log: (m: string) => void,
+  ): Promise<{ asset: WorldAsset; note: string }> {
+    if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
+    if (asset.scaleCalibration) return { asset, note: '' };
+    try {
+      let report = await previousCalibration(outDir, asset.worldId);
+      if (!report) {
+        await this.setStage(st.id, scene.index, 'world', {
+          status: 'running',
+          note: 'measuring the world scale (collider + vision)',
+        });
+        report = await this.deps.calibrateWorld(outDir, {
+          interior: scene.interior,
+          vision: this.calibrateVision && this.keys.anthropic,
+          log,
+        });
+        if (!report.geometry && !report.vision && report.decision.method === 'none') {
+          log(`scale calibration: nothing to measure (${report.visionSkipped ?? 'no collider'}); Marble scale kept`);
+          return { asset, note: '' };
+        }
+      }
+      const next = await writeCalibration(outDir, report, { libraryDir: this.libraryDir, log });
+      const c = report.calibration;
+      log(`scale calibration: ×${c.factor} (${c.confidence}, ${c.method}): ${c.evidence}`);
+      return { asset: next, note: `; scale ×${c.factor.toFixed(2)} (${c.confidence})` };
+    } catch (e) {
+      log(`scale calibration failed: ${errMsg(e)}; Marble scale kept`);
+      return { asset, note: '' };
     }
   }
 
@@ -881,8 +947,8 @@ async function normalizeActor(
 // ---------------------------------------------------------------------------
 
 let store: ProjectStore | undefined;
-export function defaultStore(): ProjectStore {
-  store ??= new ProjectStore({ dataDir: env.dataDir, mock: env.mock });
+export function defaultStore(o: Partial<StoreOptions> = {}): ProjectStore {
+  store ??= new ProjectStore({ dataDir: env.dataDir, mock: env.mock, ...o });
   return store;
 }
 
