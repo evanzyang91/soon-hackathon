@@ -22,8 +22,27 @@ export interface ScaleFigure {
   /** Text over the head (default "1.70 m"). */
   label?: string;
   tint?: string;
+  /** default standing; sitting lowers the hips onto a seat ~0.45 m up (feet stay at y) */
+  pose?: 'standing' | 'sitting';
   /** Standing height of the mannequin (default 1.70 m), scaled like a character's actor. */
   heightMeters?: number;
+}
+
+/**
+ * A labelled ring lying on the ground, drawn over the finished render (2D, always on top, fixed
+ * label size at any depth): the staging step's candidate marks (server/pipeline/staging.ts).
+ * Whether the spot is actually visible is the caller's business (collider line of sight).
+ */
+export interface ScaleMark {
+  /** World metres after the shot's factor; y is the ground height at the spot. */
+  x: number;
+  y: number;
+  z: number;
+  label: string;
+  /** css colour of the ring and the label background (default #ffd23f) */
+  color?: string;
+  /** ring radius on the ground, m (default 0.14) */
+  radius?: number;
 }
 
 export interface ScaleShot {
@@ -37,6 +56,8 @@ export interface ScaleShot {
   /** A 2 m pole with 0.5 m bands next to each figure. */
   ruler?: boolean;
   showCollider?: boolean;
+  /** Labelled ground rings drawn over the render (see ScaleMark). */
+  marks?: ScaleMark[];
   /** default png; jpeg (q 0.9) keeps vision requests small */
   format?: 'png' | 'jpeg';
 }

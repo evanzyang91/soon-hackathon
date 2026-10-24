@@ -8,7 +8,7 @@ import { createSpark } from '../spark';
 import { worldTransform } from '../transform';
 import { buildMannequin, MANNEQUIN_HEIGHT_M, restHeight } from '../actors/mannequin';
 import { textSprite } from '../actors/common';
-import type { ScaleHarness, ScalePanel, ScaleShot, ScaleWorld } from './scale-shot';
+import type { ScaleHarness, ScaleMark, ScalePanel, ScaleShot, ScaleWorld } from './scale-shot';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(1);
@@ -67,6 +67,54 @@ function ruler(): THREE.Group {
   return g;
 }
 
+/**
+ * The current frame with each mark drawn as a ring on the ground (projected, so it foreshortens
+ * like the floor) and a fixed-size label just above it, on a 2D copy of the canvas: labels stay
+ * readable at any depth and never sort against the splats.
+ */
+function drawMarks(marks: ScaleMark[], width: number, height: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = width;
+  c.height = height;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(renderer.domElement, 0, 0);
+  const px = (x: number, y: number, z: number): [number, number] | null => {
+    const v = new THREE.Vector3(x, y, z).project(camera);
+    return v.z > 1 ? null : [((v.x + 1) / 2) * width, ((1 - v.y) / 2) * height];
+  };
+  ctx.font = '700 15px ui-monospace, Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const m of marks) {
+    const centre = px(m.x, m.y, m.z);
+    if (!centre) continue;
+    const r = m.radius ?? 0.14;
+    const ring = Array.from({ length: 20 }, (_, k) => px(m.x + r * Math.cos((k * Math.PI) / 10), m.y, m.z + r * Math.sin((k * Math.PI) / 10)));
+    const color = m.color ?? '#ffd23f';
+    if (ring.every(Boolean)) {
+      ctx.beginPath();
+      ring.forEach((p, k) => (k ? ctx.lineTo(p![0], p![1]) : ctx.moveTo(p![0], p![1])));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(centre[0], centre[1], 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    const w = ctx.measureText(m.label).width + 8;
+    const [lx, ly] = [centre[0], centre[1] - 15];
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(lx - w / 2, ly - 9, w, 18);
+    ctx.fillStyle = color;
+    ctx.fillText(m.label, lx, ly + 1);
+  }
+  return c;
+}
+
 const harness: ScaleHarness = {
   async load(world) {
     frame = world;
@@ -106,9 +154,13 @@ const harness: ScaleHarness = {
       const g = new THREE.Group();
       const m = buildMannequin(f.tint ?? '#ff8a1f');
       m.animate(0, 0, false, 0);
-      // same scaling as a character's actor (viewer/actors mannequinBody)
+      // same scaling as a character's actor (viewer/actors mannequinBody), measured standing
       const tall = f.heightMeters ?? MANNEQUIN_HEIGHT_M;
       m.root.scale.setScalar(tall / restHeight(m.root));
+      if (f.pose) {
+        m.setPose(f.pose);
+        m.animate(0, 0, false, 0);
+      }
       g.add(m.root);
       const label = textSprite(f.label ?? `${tall.toFixed(2)} m`, { h: 0.11, bg: 'rgba(0,0,0,0.6)', fg: '#fff' });
       label.sprite.center.set(0.5, 0);
@@ -129,9 +181,8 @@ const harness: ScaleHarness = {
       await nextFrame();
     }
     renderer.render(scene, camera);
-    return shot.format === 'jpeg'
-      ? renderer.domElement.toDataURL('image/jpeg', 0.9)
-      : renderer.domElement.toDataURL('image/png');
+    const out = shot.marks?.length ? drawMarks(shot.marks, shot.width, shot.height) : renderer.domElement;
+    return shot.format === 'jpeg' ? out.toDataURL('image/jpeg', 0.9) : out.toDataURL('image/png');
   },
 
   async compose(panels: ScalePanel[], footer: string[]) {
