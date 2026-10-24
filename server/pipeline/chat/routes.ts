@@ -3,7 +3,7 @@
 //   POST /api/projects/:id/uploads?name=   raw PNG / JPEG / WebP ≤ 12 MB → 201 Attachment
 //   GET  /api/projects/:id/chat            → ProjectChat (empty thread when nothing was said)
 //   POST /api/projects/:id/chat            ChatRequest → ChatResponse { chat, status }
-//   POST /api/projects/:id/chat/confirm    ChatConfirmRequest → ChatResponse
+//   POST /api/projects/:id/chat/confirm    ChatConfirmRequest (decline?: true → skipped) → ChatResponse
 //   POST /api/projects/:id/generate        → 202 ProjectStatus (no-op unless a draft)
 //
 // chat and confirm answer once the turn is stored; background work they start (a re-plan, a world
@@ -11,19 +11,12 @@
 // through ProjectStatus.chatRevision. Errors are JSON { error } with the status they carry.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { ChatConfirmRequest, ChatRequest, type ProjectChat } from '../../../shared/chat.ts';
-import type { ProjectStatus } from '../../../shared/schema.ts';
+import { ChatConfirmRequest, ChatRequest, type ChatResponse } from '../../../shared/chat.ts';
 import { isProjectId } from '../project.ts';
 import { confirmAction, type ChatHost } from './apply.ts';
 import type { ChatPlannerCall } from './planner.ts';
 import { chatTurn } from './service.ts';
 import { MAX_UPLOAD_BYTES, saveUpload } from './uploads.ts';
-
-/** Body of POST chat and chat/confirm (propose adding to shared/chat.ts). */
-export interface ChatResponse {
-  chat: ProjectChat;
-  status: ProjectStatus;
-}
 
 const MAX_JSON = 1024 * 1024;
 
@@ -178,6 +171,7 @@ export async function handleChatRequest(
       const body = await readJson(req, ChatConfirmRequest);
       settled = (
         await confirmAction(host, id, body.messageId, body.actionId, {
+          decline: body.decline,
           waitIntervalMs: opts.watchIntervalMs,
         })
       ).settled;

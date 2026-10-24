@@ -17,7 +17,7 @@ import { ProjectStore } from '../project.ts';
 import { encodePng } from '../reprompt/png.ts';
 import { createPipelineHandler } from '../routes.ts';
 import type { ChatDraft } from './draft.ts';
-import type { ChatResponse } from './routes.ts';
+import type { ChatResponse } from '../../../shared/chat.ts';
 
 const FIXTURE = readFileSync(
   new URL('../../../fixtures/screenplay.fountain', import.meta.url),
@@ -165,6 +165,36 @@ describe('project chat on a MOCK project', () => {
     );
     expect(maya.status.draft).toBe(true);
     expect(maya.status.scenes.every((j) => j.stages.world.status === 'pending')).toBe(true);
+
+    // the laptop sends photos as their own message: no text, the UI's hint (0-based scene index)
+    const street = encodePng({
+      width: 8,
+      height: 4,
+      channels: 3,
+      data: new Uint8Array(96).fill(40),
+    });
+    const place = Attachment.parse(
+      await (
+        await fetch(`${base}${api.uploads(id)}?name=street.png`, {
+          method: 'POST',
+          headers: { 'content-type': 'image/png' },
+          body: new Uint8Array(street),
+        })
+      ).json(),
+    );
+    const placed = await say(id, '', [{ id: place.id, hint: 'scene:0' }]);
+    expect(placed.answer.actions).toEqual([
+      expect.objectContaining({
+        type: 'world-reference',
+        sceneIndex: 0,
+        isPano: true,
+        status: 'applied',
+      }),
+    ]);
+    expect((await planOf(id)).scenes[0]!.worldReference).toEqual({
+      file: place.file,
+      isPano: true,
+    });
     const log = await readFile(join(dataDir, id, 'log.txt'), 'utf8');
     expect(log).toMatch(
       /chat: plan-patch character:theo heightMeters — Theo is now 1\.90 m \[applied\]/,
@@ -239,6 +269,10 @@ describe('project chat on a MOCK project', () => {
         return chat.messages.find((m) => m.id === diner.answer.id)!.actions![1]!.status;
       })
       .toBe('done');
+    // every action status change bumped the revision, and the status mirrors it
+    const chatNow = ProjectChat.parse(await (await fetch(base + api.chat(id))).json());
+    expect(chatNow.revision).toBeGreaterThanOrEqual(diner.chat.revision + 2); // running, done
+    expect((await statusOf(id)).chatRevision).toBe(chatNow.revision);
     expect(
       (
         await post(api.chatConfirm(id), {

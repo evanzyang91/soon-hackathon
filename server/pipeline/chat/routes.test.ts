@@ -16,7 +16,8 @@ import { mockPlan } from '../fountain.ts';
 import type { ChatHost } from './apply.ts';
 import { emptyDraftAction, type ChatDraft } from './draft.ts';
 import type { ChatPlannerCall } from './planner.ts';
-import { handleChatRequest, type ChatResponse } from './routes.ts';
+import type { ChatResponse } from '../../../shared/chat.ts';
+import { handleChatRequest } from './routes.ts';
 import { ChatStore } from './store.ts';
 import { MAX_UPLOAD_BYTES } from './uploads.ts';
 
@@ -241,35 +242,47 @@ describe('chat (fake Claude, generated project)', () => {
     ]);
   });
 
-  it('a world change waits for confirm; confirm runs it; a planner failure changes nothing', async () => {
+  it('world changes wait for confirm; confirm runs one, decline skips one; a planner failure changes nothing', async () => {
+    const night = (n: number) => ({
+      ...emptyDraftAction('plan-patch', `Scene ${n + 1} at night`),
+      target: `scene:${n}`,
+      field: 'timeOfDay',
+      value: 'night',
+    });
     answer = {
-      reply: 'The kitchen is now at night.',
-      actions: [
-        {
-          ...emptyDraftAction('plan-patch', 'Scene 2 at night'),
-          target: 'scene:1',
-          field: 'timeOfDay',
-          value: 'night',
-        },
-      ],
+      reply: 'The kitchen and the rooftop are now at night.',
+      actions: [night(1), night(2)],
     };
     calls.length = 0;
     const r = (await (
-      await post(api.chat(ID), { text: 'make the kitchen scene happen at night' })
+      await post(api.chat(ID), { text: 'kitchen and rooftop at night' })
     ).json()) as ChatResponse;
     const m = r.chat.messages.at(-1)!;
     expect(m.actions!.map((x) => `${x.type}:${x.status}`)).toEqual([
       'plan-patch:applied',
+      'plan-patch:applied',
+      'regenerate-world:needs-confirm',
       'regenerate-world:needs-confirm',
     ]);
     expect(calls).toEqual(['amend']);
-    const regen = m.actions![1]!;
+    const [regen1, regen2] = [m.actions![2]!, m.actions![3]!];
     const confirmed = (await (
-      await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen.id })
+      await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen1.id })
     ).json()) as ChatResponse;
     expect(calls).toEqual(['amend', 'regenerate 1']);
     // the fake world stage is already done: the watch settles at once
-    expect(confirmed.chat.messages.find((x) => x.id === m.id)!.actions![1]!.status).toBe('done');
+    expect(confirmed.chat.messages.find((x) => x.id === m.id)!.actions![2]!.status).toBe('done');
+    const declined = (await (
+      await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen2.id, decline: true })
+    ).json()) as ChatResponse;
+    expect(declined.chat.messages.find((x) => x.id === m.id)!.actions![3]).toMatchObject({
+      status: 'skipped',
+      note: expect.stringMatching(/^declined/),
+    });
+    expect(declined.chat.revision).toBeGreaterThan(confirmed.chat.revision);
+    expect(calls).toEqual(['amend', 'regenerate 1']); // nothing ran for the declined one
+    const late = await post(api.chatConfirm(ID), { messageId: m.id, actionId: regen2.id });
+    expect(late.status).toBe(409);
 
     answer = new Error('connect ECONNREFUSED');
     calls.length = 0;

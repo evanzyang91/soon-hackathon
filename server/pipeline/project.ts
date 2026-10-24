@@ -67,13 +67,11 @@ import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } fr
 import { parseScreenplay } from './screenplay.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
-import type { Attachment } from '../../shared/chat.ts';
 import type { AmendResult } from './chat/apply.ts';
 import { planCardMessage } from './chat/plan-card.ts';
 import { planDiff } from './chat/plan-diff.ts';
 import { mergeReplan } from './chat/replan.ts';
 import { ChatStore, newMessageId } from './chat/store.ts';
-import { adoptUpload } from './chat/uploads.ts';
 
 export type StageName = 'parse' | 'world' | 'actors' | 'tts' | 'manifest';
 type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -303,14 +301,11 @@ export class ProjectStore {
   /**
    * `draft`: a chat-first project (shared/chat.ts): only the parse runs; the screenplay becomes
    * the thread's first message, the plan card its answer, and generate() starts the rest.
-   * `attachments`: upload ids (any project's uploads; they are content-addressed) carried by the
-   * screenplay message.
    */
   async createProject(input: {
     title?: string;
     screenplay: string;
     draft?: boolean;
-    attachments?: string[];
   }): Promise<ProjectStatus> {
     const screenplay = input.screenplay.replace(/\r\n?/g, '\n');
     if (!screenplay.trim()) throw new PipelineError('screenplay is empty', 400);
@@ -319,15 +314,6 @@ export class ProjectStore {
     const id = `${slugify(title, 24)}-${randomBytes(3).toString('hex')}`;
     const dir = this.dir(id);
     await mkdir(dir, { recursive: true });
-    const photos: Attachment[] = [];
-    for (const ref of input.attachments ?? []) {
-      const a = await adoptUpload(this.dataDir, dir, ref);
-      if (!a) {
-        await rm(dir, { recursive: true, force: true });
-        throw new PipelineError(`no upload ${ref}`, 400);
-      }
-      photos.push(a);
-    }
     await writeFile(join(dir, 'screenplay.fountain'), screenplay);
     await writeJsonAtomic(join(dir, 'input.json'), { title: given ?? null });
     const status: ProjectStatus = {
@@ -345,15 +331,9 @@ export class ProjectStore {
       id,
       `project created (${screenplay.length} chars, ${this.mock ? 'MOCK' : 'live'}${input.draft ? ', draft' : ''})`,
     );
-    if (input.draft || photos.length) {
+    if (input.draft) {
       await this.chat.appendMessages(id, [
-        {
-          id: newMessageId(),
-          at: status.createdAt,
-          role: 'user',
-          text: screenplay,
-          ...(photos.length ? { attachments: photos } : {}),
-        },
+        { id: newMessageId(), at: status.createdAt, role: 'user', text: screenplay },
       ]);
     }
     this.enqueue(id, () => this.runParse(id));
@@ -820,11 +800,10 @@ export class ProjectStore {
   /** A parsed (or failed) draft answers in its thread: the plan card, or why there is none. */
   private async draftParsed(st: ProjectStatus, plan: ScreenplayPlan | undefined, error?: string) {
     try {
-      const first = (await this.chat.read(st.id)).messages[0];
       const source = st.mock || !this.keys.anthropic ? 'mock' : 'claude';
       await this.chat.appendMessages(st.id, [
         plan
-          ? planCardMessage(plan, { draft: true, photos: first?.attachments, source })
+          ? planCardMessage(plan, { draft: true, source })
           : {
               id: newMessageId(),
               at: new Date().toISOString(),

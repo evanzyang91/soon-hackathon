@@ -469,14 +469,14 @@ export async function waitForStage(
 /**
  * Runs one needs-confirm action (regenerate-world or replan): running at once, done / failed when
  * the work finishes (`settled`). Confirming an action that is already running or done is a no-op;
- * a failed one may be confirmed again.
+ * a failed one may be confirmed again. `decline` marks it skipped and runs nothing.
  */
 export async function confirmAction(
   host: ChatHost,
   id: string,
   messageId: string,
   actionId: string,
-  o: { waitIntervalMs?: number } = {},
+  o: { decline?: boolean; waitIntervalMs?: number } = {},
 ): Promise<{ settled: Promise<void> }> {
   const chat = await host.chat.read(id);
   const msg: ChatMessage | undefined = chat.messages.find((m) => m.id === messageId);
@@ -484,6 +484,19 @@ export async function confirmAction(
   if (!msg || !action) throw new ConfirmError(404, `no action ${actionId} in message ${messageId}`);
   if (action.type !== 'regenerate-world' && action.type !== 'replan')
     throw new ConfirmError(409, `a ${action.type} action needs no confirmation`);
+  if (o.decline) {
+    if (action.status === 'skipped') return { settled: Promise.resolve() };
+    if (action.status !== 'needs-confirm' && action.status !== 'failed')
+      throw new ConfirmError(409, `the action is ${action.status}; it can no longer be declined`);
+    // the plan change that asked for it stays; only the expensive step does not run
+    const note =
+      action.type === 'replan'
+        ? 'declined: the plan stays as it is'
+        : 'declined: the current world stays (the plan keeps the change for a later regeneration)';
+    await host.chat.updateAction(id, messageId, actionId, { status: 'skipped', note });
+    await host.logEvent(id, `chat: declined ${action.type} — ${action.summary}`);
+    return { settled: Promise.resolve() };
+  }
   if (action.status === 'running' || action.status === 'done')
     return { settled: Promise.resolve() };
   if (action.status !== 'needs-confirm' && action.status !== 'failed')
