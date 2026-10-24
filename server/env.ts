@@ -22,6 +22,9 @@ export const env = {
   },
   /** Project outputs; served at /projects/<id>/ . */
   dataDir: process.env.DATA_DIR ?? new URL('../data/projects/', import.meta.url).pathname,
+  /** Pre-generated Marble worlds reused by live projects (server/pipeline/world-library.ts). */
+  worldLibraryDir:
+    process.env.WORLD_LIBRARY_DIR ?? new URL('../data/marble/', import.meta.url).pathname,
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */
