@@ -5,9 +5,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
 import { SceneManifest, type ActorAsset, type Character, type DialogueLine } from '@shared/schema';
+import type { GroundField } from '@shared/ground';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
+import { followGround, groundSampler, loadGroundField, markY, onGround, type GroundY } from './ground';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
 import { gazeTargets } from './gaze';
 import { colliderTriangles, correctPlacement, TriGrid, yawToward, type V2 } from './placement';
@@ -41,11 +43,21 @@ export interface SceneRuntime {
   readonly splat: SplatMesh | null;
   /** True when the SPZ could not be loaded and the procedural stand-in is shown. */
   readonly placeholder: boolean;
+  /**
+   * The world's ground height field (WorldAsset.ground, loaded before the actors are placed); null
+   * without one or when it failed to load (then every actor stands on y = 0, the median floor).
+   */
+  readonly ground: GroundField | null;
+  /**
+   * The y of the visible ground at scene (x, z) (viewer/ground.ts): where an actor's feet go.
+   * Actor heights are stored relative to it (blocking y, actor transform y: 0 = on the ground).
+   */
+  groundY(x: number, z: number): number;
   readonly collider: THREE.Object3D | null;
   /**
    * Resolves once the collider GLB has loaded (null without one). Scene load never waits for it;
-   * when it lands, actors standing inside geometry are moved to free floor (placement.ts) and
-   * `actor.object.userData.placement` records what happened.
+   * when it lands, actors standing inside geometry are moved to free floor (placement.ts), onto
+   * the ground at their new spot, and `actor.object.userData.placement` records what happened.
    */
   readonly colliderReady: Promise<THREE.Object3D | null>;
   readonly grid: THREE.GridHelper;
@@ -164,6 +176,8 @@ class LoadedScene implements SceneRuntime {
   readonly spark: SparkRenderer;
   splat: SplatMesh | null = null;
   placeholder = false;
+  ground: GroundField | null = null;
+  private groundAt: GroundY = () => 0;
   collider: THREE.Object3D | null = null;
   colliderReady: Promise<THREE.Object3D | null> = Promise.resolve(null);
   dynamics!: DynamicsRuntime;
@@ -219,6 +233,15 @@ class LoadedScene implements SceneRuntime {
     return new URL(path, this.assetBase).href;
   }
 
+  setGround(field: GroundField | null) {
+    this.ground = field;
+    this.groundAt = groundSampler(field, this.manifest.world);
+  }
+
+  groundY(x: number, z: number): number {
+    return this.groundAt(x, z);
+  }
+
   setLook(look: Look) {
     this.look.setLook(look);
   }
@@ -264,7 +287,15 @@ class LoadedScene implements SceneRuntime {
     if (this.playing) this.time += dt;
     this.dynamics.update(this.time);
     this.aimHeads();
-    for (const a of this.actors.values()) a.update(dt, this.time);
+    for (const a of this.actors.values()) {
+      a.update(dt, this.time);
+      // a walking body off its mark (the skinned walk-in reports how far) stands on the ground
+      // under it, not at the mark's height
+      if (this.ground) {
+        const behind = Number((a.object.userData.debug as { walkRemaining?: number } | undefined)?.walkRemaining ?? 0);
+        followGround(a.object, behind, this.groundAt);
+      }
+    }
     this.sceneEdits?.update(this.time);
     this.look.update();
   }
@@ -363,14 +394,18 @@ class LoadedScene implements SceneRuntime {
       const old = this.actors.get(asset.characterId);
       const b = this.manifest.plan.blocking.find((x) => x.characterId === asset.characterId);
       if (old) {
-        actor.object.position.copy(old.object.position);
-        actor.object.rotation.y = old.object.rotation.y;
+        // the old body's spot before any edit (its mark or the collider's free floor, on the
+        // ground there); the scene's actor transforms are applied to the new body again below
+        const base = this.sceneEdits?.release(old.object);
+        actor.object.position.copy(base?.position ?? old.object.position);
+        if (!base) actor.object.position.y = markY(old.object);
+        actor.object.rotation.y = base?.yaw ?? old.object.rotation.y;
         actor.object.userData.placement = old.object.userData.placement;
         old.stopSpeaking();
         this.scene.remove(old.object);
         old.dispose();
       } else if (b) {
-        actor.object.position.set(...b.position);
+        actor.object.position.set(...onGround(b.position, (x, z) => this.groundY(x, z)));
         actor.object.rotation.y = b.yaw;
       }
       actor.setPose(b?.pose ?? 'standing');
@@ -380,6 +415,7 @@ class LoadedScene implements SceneRuntime {
       else this.manifest.actors.push(asset);
       swapped.push(asset.characterId);
     }
+    if (swapped.length) this.sceneEdits?.refresh();
     return swapped;
   }
 
@@ -407,8 +443,9 @@ class LoadedScene implements SceneRuntime {
 
 /**
  * Moves actors whose blocking puts them inside collider geometry (or off its floor) to free floor
- * (toward the start camera, ≥ 0.5 m from the others), turning a moved actor to face its nearest
- * partner. Every actor gets `userData.placement = { status, from, to }`.
+ * (toward the start camera, ≥ 0.5 m from the others) and onto the ground there (its height above
+ * the ground kept), turning a moved actor to face its nearest partner. Every actor gets
+ * `userData.placement = { status, from, to }`.
  */
 function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
   const tris = colliderTriangles(collider);
@@ -430,8 +467,9 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
     if (r.status === 'stuck')
       console.warn(`[placement] ${actor.characterId}: misplaced, but no free floor within 3 m`);
     if (r.status !== 'moved') continue;
-    actor.object.position.x = r.x;
-    actor.object.position.z = r.z;
+    // the new spot has never been measured: its own ground, not the mark's
+    const lift = markY(actor.object) - rt.groundY(from[0], from[1]);
+    actor.object.position.set(r.x, rt.groundY(r.x, r.z) + lift, r.z);
     const partner = others.sort(
       (a, b) => Math.hypot(a[0] - r.x, a[1] - r.z) - Math.hypot(b[0] - r.x, b[1] - r.z),
     )[0];
@@ -481,7 +519,11 @@ export async function loadScene(
     quality,
     opts.spark,
   );
+  // the ground field (tens of kB) loads while the splats initialise; actors wait for it
+  const groundFile = manifest.world.ground?.file;
+  const groundLoad = groundFile ? loadGroundField(rt.resolve(groundFile)) : Promise.resolve(null);
   rt.setWorld(got ? await loadSplat(got.bytes, got.url) : null);
+  rt.setGround(await groundLoad);
 
   // the collider (several MB for a real world) loads in the background; actors are corrected
   // against it when it arrives
@@ -504,13 +546,15 @@ export async function loadScene(
       try {
         const actor = await createActor(asset, character, listener, rt.assetBase);
         const b = blocking.get(asset.characterId);
+        const groundY = (x: number, z: number) => rt.groundY(x, z);
         if (b) {
-          actor.object.position.set(...b.position);
+          // blocking y is the height above the ground (the planner writes 0: standing on it)
+          actor.object.position.set(...onGround(b.position, groundY));
           actor.object.rotation.y = b.yaw;
           actor.setPose(b.pose ?? 'standing');
         } else {
           // no blocking: line up facing the source camera, 3 m in front of it
-          actor.object.position.set(-1 + unblocked++ * 1.2, 0, -3);
+          actor.object.position.set(...onGround([-1 + unblocked++ * 1.2, 0, -3], groundY));
           actor.object.rotation.y = Math.PI;
         }
         rt.scene.add(actor.object);
