@@ -14,12 +14,19 @@
 //                           a matching world-library world: live projects only, no credits);
 //                           scale-calibration.json once the world's scale has been measured
 //   scene-<n>/audio/        one file per dialogue line; scene-<n>/audio.json caches LineAudio[]
+//   scene-<n>/staging.json  StagingReport: the actors' marks staged on this world (staging.ts)
 //   scene-<n>/manifest.json SceneManifest, written once world/actors/tts have all settled
 //
 // A new Marble world is scale-calibrated right after download (calibrate.ts: collider references +
 // Claude vision with 1.70 m mannequins) and the result lands in world-asset.json as
 // scaleCalibration, also in the world-library copy so reuse carries it. CALIBRATE=0 or
 // `calibrate: false` turns it off; a failure never fails the world stage.
+//
+// Then the actors are staged on the set (staging.ts: Claude picks each character's mark on free
+// ground seen from the start camera) into scene-<n>/staging.json, reused while the world and the
+// scene's blocking/action/cast are unchanged; the manifest carries the staged blocking, plan.json
+// keeps the planner's. Live Marble worlds with ANTHROPIC_API_KEY only; STAGING=0 or
+// `stage: false` turns it off; a failure keeps the planner's blocking and never fails the stage.
 //
 // Actor rebuilds (rebuildActor, POST /api/projects/:id/actors/:characterId/rebuild) run one
 // character in the background at a detail level, recorded in ProjectStatus.actors[].rebuild; the
@@ -64,6 +71,15 @@ import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
 import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
 import { parseScreenplay } from './screenplay.ts';
+import {
+  readStaging,
+  stageScene,
+  stagedBlocking,
+  stagingCurrent,
+  writeStaging,
+  type StageOptions,
+  type StagingReport,
+} from './staging.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
 
@@ -86,6 +102,8 @@ export interface PipelineDeps {
   ) => Promise<ScreenplayPlan>;
   generateWorld: (opts: GenerateWorldOptions) => Promise<WorldAsset>;
   calibrateWorld: (worldDir: string, opts: CalibrateOptions) => Promise<CalibrationReport>;
+  /** Actors' marks onto the set (staging.ts); throws when the world cannot be staged at all. */
+  stageScene: (opts: StageOptions) => Promise<StagingReport>;
   buildActor: (opts: {
     character: Character;
     projectDir: string;
@@ -129,6 +147,8 @@ export interface StoreOptions {
   calibrate?: boolean;
   /** Include the Claude-vision half when the Anthropic key is set (default env CALIBRATE_VISION). */
   calibrateVision?: boolean;
+  /** Stage the actors on live Marble worlds when the Anthropic key is set (default env STAGING). */
+  stage?: boolean;
   maxWorldJobs?: number;
   maxActorJobs?: number;
   maxTtsJobs?: number;
@@ -235,6 +255,7 @@ export class ProjectStore {
   private readonly echo: boolean;
   private readonly calibrate: boolean;
   private readonly calibrateVision: boolean;
+  private readonly stage: boolean;
   private readonly worldSem: Semaphore;
   private readonly actorSem: Semaphore;
   private readonly ttsSem: Semaphore;
@@ -262,12 +283,14 @@ export class ProjectStore {
       parseScreenplay: o.deps?.parseScreenplay ?? parseScreenplay,
       generateWorld: o.deps?.generateWorld ?? generateWorld,
       calibrateWorld: o.deps?.calibrateWorld ?? calibrateWorld,
+      stageScene: o.deps?.stageScene ?? stageScene,
       buildActor: o.deps?.buildActor ?? buildActor,
       synthesizeLine: o.deps?.synthesizeLine ?? synthesizeLine,
     };
     this.echo = o.echo ?? true;
     this.calibrate = o.calibrate ?? env.calibrate;
     this.calibrateVision = o.calibrateVision ?? env.calibrateVision;
+    this.stage = o.stage ?? env.staging;
     this.worldSem = new Semaphore(o.maxWorldJobs ?? 3);
     this.actorSem = new Semaphore(o.maxActorJobs ?? 2);
     this.ttsSem = new Semaphore(o.maxTtsJobs ?? 4);
@@ -457,8 +480,9 @@ export class ProjectStore {
       }
       const asset = WorldAsset.parse(await readJson(join(worldDir, ASSET_FILE)));
       const cal = await this.calibrateStep(st, scene, worldDir, asset, log);
-      await this.worldDone(st, sceneIndex, cal.asset, made.note + cal.note);
-      result = { ok: true, note: made.note + cal.note };
+      const staged = await this.stageStep(st, scene, worldDir, cal.asset, log);
+      await this.worldDone(st, sceneIndex, cal.asset, made.note + cal.note + staged);
+      result = { ok: true, note: made.note + cal.note + staged };
     } catch (e) {
       log(`FAILED ${errMsg(e)}; the current world is kept`);
       await this.setStage(id, sceneIndex, 'world', { status: 'done', note: `regeneration failed: ${errMsg(e)} (current world kept)` });
@@ -704,7 +728,8 @@ export class ProjectStore {
       const reused = await this.libraryWorld(st, scene, outDir, sceneLog);
       if (reused) {
         const cal = await this.calibrateStep(st, scene, outDir, reused.asset, sceneLog);
-        await this.worldDone(st, idx, cal.asset, `reused library world ${reused.id}${cal.note}`);
+        const staged = await this.stageStep(st, scene, outDir, cal.asset, sceneLog);
+        await this.worldDone(st, idx, cal.asset, `reused library world ${reused.id}${cal.note}${staged}`);
         return;
       }
       const asset = await this.worldSem.use(async () => {
@@ -732,6 +757,7 @@ export class ProjectStore {
       WorldAsset.parse(asset);
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
       const cal = await this.calibrateStep(st, scene, outDir, asset, sceneLog);
+      const staged = await this.stageStep(st, scene, outDir, cal.asset, sceneLog);
       const note =
         asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
@@ -740,7 +766,7 @@ export class ProjectStore {
             : offline
               ? 'mock world (WLT_API_KEY not set)'
               : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)';
-      await this.worldDone(st, idx, cal.asset, note + cal.note);
+      await this.worldDone(st, idx, cal.asset, note + cal.note + staged);
     } catch (e) {
       await this.setStage(id, idx, 'world', { status: 'failed', note: errMsg(e) });
       sceneLog(`FAILED ${errMsg(e)}`);
@@ -802,6 +828,45 @@ export class ProjectStore {
     } catch (e) {
       log(`scale calibration failed: ${errMsg(e)}; Marble scale kept`);
       return { asset, note: '' };
+    }
+  }
+
+  /**
+   * Live Marble worlds with a collider and the Anthropic key: stages the scene's actors on the set
+   * once (staging.ts) into scene-<n>/staging.json, reused while its inputs are unchanged (a report
+   * that kept the planner's blocking is reused too, so a hopeless set is not paid for twice).
+   * Returns a note suffix for the world stage. Never throws: a failure keeps the planner's marks.
+   */
+  private async stageStep(
+    st: ProjectStatus,
+    scene: ScenePlan,
+    worldDir: string,
+    asset: WorldAsset,
+    log: (m: string) => void,
+  ): Promise<string> {
+    if (!this.stage || st.mock || !this.keys.anthropic) return '';
+    if (asset.provider !== 'marble' || !asset.colliderGlb || !scene.characterIds.length) return '';
+    const plan = await this.plan(st.id);
+    if (!plan) return '';
+    const sceneDir = this.sceneDir(st.id, scene.index);
+    const summary = (r: StagingReport) =>
+      r.status === 'staged' ? `; ${r.blocking.length} actor(s) staged on the set` : '; staging kept the planner marks';
+    try {
+      const prev = await readStaging(sceneDir);
+      if (prev && stagingCurrent(prev, { worldId: asset.worldId, scene, characters: plan.characters })) {
+        log(`staging: reusing ${sceneDir.split(sep).slice(-1)[0]}/staging.json (${prev.status})`);
+        return summary(prev);
+      }
+      await this.setStage(st.id, scene.index, 'world', {
+        status: 'running',
+        note: 'staging the actors on the set (vision)',
+      });
+      const report = await this.deps.stageScene({ worldDir, asset, scene, characters: plan.characters, log });
+      await writeStaging(sceneDir, report);
+      return summary(report);
+    } catch (e) {
+      log(`staging skipped: ${errMsg(e)}; the planner's blocking is kept`);
+      return '';
     }
   }
 
@@ -1141,10 +1206,16 @@ export class ProjectStore {
           await readJson(join(sceneDir, 'audio.json')).catch(() => undefined),
         ).data ?? [];
       const ids = new Set(scene.characterIds);
+      // the staged marks (staging.ts) when they were made for this world and this scene
+      const staged = stagedBlocking(await readStaging(sceneDir), {
+        asset: rawWorld,
+        scene,
+        characters: plan.characters,
+      });
       const manifest = SceneManifest.parse({
         version: 1,
         projectId: id,
-        plan: scene,
+        plan: staged ? { ...scene, blocking: staged } : scene,
         characters: plan.characters.filter((c) => ids.has(c.id)),
         world: worldAsset,
         actors: actorAssets,
