@@ -166,3 +166,18 @@ export function toRgb(img: Image): Image {
   }
   return { width: img.width, height: img.height, channels: 3, data: out };
 }
+
+/** The image model's 3:2 edit size (the 2:1 panorama is stretched into it and back). */
+export const EDIT_CANVAS = { width: 1536, height: 1024 } as const;
+
+/** original where `mask` keeps (alpha 255), edited where it frees (alpha 0), blended in between. */
+export function compositeMasked(original: Image, edited: Image, mask: Image): Image {
+  const o = toRgb(original);
+  const e = toRgb(edited);
+  const out = new Uint8Array(o.width * o.height * 3);
+  for (let i = 0; i < o.width * o.height; i++) {
+    const keep = mask.data[i * 4 + 3]! / 255;
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = Math.round(o.data[i * 3 + c]! * keep + e.data[i * 3 + c]! * (1 - keep));
+  }
+  return { width: o.width, height: o.height, channels: 3, data: out };
+}
