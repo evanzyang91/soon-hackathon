@@ -127,11 +127,11 @@ export const LUT_PRESETS: Record<LutName, LutParams> = {
   neutral: NEUTRAL_LUT,
   // teal shadows, orange (skin) highlights, a little punch
   'teal-orange': lut({
-    sat: 1.12,
+    sat: 1.15,
     contrast: 1.12,
-    gain: [1.02, 1, 0.97],
-    shadowTint: [-0.045, 0.02, 0.06],
-    highlightTint: [0.07, 0.02, -0.06],
+    gain: [1.03, 1, 0.96],
+    shadowTint: [-0.07, 0.03, 0.09],
+    highlightTint: [0.09, 0.025, -0.08],
   }),
   // black and white with a hard curve
   noir: lut({ sat: 0, contrast: 1.45, gamma: [0.95, 0.95, 0.95], gain: [1.04, 1.04, 1.04] }),

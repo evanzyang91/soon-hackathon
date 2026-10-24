@@ -1,5 +1,7 @@
-// Light gizmos for the director's view: a small sphere in the light's colour, its falloff radius as
-// a ring on the floor plane through the light, and for a spot its cone (four edge lines + rim);
+// Light gizmos for the director's view: a small sphere in the light's colour, a stem down to the
+// floor and its falloff radius as a ring on the floor (y = 0) around the stem's foot (a ring at
+// the light's own height reads as a line across the frame), and for a spot its cone (four edge
+// lines + rim);
 // a sun gets a line toward its aim point. Always drawn on top (no depth test), on `layer` so only
 // cameras that enable that layer (the director's, not the phone's PiP) see them. Dragging is WP H.
 import * as THREE from 'three';
@@ -61,8 +63,13 @@ export class LightGizmos {
     g.add(halo);
     if (l.kind !== 'sun') {
       const r = ring(l.radius, color);
-      r.position.copy(pos);
+      r.position.set(pos.x, 0.02, pos.z);
       g.add(r);
+      const stem = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([pos, new THREE.Vector3(pos.x, 0.02, pos.z)]),
+        lineMat(color, 0.45 * dim),
+      );
+      g.add(stem);
     }
     const target = new THREE.Vector3(...(l.target ?? (l.kind === 'sun' ? [0, 0, 0] : [l.position[0], 0, l.position[2]])));
     if (l.kind === 'spot') {
