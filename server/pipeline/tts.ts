@@ -236,7 +236,14 @@ async function openaiSpeech(text: string, voice: string, instructions: string): 
   const res = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',
     headers: { authorization: `Bearer ${env.keys.openai}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: OPENAI_TTS_MODEL, voice, input: text, instructions, response_format: 'mp3' }),
+    // `instructions` exists only on the gpt-*-tts models (tts-1/tts-1-hd reject it)
+    body: JSON.stringify({
+      model: OPENAI_TTS_MODEL,
+      voice,
+      input: text,
+      ...(OPENAI_TTS_MODEL.startsWith('gpt-') ? { instructions } : {}),
+      response_format: 'mp3',
+    }),
     signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) throw new Error(`OpenAI TTS HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
