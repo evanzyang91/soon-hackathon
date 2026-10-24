@@ -109,9 +109,16 @@ export class Director {
       },
       onOpen: () => this.broadcast(true),
     });
-    const resume = () => void this.listener.context.resume();
-    window.addEventListener('pointerdown', resume);
-    window.addEventListener('keydown', resume);
+    // Browsers start audio only from a user gesture: the first click anywhere (Generate, a scene
+    // row, the canvas…) or key press resumes the context. Capture phase, so a handler that stops
+    // propagation cannot swallow it; pointerup / click / touchend cover touch screens, where a
+    // pointerdown does not count as a gesture.
+    const resume = () => {
+      const ctx = this.listener.context;
+      if (ctx.state !== 'running') void ctx.resume().catch(() => {});
+    };
+    for (const ev of ['pointerdown', 'pointerup', 'click', 'touchend', 'keydown'])
+      window.addEventListener(ev, resume, { capture: true, passive: true });
   }
 
   // ---- events -------------------------------------------------------------------------------
