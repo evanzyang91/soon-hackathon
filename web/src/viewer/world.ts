@@ -11,7 +11,7 @@ import {
   type Character,
   type DialogueLine,
 } from '@shared/schema';
-import { performanceAt, shiftBlocking, WALK_SPEED } from '@shared/beats';
+import { fixMarks, performanceAt, shiftBlocking, WALK_SPEED } from '@shared/beats';
 import { parseLibrary, validateLibrary, type Clip } from './actors/rig';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
@@ -498,6 +498,28 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
       `[placement] ${actor.characterId}: moved to free floor (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
     );
   }
+  // beats: walk targets inside geometry move to free floor too, clear of the actors who stay put
+  const still = actors.filter((a) => !rt.performers.has(a.characterId)).map((a) => xz(a.object));
+  for (const [id, b] of rt.performers) {
+    const mark = (rt.actors.get(id)?.object.userData.placementMark ?? null) as {
+      position: [number, number, number];
+    } | null;
+    const shifted = mark ? shiftBlocking(b, mark.position) : b;
+    const fixed = fixMarks(shifted, (x, z, pose) => {
+      const r = correctPlacement(grid, x, z, { pose, toward: [start[0], start[2]], avoid: still });
+      if (r.status === 'stuck')
+        console.warn(
+          `[placement] ${id}: beat mark (${x.toFixed(2)}, ${z.toFixed(2)}) has no free floor within 3 m`,
+        );
+      else if (r.status === 'moved')
+        console.info(
+          `[placement] ${id}: beat mark (${x.toFixed(2)}, ${z.toFixed(2)}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
+        );
+      return [r.x, r.z];
+    });
+    // stored unshifted: perform() applies the placement / edit mark every frame
+    if (fixed !== shifted) rt.performers.set(id, mark ? shiftBlocking(fixed, b.position) : fixed);
+  }
 }
 
 /**
@@ -598,7 +620,9 @@ export async function loadScene(
         for (const c of clips) rt.gestureSeconds.set(c.name, c.frames / c.fps);
         for (const a of rt.actors.values()) a.addGestures?.(clips);
       })
-      .catch((err) => console.warn('gesture clips failed to load; beats use the shared clips', err));
+      .catch((err) =>
+        console.warn('gesture clips failed to load; beats use the shared clips', err),
+      );
   }
 
   rt.dynamics = createDynamics(manifest.plan.dynamics);

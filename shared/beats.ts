@@ -170,3 +170,24 @@ export function shiftBlocking<B extends Pick<Blocking, 'position' | 'yaw' | 'bea
     ),
   };
 }
+
+/**
+ * The same blocking with every walk target passed through `fix`, given the pose the actor arrives
+ * in (the viewer moves marks that land inside collider geometry to free floor). Returns `b` itself
+ * when no mark changes.
+ */
+export function fixMarks<B extends Pick<Blocking, 'beats'>>(
+  b: B,
+  fix: (x: number, z: number, pose: 'standing' | 'sitting') => readonly [number, number],
+): B {
+  let changed = false;
+  const beats = b.beats?.map((beat) => {
+    if (!beat.moveTo) return beat;
+    const pose = beat.pose ?? poseFromAction(beat.action) ?? 'standing';
+    const [x, z] = fix(beat.moveTo[0], beat.moveTo[2], pose);
+    if (x === beat.moveTo[0] && z === beat.moveTo[2]) return beat;
+    changed = true;
+    return { ...beat, moveTo: [x, beat.moveTo[1], z] as [number, number, number] };
+  });
+  return changed ? { ...b, beats } : b;
+}
