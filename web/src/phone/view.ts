@@ -74,6 +74,13 @@ export class PhoneView {
   private viewport: ViewportRenderer | null = null;
   private readonly camera = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
   private runtime: SceneRuntime | null = null;
+  /** Per actor, the line id whose bubble is showing (debug / e2e). */
+  actorsSpeaking(): Record<string, string | null> {
+    const out: Record<string, string | null> = {};
+    for (const a of this.runtime?.actors.values() ?? [])
+      out[a.characterId] = (a.object.userData.speakingLine ?? null) as string | null;
+    return out;
+  }
   private loadingUrl: string | null = null;
   private loadToken = 0;
   private lastSpeaking: string | null = null;
