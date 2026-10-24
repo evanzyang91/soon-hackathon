@@ -62,7 +62,8 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 function stageSummary(st: ProjectStatus): string {
-  if (st.draft) return 'draft: nothing is generated yet; worlds, actors and voices are made when the director says generate';
+  if (st.draft)
+    return 'draft: nothing is generated yet; worlds, actors and voices are made when the director says generate';
   const count = (stage: 'world' | 'actors' | 'tts' | 'manifest') => {
     const all = st.scenes.map((j) => j.stages[stage].status).filter((s) => s !== 'skipped');
     const done = all.filter((s) => s === 'done').length;
@@ -94,7 +95,9 @@ export function describePlan(plan: ScreenplayPlan, st: ProjectStatus): string {
         `  marks: ${s.blocking.map((b) => `${b.characterId} ${b.pose} at (${b.position.map(r2).join(', ')}) yaw ${Math.round((b.yaw * 180) / Math.PI)}°`).join('; ')}`,
       );
     for (const d of s.dialogue)
-      lines.push(`  ${d.id} ${d.characterId}${d.parenthetical ? ` (${d.parenthetical})` : ''}: "${d.text}"`);
+      lines.push(
+        `  ${d.id} ${d.characterId}${d.parenthetical ? ` (${d.parenthetical})` : ''}: "${d.text}"`,
+      );
   }
   return lines.join('\n');
 }
@@ -111,7 +114,8 @@ export function describeHistory(history: ChatMessage[], screenplay: string): str
       out.push(`Director: ${isScript ? '(pasted the screenplay)' : clip(m.text, 600)}${photos}`);
     } else {
       out.push(`You: ${clip(m.text, 500)}`);
-      for (const a of m.actions ?? []) out.push(`  - ${a.type}: ${clip(a.summary, 160)} (${a.status})`);
+      for (const a of m.actions ?? [])
+        out.push(`  - ${a.type}: ${clip(a.summary, 160)} (${a.status})`);
     }
   }
   return out.join('\n') || '(no earlier messages)';
@@ -126,25 +130,52 @@ export interface PlannerImage {
 }
 
 /** Loads the photos the planner will see, shrinking an oversize PNG; JPEG / WebP are sent as is. */
-export async function loadPlannerImages(projectDir: string, ctx: ChatContext): Promise<PlannerImage[]> {
+export async function loadPlannerImages(
+  projectDir: string,
+  ctx: ChatContext,
+): Promise<PlannerImage[]> {
   const fresh = ctx.message.attachments.map((a) => ({ a, fresh: true }));
-  const earlier = ctx.earlier.filter((a) => !ctx.message.attachments.some((x) => x.id === a.id)).map((a) => ({ a, fresh: false }));
+  const earlier = ctx.earlier
+    .filter((a) => !ctx.message.attachments.some((x) => x.id === a.id))
+    .map((a) => ({ a, fresh: false }));
   const picked = [...fresh, ...earlier].slice(0, Math.max(MAX_PLANNER_IMAGES, fresh.length));
   const out: PlannerImage[] = [];
   for (const { a, fresh: isFresh } of picked) {
-    const media = a.file.endsWith('.png') ? 'image/png' : a.file.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+    const media = a.file.endsWith('.png')
+      ? 'image/png'
+      : a.file.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
     try {
       let bytes: Buffer = await readFile(join(projectDir, a.file));
-      const tooBig = bytes.length > MAX_IMAGE_BYTES || a.width > MAX_IMAGE_SIDE || a.height > MAX_IMAGE_SIDE;
+      const tooBig =
+        bytes.length > MAX_IMAGE_BYTES || a.width > MAX_IMAGE_SIDE || a.height > MAX_IMAGE_SIDE;
       if (tooBig && isPng(bytes)) {
         const img = decodePng(bytes);
         const k = SHRINK_TO / Math.max(img.width, img.height);
-        bytes = encodePng(resize(img, Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k))));
+        bytes = encodePng(
+          resize(
+            img,
+            Math.max(1, Math.round(img.width * k)),
+            Math.max(1, Math.round(img.height * k)),
+          ),
+        );
       } else if (tooBig) {
-        out.push({ attachment: a, fresh: isFresh, skipped: `too large to show (${(bytes.length / 1e6).toFixed(1)} MB, ${a.width}×${a.height})` });
+        out.push({
+          attachment: a,
+          fresh: isFresh,
+          skipped: `too large to show (${(bytes.length / 1e6).toFixed(1)} MB, ${a.width}×${a.height})`,
+        });
         continue;
       }
-      out.push({ attachment: a, fresh: isFresh, block: { type: 'image', source: { type: 'base64', media_type: media, data: bytes.toString('base64') } } });
+      out.push({
+        attachment: a,
+        fresh: isFresh,
+        block: {
+          type: 'image',
+          source: { type: 'base64', media_type: media, data: bytes.toString('base64') },
+        },
+      });
     } catch (e) {
       out.push({ attachment: a, fresh: isFresh, skipped: `unreadable (${(e as Error).message})` });
     }
@@ -152,7 +183,10 @@ export async function loadPlannerImages(projectDir: string, ctx: ChatContext): P
   return out;
 }
 
-export function plannerContent(ctx: ChatContext, images: PlannerImage[]): Anthropic.Beta.BetaContentBlockParam[] {
+export function plannerContent(
+  ctx: ChatContext,
+  images: PlannerImage[],
+): Anthropic.Beta.BetaContentBlockParam[] {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
     {
       type: 'text',
@@ -219,24 +253,38 @@ export interface PlanChatInput {
 export async function planChat(input: PlanChatInput): Promise<ChatPlanResult> {
   const log = input.log ?? (() => {});
   const offline = input.mock || (!env.keys.anthropic && !input.call);
-  if (offline) return { draft: mockChatDraft(input.ctx), source: 'mock', usage: { input: 0, output: 0, costUsd: 0 }, unseen: [] };
+  if (offline)
+    return {
+      draft: mockChatDraft(input.ctx),
+      source: 'mock',
+      usage: { input: 0, output: 0, costUsd: 0 },
+      unseen: [],
+    };
   const images = await loadPlannerImages(input.projectDir, input.ctx);
   const unseen = images.filter((i) => i.skipped).map((i) => `${i.attachment.id}: ${i.skipped}`);
   const schema = betaZodOutputFormat(ChatDraft).schema as Record<string, unknown>;
   const t0 = Date.now();
-  const msg = await (input.call ?? defaultCall)({ system: CHAT_SYSTEM, content: plannerContent(input.ctx, images), schema });
+  const msg = await (input.call ?? defaultCall)({
+    system: CHAT_SYSTEM,
+    content: plannerContent(input.ctx, images),
+    schema,
+  });
   const usage = costOf(msg.usage);
   log(
     `planner ${CHAT_MODEL}: ${msg.stop_reason} in ${((Date.now() - t0) / 1000).toFixed(1)}s with ${images.filter((i) => i.block).length} photo(s) (in ${usage.input} / out ${usage.output} tokens, ~$${usage.costUsd.toFixed(4)})`,
   );
-  if (msg.stop_reason === 'refusal') throw new ChatPlannerError('the planner declined this request');
-  if (msg.stop_reason === 'max_tokens') throw new ChatPlannerError('the answer was cut off; ask for a smaller change');
+  if (msg.stop_reason === 'refusal')
+    throw new ChatPlannerError('the planner declined this request');
+  if (msg.stop_reason === 'max_tokens')
+    throw new ChatPlannerError('the answer was cut off; ask for a smaller change');
   const text = msg.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
   let draft: ChatDraft;
   try {
     draft = ChatDraft.parse(JSON.parse(text));
   } catch (e) {
-    throw new ChatPlannerError(`the planner's answer did not parse (${(e as Error).message.slice(0, 120)})`);
+    throw new ChatPlannerError(
+      `the planner's answer did not parse (${(e as Error).message.slice(0, 120)})`,
+    );
   }
   return { draft, source: 'claude', usage, unseen };
 }

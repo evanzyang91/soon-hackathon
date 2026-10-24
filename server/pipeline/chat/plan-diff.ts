@@ -10,13 +10,20 @@ const show = (v: unknown) => {
 
 function walk(path: string, a: unknown, b: unknown, out: string[]): void {
   if (JSON.stringify(a) === JSON.stringify(b)) return;
-  const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v);
   if (Array.isArray(a) && Array.isArray(b)) {
-    const keyed = (x: unknown) => (isObj(x) && typeof x.id === 'string' ? x.id : isObj(x) && typeof x.characterId === 'string' ? x.characterId : undefined);
+    const keyed = (x: unknown) =>
+      isObj(x) && typeof x.id === 'string'
+        ? x.id
+        : isObj(x) && typeof x.characterId === 'string'
+          ? x.characterId
+          : undefined;
     if (a.every((x) => keyed(x)) && b.every((x) => keyed(x))) {
       const ka = new Map(a.map((x) => [keyed(x)!, x]));
       const kb = new Map(b.map((x) => [keyed(x)!, x]));
-      for (const k of new Set([...ka.keys(), ...kb.keys()])) walk(`${path}.${k}`, ka.get(k), kb.get(k), out);
+      for (const k of new Set([...ka.keys(), ...kb.keys()]))
+        walk(`${path}.${k}`, ka.get(k), kb.get(k), out);
       return;
     }
     if (a.length === b.length && a.every(isObj)) {
@@ -24,7 +31,8 @@ function walk(path: string, a: unknown, b: unknown, out: string[]): void {
       return;
     }
   } else if (isObj(a) && isObj(b)) {
-    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) walk(path ? `${path}.${k}` : k, a[k], b[k], out);
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)]))
+      walk(path ? `${path}.${k}` : k, a[k], b[k], out);
     return;
   }
   out.push(`${path}: ${show(a)} → ${show(b)}`);

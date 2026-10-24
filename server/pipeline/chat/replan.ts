@@ -31,7 +31,11 @@ export function mergeReplan(prev: ScreenplayPlan, next: ScreenplayPlan): ReplanM
   const kept: string[] = [];
   const added: string[] = [];
   const characters: Character[] = next.characters.map((c) => {
-    const old = oldByName.get(key(c.name)) ?? (oldById.get(c.id)?.name && key(oldById.get(c.id)!.name) === key(c.name) ? oldById.get(c.id) : undefined);
+    const old =
+      oldByName.get(key(c.name)) ??
+      (oldById.get(c.id)?.name && key(oldById.get(c.id)!.name) === key(c.name)
+        ? oldById.get(c.id)
+        : undefined);
     if (old && !taken.has(old.id)) {
       taken.add(old.id);
       idMap.set(c.id, old.id);
@@ -41,7 +45,9 @@ export function mergeReplan(prev: ScreenplayPlan, next: ScreenplayPlan): ReplanM
         id: old.id,
         description: old.description,
         voice: old.voice,
-        ...(old.heightMeters ?? c.heightMeters ? { heightMeters: old.heightMeters ?? c.heightMeters } : {}),
+        ...((old.heightMeters ?? c.heightMeters)
+          ? { heightMeters: old.heightMeters ?? c.heightMeters }
+          : {}),
         ...(old.referenceImage ? { referenceImage: old.referenceImage } : {}),
       };
     }
@@ -69,7 +75,9 @@ export function mergeReplan(prev: ScreenplayPlan, next: ScreenplayPlan): ReplanM
     }
     used.add(old.index);
     sceneFrom.push(old.index);
-    const blocking = fresh.map((b) => old.blocking.find((o) => o.characterId === b.characterId) ?? b);
+    const blocking = fresh.map(
+      (b) => old.blocking.find((o) => o.characterId === b.characterId) ?? b,
+    );
     return {
       ...s,
       slug: old.slug,
@@ -93,7 +101,10 @@ export function mergeReplan(prev: ScreenplayPlan, next: ScreenplayPlan): ReplanM
 }
 
 /** What a re-plan of `prev` with these headings would keep, offline (for the confirm card). */
-export function replanImpact(prev: ScreenplayPlan, headings: string[]): { keep: number; fresh: number; dropped: number } {
+export function replanImpact(
+  prev: ScreenplayPlan,
+  headings: string[],
+): { keep: number; fresh: number; dropped: number } {
   const slugs = new Set(prev.scenes.map((s) => s.slug));
   const seen = new Set<string>();
   let keep = 0;

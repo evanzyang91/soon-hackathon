@@ -29,7 +29,18 @@ export const MOCK_FALLBACK =
 export const MOCK_ASK_PHOTO =
   'Who or where is this photo? Say "this is <name>" or "use this for scene <number>".';
 
-const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+const ORDINALS = [
+  'first',
+  'second',
+  'third',
+  'fourth',
+  'fifth',
+  'sixth',
+  'seventh',
+  'eighth',
+  'ninth',
+  'tenth',
+];
 const GENERATE = /\b(generate|go ahead|build it|start)\b/i;
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -76,12 +87,20 @@ function tokenize(text: string): { bare: string; quotes: string[] } {
 
 const nameAlt = (c: Character) => [...new Set([c.id, c.name, castName(c.name)])].map(esc).join('|');
 const ARTICLE = /^(?:a|an|the|some)\s+/i;
-const core = (s: string) => s.trim().replace(/[.!?,;]+$/, '').replace(ARTICLE, '').trim();
+const core = (s: string) =>
+  s
+    .trim()
+    .replace(/[.!?,;]+$/, '')
+    .replace(ARTICLE, '')
+    .trim();
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Scene whose heading (or slug) holds every core word of `words` ("the kitchen" → INT. KITCHEN). */
 function sceneByWords(plan: ScreenplayPlan, words: string): ScenePlan | undefined {
-  const parts = core(words).toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  const parts = core(words)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
   if (!parts.length) return undefined;
   return plan.scenes.find((s) => {
     const h = `${s.heading} ${s.slug.replace(/-/g, ' ')}`.toLowerCase();
@@ -96,16 +115,24 @@ export function swapPlace(scene: ScenePlan, to: string, from?: string): string {
   if (source) {
     const re = new RegExp(`\\b${esc(source)}\\b`, 'gi');
     if (re.test(scene.worldPrompt))
-      return scene.worldPrompt.replace(re, (m) => (m[0] === m[0]!.toUpperCase() ? capitalize(target) : target));
+      return scene.worldPrompt.replace(re, (m) =>
+        m[0] === m[0]!.toUpperCase() ? capitalize(target) : target,
+      );
   }
   const whole = to.trim().replace(/[.!?,;]+$/, '');
   return `${capitalize(whole)}.`;
 }
 
-function linePatch(c: Character, scene: ScenePlan, nth: number, text: string): DraftAction | string {
+function linePatch(
+  c: Character,
+  scene: ScenePlan,
+  nth: number,
+  text: string,
+): DraftAction | string {
   const mine = scene.dialogue.filter((l) => l.characterId === c.id);
   const line = nth === -1 ? mine.at(-1) : mine[nth - 1];
-  if (!line) return `${castName(c.name)} has ${mine.length} line${mine.length === 1 ? '' : 's'} in scene ${scene.index + 1}.`;
+  if (!line)
+    return `${castName(c.name)} has ${mine.length} line${mine.length === 1 ? '' : 's'} in scene ${scene.index + 1}.`;
   return {
     ...emptyDraftAction('plan-patch', `${castName(c.name)}'s line ${line.id} is now "${text}"`),
     target: `line:${line.id}`,
@@ -128,7 +155,11 @@ function nextVoice(plan: ScreenplayPlan, c: Character): string {
 export function mockChatDraft(ctx: ChatContext): ChatDraft {
   const { plan } = ctx;
   const { bare, quotes } = tokenize(ctx.message.text);
-  const restore = (s: string) => s.replace(/«Q(\d+)»/g, (_, k: string) => `'${quotes[Number(k)]}'`).replace(/\s+/g, ' ').trim();
+  const restore = (s: string) =>
+    s
+      .replace(/«Q(\d+)»/g, (_, k: string) => `'${quotes[Number(k)]}'`)
+      .replace(/\s+/g, ' ')
+      .trim();
   const actions: DraftAction[] = [];
   const said: string[] = [];
   const draft = !!ctx.status.draft;
@@ -144,19 +175,38 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
     const name = castName(c.name);
 
     // make <Name> taller / older and taller / a redhead
-    const make = new RegExp(`\\bmake\\s+(?:${who})\\s+(.+?)(?=[.!?;]|\\bthen\\b|«Q|$)`, 'i').exec(bare);
+    const make = new RegExp(`\\bmake\\s+(?:${who})\\s+(.+?)(?=[.!?;]|\\bthen\\b|«Q|$)`, 'i').exec(
+      bare,
+    );
     if (make) {
-      const items = make[1]!.split(/\s*(?:,|\band\b|&)\s*/i).map((s) => s.trim()).filter(Boolean);
+      const items = make[1]!
+        .split(/\s*(?:,|\band\b|&)\s*/i)
+        .map((s) => s.trim())
+        .filter(Boolean);
       const adjectives: string[] = [];
       for (const item of items) {
-        const h = /^(?:(?:a\s+(?:bit|little)|much|slightly|a\s+lot)\s+)?(taller|shorter)$/i.exec(item);
+        const h = /^(?:(?:a\s+(?:bit|little)|much|slightly|a\s+lot)\s+)?(taller|shorter)$/i.exec(
+          item,
+        );
         if (h) {
           const now = c.heightMeters ?? 1.7;
-          const next = Math.min(2.3, Math.max(0.9, Math.round((now + (h[1]!.toLowerCase() === 'taller' ? 0.1 : -0.1)) * 100) / 100));
+          const next = Math.min(
+            2.3,
+            Math.max(
+              0.9,
+              Math.round((now + (h[1]!.toLowerCase() === 'taller' ? 0.1 : -0.1)) * 100) / 100,
+            ),
+          );
           const summary = `${name} is now ${next.toFixed(2)} m`;
-          actions.push({ ...emptyDraftAction('plan-patch', summary), target: `character:${c.id}`, field: 'heightMeters', value: next.toFixed(2) });
+          actions.push({
+            ...emptyDraftAction('plan-patch', summary),
+            target: `character:${c.id}`,
+            field: 'heightMeters',
+            value: next.toFixed(2),
+          });
           said.push(`${summary}.`);
-        } else if (!GENERATE.test(item) && !/^please$/i.test(item)) adjectives.push(item.replace(/\s+please$/i, ''));
+        } else if (!GENERATE.test(item) && !/^please$/i.test(item))
+          adjectives.push(item.replace(/\s+please$/i, ''));
       }
       if (adjectives.length) {
         const add = adjectives.join(', ');
@@ -172,11 +222,27 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
 
     // <Name>'s second line is '…' · <Name>'s line 2 is '…' · <Name> says '…'
     const verb = '(?:is|should be|becomes|reads|to|=|:)?';
-    const ordinal = new RegExp(`\\b(?:${who})(?:'s|’s)\\s+(?:(\\d+)(?:st|nd|rd|th)?|(${ORDINALS.join('|')}|last))\\s+line\\s+${verb}\\s*«Q(\\d+)»`, 'i').exec(bare);
-    const numbered = new RegExp(`\\b(?:${who})(?:'s|’s)\\s+line\\s+(\\d+)\\s*${verb}\\s*«Q(\\d+)»`, 'i').exec(bare);
-    const says = new RegExp(`\\b(?:${who})\\s+(?:says|should say|says instead)\\s*:?\\s*«Q(\\d+)»`, 'i').exec(bare);
+    const ordinal = new RegExp(
+      `\\b(?:${who})(?:'s|’s)\\s+(?:(\\d+)(?:st|nd|rd|th)?|(${ORDINALS.join('|')}|last))\\s+line\\s+${verb}\\s*«Q(\\d+)»`,
+      'i',
+    ).exec(bare);
+    const numbered = new RegExp(
+      `\\b(?:${who})(?:'s|’s)\\s+line\\s+(\\d+)\\s*${verb}\\s*«Q(\\d+)»`,
+      'i',
+    ).exec(bare);
+    const says = new RegExp(
+      `\\b(?:${who})\\s+(?:says|should say|says instead)\\s*:?\\s*«Q(\\d+)»`,
+      'i',
+    ).exec(bare);
     const hit = ordinal
-      ? { nth: ordinal[1] ? Number(ordinal[1]) : ordinal[2]!.toLowerCase() === 'last' ? -1 : ORDINALS.indexOf(ordinal[2]!.toLowerCase()) + 1, q: ordinal[3]! }
+      ? {
+          nth: ordinal[1]
+            ? Number(ordinal[1])
+            : ordinal[2]!.toLowerCase() === 'last'
+              ? -1
+              : ORDINALS.indexOf(ordinal[2]!.toLowerCase()) + 1,
+          q: ordinal[3]!,
+        }
       : numbered
         ? { nth: Number(numbered[1]), q: numbered[2]! }
         : says
@@ -184,7 +250,9 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
           : undefined;
     if (hit) {
       const scene = scopeScene(c);
-      const r = scene ? linePatch(c, scene, hit.nth, quotes[Number(hit.q)]!) : `${name} has no lines.`;
+      const r = scene
+        ? linePatch(c, scene, hit.nth, quotes[Number(hit.q)]!)
+        : `${name} has no lines.`;
       if (typeof r === 'string') said.push(r);
       else {
         actions.push(r);
@@ -202,68 +270,110 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
       const id = named ? named[1]!.toLowerCase() : wants ? nextVoice(plan, c) : undefined;
       if (id && id !== c.voice.id) {
         const summary = `${name}'s voice is now ${id}`;
-        actions.push({ ...emptyDraftAction('plan-patch', summary), target: `character:${c.id}`, field: 'voice.id', value: id });
+        actions.push({
+          ...emptyDraftAction('plan-patch', summary),
+          target: `character:${c.id}`,
+          field: 'voice.id',
+          value: id,
+        });
         said.push(`${summary}.`);
       } else if (id) said.push(`${name} already has the ${id} voice.`);
     }
   }
 
   // line s1-l3: '…'
-  for (const m of bare.matchAll(/\bline\s+(s\d+-l\d+)\s*(?:is|should be|becomes|reads|=|:)?\s*«Q(\d+)»/gi)) {
+  for (const m of bare.matchAll(
+    /\bline\s+(s\d+-l\d+)\s*(?:is|should be|becomes|reads|=|:)?\s*«Q(\d+)»/gi,
+  )) {
     const id = m[1]!.toLowerCase();
     if (actions.some((a) => a.target === `line:${id}`)) continue;
     const text = quotes[Number(m[2])]!;
     const summary = `Line ${id} is now "${text}"`;
-    actions.push({ ...emptyDraftAction('plan-patch', summary), target: `line:${id}`, field: 'text', value: text });
+    actions.push({
+      ...emptyDraftAction('plan-patch', summary),
+      target: `line:${id}`,
+      field: 'text',
+      value: text,
+    });
     said.push(`${summary}.`);
   }
 
   // scene N is a diner, not a kitchen · a diner instead of the kitchen
-  const sceneIs = /\bscene\s+(\d+)\s+(?:is now|is|should be|becomes|will be)\s+(.+?)(?=[.!?;]|$)/i.exec(bare);
+  const sceneIs =
+    /\bscene\s+(\d+)\s+(?:is now|is|should be|becomes|will be)\s+(.+?)(?=[.!?;]|$)/i.exec(bare);
   // X is the article-led phrase right before "instead of" ("a diner"), else its last one or two words
   const instead =
-    /\b((?:an?|the|some)\s+(?:[\p{L}'-]+\s+){0,2}?[\p{L}'-]+)\s+instead\s+of\s+(.+?)(?=[.!?;,]|$)/iu.exec(bare) ??
-    /\b([\p{L}'-]+(?:\s+[\p{L}'-]+)?)\s+instead\s+of\s+(.+?)(?=[.!?;,]|$)/iu.exec(bare);
+    /\b((?:an?|the|some)\s+(?:[\p{L}'-]+\s+){0,2}?[\p{L}'-]+)\s+instead\s+of\s+(.+?)(?=[.!?;,]|$)/iu.exec(
+      bare,
+    ) ?? /\b([\p{L}'-]+(?:\s+[\p{L}'-]+)?)\s+instead\s+of\s+(.+?)(?=[.!?;,]|$)/iu.exec(bare);
   let world: { scene: ScenePlan; to: string; from?: string } | undefined;
   if (sceneIs && plan.scenes[Number(sceneIs[1]) - 1]) {
     const words = restore(sceneIs[2]!);
     const not = /^(.*?),?\s+(?:not|rather than|instead of)\s+(.+)$/i.exec(words);
-    world = { scene: plan.scenes[Number(sceneIs[1]) - 1]!, to: not ? not[1]! : words, from: not?.[2] };
+    world = {
+      scene: plan.scenes[Number(sceneIs[1]) - 1]!,
+      to: not ? not[1]! : words,
+      from: not?.[2],
+    };
   } else if (instead) {
     const scene = sceneByWords(plan, instead[2]!);
-    const to = instead[1]!.replace(/^(?:(?:can you|please|let'?s|i want|make it|make|use|have|do|go with)\s+)+/i, '');
+    const to = instead[1]!.replace(
+      /^(?:(?:can you|please|let'?s|i want|make it|make|use|have|do|go with)\s+)+/i,
+      '',
+    );
     if (scene && core(to)) world = { scene, to, from: instead[2] };
   }
   if (world) {
     const prompt = swapPlace(world.scene, world.to, world.from);
     const summary = `Scene ${world.scene.index + 1} is now ${core(world.to)}`;
-    actions.push({ ...emptyDraftAction('plan-patch', summary), target: `scene:${world.scene.index}`, field: 'worldPrompt', value: prompt });
+    actions.push({
+      ...emptyDraftAction('plan-patch', summary),
+      target: `scene:${world.scene.index}`,
+      field: 'worldPrompt',
+      value: prompt,
+    });
     said.push(`${summary}.`);
   }
 
   // photos: hints first, then "this is <Name>" / "use this for …" for the next unassigned one
   const fresh: Attachment[] = [];
-  const pano = (a: Attachment) => /\b(360|pano(rama)?|equirect\w*)\b/i.test(bare) || a.width === 2 * a.height;
+  const pano = (a: Attachment) =>
+    /\b(360|pano(rama)?|equirect\w*)\b/i.test(bare) || a.width === 2 * a.height;
   for (const a of ctx.message.attachments) {
     const hint = a.hint?.trim() ?? '';
     const ch = /^character:(.+)$/i.exec(hint);
     const sc = /^scene:(\d+)/i.exec(hint);
-    const c = ch ? plan.characters.find((x) => x.id === ch[1] || x.name.toLowerCase() === ch[1]!.toLowerCase()) : undefined;
+    const c = ch
+      ? plan.characters.find((x) => x.id === ch[1] || x.name.toLowerCase() === ch[1]!.toLowerCase())
+      : undefined;
     if (c) {
       const summary = `${castName(c.name)} is built from this photo`;
-      actions.push({ ...emptyDraftAction('character-reference', summary), target: `character:${c.id}`, attachmentId: a.id });
+      actions.push({
+        ...emptyDraftAction('character-reference', summary),
+        target: `character:${c.id}`,
+        attachmentId: a.id,
+      });
       said.push(`${summary}.`);
     } else if (sc && plan.scenes[Number(sc[1])]) {
       const scene = plan.scenes[Number(sc[1])]!;
       const summary = `Scene ${scene.index + 1} (${scene.heading}) uses this photo`;
-      actions.push({ ...emptyDraftAction('world-reference', summary), target: `scene:${scene.index}`, attachmentId: a.id, isPano: /:pano$/i.test(hint) || pano(a) });
+      actions.push({
+        ...emptyDraftAction('world-reference', summary),
+        target: `scene:${scene.index}`,
+        attachmentId: a.id,
+        isPano: /:pano$/i.test(hint) || pano(a),
+      });
       said.push(`${summary}.`);
     } else fresh.push(a);
   }
-  const takePhoto = () => fresh.shift() ?? (ctx.message.attachments.length ? undefined : ctx.earlier[0]);
+  const takePhoto = () =>
+    fresh.shift() ?? (ctx.message.attachments.length ? undefined : ctx.earlier[0]);
   for (const c of plan.characters) {
     const who = nameAlt(c);
-    const re = new RegExp(`\\b(?:this is|that'?s|here(?:'s| is)|this photo is|this picture is)\\s+(?:${who})\\b|\\b(?:${who})\\s+looks like this\\b`, 'i');
+    const re = new RegExp(
+      `\\b(?:this is|that'?s|here(?:'s| is)|this photo is|this picture is)\\s+(?:${who})\\b|\\b(?:${who})\\s+looks like this\\b`,
+      'i',
+    );
     if (!re.test(bare)) continue;
     const a = takePhoto();
     if (!a) {
@@ -271,10 +381,17 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
       continue;
     }
     const summary = `${castName(c.name)} is built from this photo`;
-    actions.push({ ...emptyDraftAction('character-reference', summary), target: `character:${c.id}`, attachmentId: a.id });
+    actions.push({
+      ...emptyDraftAction('character-reference', summary),
+      target: `character:${c.id}`,
+      attachmentId: a.id,
+    });
     said.push(`${summary}.`);
   }
-  const useFor = /\buse\s+(?:this|it|that)(?:\s+(?:photo|picture|image|pic|one))?\s+(?:for|as)\s+(?:scene\s+(\d+)|(?:the\s+)?([^.!?;,]+))/i.exec(bare);
+  const useFor =
+    /\buse\s+(?:this|it|that)(?:\s+(?:photo|picture|image|pic|one))?\s+(?:for|as)\s+(?:scene\s+(\d+)|(?:the\s+)?([^.!?;,]+))/i.exec(
+      bare,
+    );
   if (useFor) {
     const scene = useFor[1] ? plan.scenes[Number(useFor[1]) - 1] : sceneByWords(plan, useFor[2]!);
     const a = scene ? takePhoto() : undefined;
@@ -282,7 +399,12 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
     else if (!a) said.push(`Attach the photo for scene ${scene.index + 1} first.`);
     else {
       const summary = `Scene ${scene.index + 1} (${scene.heading}) uses this photo`;
-      actions.push({ ...emptyDraftAction('world-reference', summary), target: `scene:${scene.index}`, attachmentId: a.id, isPano: pano(a) });
+      actions.push({
+        ...emptyDraftAction('world-reference', summary),
+        target: `scene:${scene.index}`,
+        attachmentId: a.id,
+        isPano: pano(a),
+      });
       said.push(`${summary}.`);
     }
   }

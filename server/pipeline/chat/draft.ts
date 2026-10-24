@@ -21,11 +21,7 @@ export const DraftAction = z.object({
     .describe(
       'plan-patch: "character:<id>" | "scene:<index>" | "line:<lineId>" | "project"; character-reference: "character:<id>"; world-reference: "scene:<index>"; replan / generate: ""',
     ),
-  field: z
-    .string()
-    .describe(
-      'plan-patch: the field to change (see the field list); otherwise ""',
-    ),
+  field: z.string().describe('plan-patch: the field to change (see the field list); otherwise ""'),
   value: z
     .string()
     .describe(
@@ -40,7 +36,9 @@ export const DraftAction = z.object({
     .describe(
       'replan: edits to the current screenplay text, applied in order; each "find" is an exact, unique passage of the current screenplay and "replace" its new text. [] for every other type',
     ),
-  summary: z.string().describe('what this action does, in the director\'s words ("Leo is now 1.85 m")'),
+  summary: z
+    .string()
+    .describe('what this action does, in the director\'s words ("Leo is now 1.85 m")'),
 });
 export type DraftAction = z.infer<typeof DraftAction>;
 
@@ -71,7 +69,13 @@ export interface ChatContext {
 export type Proposal =
   | ({ type: 'plan-patch'; summary: string } & Patch)
   | { type: 'character-reference'; characterId: string; attachment: Attachment; summary: string }
-  | { type: 'world-reference'; sceneIndex: number; attachment: Attachment; isPano: boolean; summary: string }
+  | {
+      type: 'world-reference';
+      sceneIndex: number;
+      attachment: Attachment;
+      isPano: boolean;
+      summary: string;
+    }
   | { type: 'replan'; screenplay: string; summary: string }
   | { type: 'generate'; summary: string };
 
@@ -87,7 +91,10 @@ export const emptyDraftAction = (type: DraftAction['type'], summary = ''): Draft
 });
 
 /** Applies screenplay edits in order; each `find` must occur exactly as written. */
-export function editScreenplay(text: string, edits: DraftAction['edits']): { text: string; problems: string[] } {
+export function editScreenplay(
+  text: string,
+  edits: DraftAction['edits'],
+): { text: string; problems: string[] } {
   let out = text;
   const problems: string[] = [];
   for (const e of edits) {
@@ -110,7 +117,10 @@ export function editScreenplay(text: string, edits: DraftAction['edits']): { tex
  * problem the reply then mentions, so the director never sees a card for a change that did not
  * happen. Later patches of the same field win.
  */
-export function checkDraft(draft: ChatDraft, ctx: ChatContext): { proposals: Proposal[]; problems: string[] } {
+export function checkDraft(
+  draft: ChatDraft,
+  ctx: ChatContext,
+): { proposals: Proposal[]; problems: string[] } {
   const proposals: Proposal[] = [];
   const problems: string[] = [];
   const photos = [...ctx.message.attachments, ...ctx.earlier];
@@ -128,9 +138,15 @@ export function checkDraft(draft: ChatDraft, ctx: ChatContext): { proposals: Pro
         problems.push(`${a.target} ${a.field}: ${p.error}`);
         continue;
       }
-      const dup = proposals.findIndex((x) => x.type === 'plan-patch' && x.targetKey === p.targetKey && x.field === p.field);
+      const dup = proposals.findIndex(
+        (x) => x.type === 'plan-patch' && x.targetKey === p.targetKey && x.field === p.field,
+      );
       if (dup >= 0) proposals.splice(dup, 1);
-      proposals.push({ type: 'plan-patch', summary: a.summary.trim() || `${p.targetKey} ${p.field}`, ...p });
+      proposals.push({
+        type: 'plan-patch',
+        summary: a.summary.trim() || `${p.targetKey} ${p.field}`,
+        ...p,
+      });
       // checkPatch validated it on a copy; keep the running plan in step for the next one
       applyPatch(plan, p);
     } else if (a.type === 'character-reference') {
@@ -138,19 +154,32 @@ export function checkDraft(draft: ChatDraft, ctx: ChatContext): { proposals: Pro
       const c = findCharacter(ctx.plan, ref);
       const att = photo(a.attachmentId);
       if (!c) problems.push(`no character "${ref}" for the photo`);
-      else if (!att) problems.push(`no attached photo${a.attachmentId ? ` ${a.attachmentId}` : ''} for ${c.id}`);
+      else if (!att)
+        problems.push(`no attached photo${a.attachmentId ? ` ${a.attachmentId}` : ''} for ${c.id}`);
       else {
         for (let i = proposals.length - 1; i >= 0; i--) {
           const x = proposals[i]!;
           if (x.type === 'character-reference' && x.characterId === c.id) proposals.splice(i, 1);
         }
-        proposals.push({ type: 'character-reference', characterId: c.id, attachment: att, summary: a.summary.trim() || `Photo of ${c.id}` });
+        proposals.push({
+          type: 'character-reference',
+          characterId: c.id,
+          attachment: att,
+          summary: a.summary.trim() || `Photo of ${c.id}`,
+        });
       }
     } else if (a.type === 'world-reference') {
-      const t = parseTarget(ctx.plan, a.target.startsWith('scene:') ? a.target : `scene:${a.target}`);
+      const t = parseTarget(
+        ctx.plan,
+        a.target.startsWith('scene:') ? a.target : `scene:${a.target}`,
+      );
       const att = photo(a.attachmentId);
-      if ('error' in t || t.kind !== 'scene') problems.push(`world-reference: ${'error' in t ? t.error : 'needs a scene'}`);
-      else if (!att) problems.push(`no attached photo${a.attachmentId ? ` ${a.attachmentId}` : ''} for scene ${t.index}`);
+      if ('error' in t || t.kind !== 'scene')
+        problems.push(`world-reference: ${'error' in t ? t.error : 'needs a scene'}`);
+      else if (!att)
+        problems.push(
+          `no attached photo${a.attachmentId ? ` ${a.attachmentId}` : ''} for scene ${t.index}`,
+        );
       else
         proposals.push({
           type: 'world-reference',
@@ -166,7 +195,11 @@ export function checkDraft(draft: ChatDraft, ctx: ChatContext): { proposals: Pro
         problems.push('re-plan: the screenplay did not change');
         continue;
       }
-      proposals.push({ type: 'replan', screenplay: text, summary: a.summary.trim() || 'Re-plan from the amended screenplay' });
+      proposals.push({
+        type: 'replan',
+        screenplay: text,
+        summary: a.summary.trim() || 'Re-plan from the amended screenplay',
+      });
     } else if (!proposals.some((x) => x.type === 'generate')) {
       proposals.push({ type: 'generate', summary: a.summary.trim() || 'Start generation' });
     }

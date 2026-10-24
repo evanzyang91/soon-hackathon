@@ -33,9 +33,13 @@ type ChatRouteName = 'uploads' | 'chat' | 'confirm' | 'generate';
 export function chatRoute(parts: string[]): { projectId: string; name: ChatRouteName } | null {
   if (parts[0] !== 'api' || parts[1] !== 'projects' || !parts[2]) return null;
   const projectId = decodeURIComponent(parts[2]);
-  if (parts.length === 4 && (parts[3] === 'uploads' || parts[3] === 'chat' || parts[3] === 'generate'))
+  if (
+    parts.length === 4 &&
+    (parts[3] === 'uploads' || parts[3] === 'chat' || parts[3] === 'generate')
+  )
     return { projectId, name: parts[3] };
-  if (parts.length === 5 && parts[3] === 'chat' && parts[4] === 'confirm') return { projectId, name: 'confirm' };
+  if (parts.length === 5 && parts[3] === 'chat' && parts[4] === 'confirm')
+    return { projectId, name: 'confirm' };
   return null;
 }
 
@@ -48,7 +52,12 @@ class HttpError extends Error {
   }
 }
 
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -88,7 +97,10 @@ async function readJson<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
   }
   const r = schema.safeParse(data);
   if (!r.success)
-    throw new HttpError(400, r.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '));
+    throw new HttpError(
+      400,
+      r.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
+    );
   return r.data;
 }
 
@@ -103,7 +115,10 @@ export interface ChatRouteOptions {
 }
 
 const settleWithin = (p: Promise<unknown>, ms: number) =>
-  Promise.race([p.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms).unref?.())]);
+  Promise.race([
+    p.then(() => true),
+    new Promise<boolean>((r) => setTimeout(() => r(false), ms).unref?.()),
+  ]);
 
 export async function handleChatRequest(
   req: IncomingMessage,
@@ -136,7 +151,11 @@ export async function handleChatRequest(
         contentType: req.headers['content-type'],
         name: url.searchParams.get('name') ?? undefined,
       });
-      if (created) await host.logEvent(id, `upload: ${attachment.file} (${attachment.width}×${attachment.height}, ${attachment.bytes} bytes${attachment.name ? `, "${attachment.name}"` : ''})`);
+      if (created)
+        await host.logEvent(
+          id,
+          `upload: ${attachment.file} (${attachment.width}×${attachment.height}, ${attachment.bytes} bytes${attachment.name ? `, "${attachment.name}"` : ''})`,
+        );
       send(res, 201, attachment, { location: `/projects/${id}/${attachment.file}` });
       return true;
     }
@@ -157,10 +176,17 @@ export async function handleChatRequest(
       settled = turn.settled;
     } else {
       const body = await readJson(req, ChatConfirmRequest);
-      settled = (await confirmAction(host, id, body.messageId, body.actionId, { waitIntervalMs: opts.watchIntervalMs })).settled;
+      settled = (
+        await confirmAction(host, id, body.messageId, body.actionId, {
+          waitIntervalMs: opts.watchIntervalMs,
+        })
+      ).settled;
     }
     await settleWithin(settled, waitMs);
-    const out: ChatResponse = { chat: await host.chat.read(id), status: (await host.getProject(id))! };
+    const out: ChatResponse = {
+      chat: await host.chat.read(id),
+      status: (await host.getProject(id))!,
+    };
     send(res, 200, out);
     return true;
   } catch (e) {
