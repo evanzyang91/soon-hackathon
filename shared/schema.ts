@@ -23,6 +23,13 @@ export const Character = z.object({
    * child 1.3); absent = 1.7. The actor pipeline scales every body kind to it.
    */
   heightMeters: z.number().min(0.9).max(2.3).optional(),
+  /**
+   * A reference photo the director supplied in the project chat (shared/chat.ts Attachment.file,
+   * project-root-relative, e.g. "uploads/3f9a….png"). The actor pipeline builds the avatar from
+   * it (normalised to a full-body front-facing shot) instead of generating a reference from the
+   * description; changing it rebuilds the actor. Absent = generate from the description.
+   */
+  referenceImage: z.string().optional(),
   voice: z.object({
     /** Provider voice id, e.g. OpenAI "alloy" / "onyx"; the pipeline picks one per character. */
     id: z.string(),
@@ -92,6 +99,12 @@ export const ScenePlan = z.object({
   action: z.string(),
   /** Marble text prompt describing the environment only (no people). */
   worldPrompt: z.string(),
+  /**
+   * A reference photo of the environment the director supplied in the project chat (Attachment
+   * file, project-root-relative PNG). The world stage sends it to Marble as the image prompt with
+   * worldPrompt as the text (never a library-world reuse); isPano for an equirectangular 360°.
+   */
+  worldReference: z.object({ file: z.string(), isPano: z.boolean().default(false) }).optional(),
   timeOfDay: z.enum(['dawn', 'day', 'dusk', 'night']).default('day'),
   interior: z.boolean(),
   characterIds: z.array(z.string()),
@@ -273,5 +286,13 @@ export const ProjectStatus = z.object({
   parse: z.object({ status: StageStatus, note: z.string().optional() }),
   scenes: z.array(SceneJob),
   actors: z.array(ActorBuildStatus).optional(),
+  /**
+   * A chat-first project: only the parse stage has run; worlds, actors and lines wait for
+   * POST /api/projects/:id/generate (shared/api.ts) so the director can amend the plan and attach
+   * reference images before any credits are spent. Cleared when generation starts.
+   */
+  draft: z.boolean().optional(),
+  /** Revision of the project chat (shared/chat.ts); the laptop refetches the thread when it changes. */
+  chatRevision: z.number().int().nonnegative().optional(),
 });
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
