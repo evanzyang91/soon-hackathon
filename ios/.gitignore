@@ -1,0 +1,9 @@
+# Xcode per-user state and build products
+xcuserdata/
+DerivedData/
+*.xcuserstate
+# SwiftPM
+PrevizCore/.build/
+PrevizCore/.swiftpm/
+# Local signing override (see Config/Local.xcconfig.example)
+Config/Local.xcconfig
