@@ -8,6 +8,10 @@
 // A three.js Object3D applies p' = T + R(S p). With R = rotX(π), S = msf and T = (0, ty, 0) a raw
 // floor point (y_cv = gpo / msf) lands at -gpo + ty, so ty = gpo. Non-OpenCV (already Y-up) assets
 // use the same floor convention without the flip and also end up with ty = gpo.
+//
+// A measured scale calibration (WorldAsset.scaleCalibration, server/pipeline/calibrate.ts)
+// multiplies the scale: S = factor × msf. The floor is still raw y = -gpo / msf, so ty becomes
+// factor × gpo and the floor stays at y = 0 while everything above it grows or shrinks.
 import type { Vec3, WorldAsset } from '@shared/schema';
 
 export interface WorldTransform {
@@ -18,7 +22,14 @@ export interface WorldTransform {
 
 type FrameInfo = Pick<WorldAsset, 'metricScaleFactor' | 'groundPlaneOffset'> & {
   opencvFrame?: boolean;
+  scaleCalibration?: { factor: number } | null;
 };
+
+/** The measured correction on top of Marble's metric scale (1 when absent or invalid). */
+export function calibrationFactor(w: Pick<FrameInfo, 'scaleCalibration'>): number {
+  const f = w.scaleCalibration?.factor;
+  return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : 1;
+}
 
 /** Floor height in the Y-up frame (after the flip, if any), in raw asset units. */
 export function rawFloorY(w: FrameInfo): number {
@@ -26,7 +37,7 @@ export function rawFloorY(w: FrameInfo): number {
 }
 
 export function worldTransform(w: FrameInfo): WorldTransform {
-  const scale = w.metricScaleFactor;
+  const scale = w.metricScaleFactor * calibrationFactor(w);
   return {
     rotationX: (w.opencvFrame ?? true) ? Math.PI : 0,
     scale,
