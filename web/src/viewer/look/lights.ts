@@ -7,7 +7,9 @@
 // falloff = (1 − (d/radius)⁴)² / (1 + (d/2 m)²) (inverse square, 2 m reference, windowed to the
 // radius); cone = soft edge over the outer quarter of a spot's half-angle; sun = no falloff, a
 // uniform directional tint. N is the splat's thinnest axis turned toward the viewer (a visible
-// splat faces the camera); round splats get a flat 0.55 instead of N·L. Honest limit: no new
+// splat faces the camera); round splats in the world get a flat 0.55 instead of N·L, round splats
+// of an actor use the outward direction from the actor's vertical axis (a body is roughly
+// convex), so the side facing the light brightens and the far side stays. Honest limit: no new
 // shadows — a baked splat cannot know what is between it and the light.
 //
 // The same program carries the atmosphere: sky tint multiplies splats seen above the horizon band
@@ -41,7 +43,16 @@ const LIGHT_GLSL = unindent(`
     c = max(c, 0.0);
     return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
   }
-  vec3 previzOneLight(vec3 p, vec3 n, float flatness, vec4 pr, vec4 ci, vec4 dc) {
+  float previzShade(vec3 p, vec3 n, float flatness, vec4 axis, vec3 L) {
+    float ndl = max(dot(n, L), 0.0);
+    if (axis.w < 0.5) return mix(0.55, ndl, flatness);
+    vec3 o = p - axis.xyz;
+    o.y = 0.0;
+    float len = length(o);
+    o = len > 1e-4 ? o / len : n;
+    return mix(0.12 + 0.88 * max(dot(o, L), 0.0), ndl, 0.5 * flatness);
+  }
+  vec3 previzOneLight(vec3 p, vec3 n, float flatness, vec4 axis, vec4 pr, vec4 ci, vec4 dc) {
     if (ci.w < 0.5) return vec3(0.0);
     vec3 L;
     float att = 1.0;
@@ -56,8 +67,7 @@ const LIGHT_GLSL = unindent(`
       att = win * win / (1.0 + 0.25 * d * d);
       if (ci.w > 1.5) att *= smoothstep(dc.w, mix(dc.w, 1.0, 0.25), dot(-L, dc.xyz));
     }
-    float shade = mix(0.55, max(dot(n, L), 0.0), flatness);
-    return ci.rgb * att * shade;
+    return ci.rgb * att * previzShade(p, n, flatness, axis, L);
   }
   vec3 previzAtmosphere(vec3 lin, vec3 p, vec3 view, vec4 fog, vec4 sky, vec4 skyBand) {
     vec3 toP = p - view;
@@ -74,7 +84,11 @@ const LIGHT_GLSL = unindent(`
 
 type V4 = ReturnType<typeof dynoVec4<THREE.Vector4>>;
 
-/** One modifier program shared by every lit splat mesh; uniforms hold up to 4 lights. */
+/**
+ * The splat light / atmosphere modifier. Every lit mesh gets its own modifier block (Spark
+ * compiles one program per mesh generator anyway) sharing these light uniforms, plus an `axis`
+ * uniform: an actor's vertical axis (xyz = its mark, w = 1), or w = 0 for the world.
+ */
 export class SplatLights {
   readonly pos: V4[] = [];
   readonly col: V4[] = [];
@@ -85,8 +99,7 @@ export class SplatLights {
   /** rgb = unit-luminance sky tint, w = strength. */
   readonly sky = dynoVec4(new THREE.Vector4(1, 1, 1, 0));
   readonly skyBand = dynoVec4(new THREE.Vector4(SKY_ELEVATION[0], SKY_ELEVATION[1], SKY_DISTANCE[0], SKY_DISTANCE[1]));
-  readonly modifier;
-  private readonly attached = new Set<SplatMesh>();
+  private readonly attached = new Map<SplatMesh, { axis: V4; root: THREE.Object3D | null }>();
   private key = '';
 
   constructor() {
@@ -95,10 +108,15 @@ export class SplatLights {
       this.col.push(dynoVec4(new THREE.Vector4(0, 0, 0, 0)));
       this.dir.push(dynoVec4(new THREE.Vector4(0, -1, 0, 0)));
     }
+  }
+
+  /** A modifier block for one mesh (its own `axis`, the shared light uniforms). */
+  private modifierFor(axis: V4) {
     const lights = this;
-    this.modifier = dyno.dynoBlock({ gsplat: Gsplat }, { gsplat: Gsplat }, ({ gsplat }) => {
+    return dyno.dynoBlock({ gsplat: Gsplat }, { gsplat: Gsplat }, ({ gsplat }) => {
       const inputs: Record<string, unknown> = {
         gsplat,
+        axis,
         view: SplatAccumulator.viewCenterUniform,
         ambient: lights.ambient,
         fog: lights.fog,
@@ -107,6 +125,7 @@ export class SplatLights {
       };
       const inTypes: Record<string, string | typeof Gsplat> = {
         gsplat: Gsplat,
+        axis: 'vec4',
         view: 'vec3',
         ambient: 'float',
         fog: 'vec4',
@@ -129,7 +148,7 @@ export class SplatLights {
           const out = (o as Record<string, string>).gsplat!;
           const g = io.gsplat!;
           const sum = Array.from({ length: MAX_SPLAT_LIGHTS }, (_, k) =>
-            `previzOneLight(${out}.center, n, flatness, ${io[`p${k}`]}, ${io[`c${k}`]}, ${io[`d${k}`]})`,
+            `previzOneLight(${out}.center, n, flatness, ${io.axis}, ${io[`p${k}`]}, ${io[`c${k}`]}, ${io[`d${k}`]})`,
           ).join(' + ');
           return unindent(`
             ${out} = ${g};
@@ -193,7 +212,7 @@ export class SplatLights {
         d.set(axis.x, axis.y, axis.z, Math.cos(((l.coneDeg / 2) * Math.PI) / 180));
       }
     }
-    for (const m of this.attached) m.updateVersion();
+    for (const m of this.attached.keys()) m.updateVersion();
     return true;
   }
 
@@ -212,13 +231,31 @@ export class SplatLights {
     let added = 0;
     root.traverse((o) => {
       if (!(o instanceof SplatMesh) || this.attached.has(o)) return;
-      o.worldModifiers = [...(o.worldModifiers ?? []), this.modifier];
+      const actor = actorRoot(o);
+      const axis = dynoVec4(new THREE.Vector4(0, 0, 0, actor ? 1 : 0));
+      const modifier = this.modifierFor(axis);
+      o.worldModifiers = [...(o.worldModifiers ?? []), modifier];
       o.updateGenerator();
-      this.attached.add(o);
+      this.attached.set(o, { axis, root: actor });
+      (o.userData as Record<string, unknown>).previzLightModifier = modifier;
       added++;
     });
-    for (const m of this.attached) if (!isInScene(m)) this.attached.delete(m);
+    for (const m of this.attached.keys()) if (!isInScene(m)) this.attached.delete(m);
+    this.follow();
     return added;
+  }
+
+  /** Keeps each actor's axis on the actor (walk-ins move them); regenerates the ones that moved. */
+  follow(): void {
+    const p = new THREE.Vector3();
+    for (const [mesh, { axis, root }] of this.attached) {
+      if (!root) continue;
+      root.getWorldPosition(p);
+      const a = axis.value;
+      if (Math.abs(a.x - p.x) + Math.abs(a.y - p.y) + Math.abs(a.z - p.z) < 1e-4) continue;
+      a.set(p.x, p.y, p.z, 1);
+      mesh.updateVersion();
+    }
   }
 
   get attachedCount(): number {
@@ -226,12 +263,19 @@ export class SplatLights {
   }
 
   dispose() {
-    for (const m of this.attached) {
-      m.worldModifiers = m.worldModifiers?.filter((x) => x !== this.modifier);
+    for (const m of this.attached.keys()) {
+      const mod = (m.userData as Record<string, unknown>).previzLightModifier;
+      m.worldModifiers = m.worldModifiers?.filter((x) => x !== mod);
       m.updateGenerator();
     }
     this.attached.clear();
   }
+}
+
+/** The actor (viewer/actors: `object.userData.actorKind`) a splat mesh belongs to, if any. */
+function actorRoot(o: THREE.Object3D): THREE.Object3D | null {
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.actorKind !== undefined) return p;
+  return null;
 }
 
 function isInScene(o: THREE.Object3D): boolean {
