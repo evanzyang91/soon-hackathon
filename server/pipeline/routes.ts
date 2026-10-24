@@ -6,12 +6,17 @@ import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
 import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
+import { chatRoute, handleChatRequest, type ChatRouteOptions } from './chat/routes.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 
 const CreateBody = z.object({
   title: z.string().max(200).optional(),
   screenplay: z.string().min(1, 'screenplay is required'),
+  /** Chat-first project: parse only, the rest waits for POST /generate. */
+  draft: z.boolean().optional(),
+  /** Upload ids the screenplay message carries. */
+  attachments: z.array(z.string().max(64)).max(12).optional(),
 });
 const RetryBody = z.object({
   sceneIndex: z.number().int().nonnegative().default(0),
@@ -84,7 +89,7 @@ function validate<T>(schema: z.ZodType<T>, data: unknown): T {
 /** Builds a handler bound to a store (tests use their own; the server uses the env default). */
 export function createPipelineHandler(
   getStore: () => ProjectStore,
-  opts: { resume?: boolean } = {},
+  opts: { resume?: boolean; chat?: ChatRouteOptions } = {},
 ) {
   let resumed: Promise<unknown> | undefined;
   return async function handle(
@@ -99,6 +104,8 @@ export function createPipelineHandler(
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
     // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
     if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
+    // uploads, chat, chat/confirm, generate (project chat, server/pipeline/chat/)
+    if (chatRoute(parts)) return handleChatRequest(req, res, parts, url, getStore(), opts.chat);
     const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';
     if (parts.length > 4 && !rebuild) return false;
     if (parts.length === 4 && parts[3] !== 'retry') return false;
