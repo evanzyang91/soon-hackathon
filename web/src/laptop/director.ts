@@ -13,6 +13,7 @@ import {
   cycleCamera,
   initialPhoneLink,
   nextCameraName,
+  nextLineId,
   phoneAnchor,
   phoneCameraPose,
   phoneCommand,
@@ -63,6 +64,8 @@ export class Director {
   cameras: DropCamera[] = [];
   activeCameraId: string | null = null;
   speakingLineId: string | null = null;
+  /** Last dialogue line started (clicked, played in order, or from the phone's "Line ›"). */
+  lastLineId: string | null = null;
   viewFromPhone = false;
   pipEnabled = true;
   quality: SplatQuality = 'k500';
@@ -79,6 +82,8 @@ export class Director {
   private lastSentAt = 0;
   private loadToken = 0;
   private playlistToken = 0;
+  /** playlistToken of the "Play scene" run in progress (stale = not running). */
+  private playlistRun = -1;
   private raf = 0;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private lastFrame = 0;
@@ -149,6 +154,7 @@ export class Director {
       this.sceneIndex = sceneIndex;
       this.manifestUrl = manifestUrl;
       this.speakingLineId = null;
+      this.lastLineId = null;
       rt.scene.add(this.markers.group, this.phoneGizmo.object);
       this.view.setScene(rt.scene);
       prev?.dispose();
@@ -275,6 +281,7 @@ export class Director {
 
   private async speak(rt: SceneRuntime, lineId: string) {
     this.speakingLineId = lineId;
+    this.lastLineId = lineId;
     this.emit('lines');
     this.broadcast();
     try {
@@ -294,13 +301,44 @@ export class Director {
     const rt = this.runtime;
     if (!rt) return;
     const token = ++this.playlistToken;
+    this.playlistRun = token;
     this.setPlaying(true);
     const lines = [...rt.manifest.plan.dialogue].sort((a, b) => a.order - b.order);
-    for (const line of lines) {
-      if (token !== this.playlistToken || this.runtime !== rt) return;
-      await this.speak(rt, line.id);
-      await new Promise((r) => setTimeout(r, 350));
+    try {
+      for (const line of lines) {
+        if (token !== this.playlistToken || this.runtime !== rt) return;
+        await this.speak(rt, line.id);
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    } finally {
+      if (this.playlistRun === token) this.playlistRun = -1;
     }
+  }
+
+  /**
+   * The scene is running: clock playing and its dialogue under way ("Play scene" in progress or a
+   * line being spoken). The phone shows its ACTION button as CUT exactly then.
+   */
+  get sceneRunning(): boolean {
+    const playlist = this.playlistRun !== -1 && this.playlistRun === this.playlistToken;
+    return !!this.runtime?.playing && (playlist || !!this.speakingLineId);
+  }
+
+  /** The phone's ACTION / CUT: "Play scene" from the first line, or stop the lines and the clock. */
+  toggleScene() {
+    if (!this.runtime) return;
+    if (this.sceneRunning) {
+      this.stopLines();
+      this.setPlaying(false);
+    } else void this.playAll();
+  }
+
+  /** The phone's "Line ›": the line after the last one played, wrapping to the first. */
+  async playNextLine() {
+    const rt = this.runtime;
+    if (!rt) return;
+    const id = nextLineId(rt.manifest.plan.dialogue, this.lastLineId);
+    if (id) await this.playLine(id);
   }
 
   stopLines() {
@@ -427,6 +465,12 @@ export class Director {
         break;
       case 'shutter':
         this.captureStill();
+        break;
+      case 'play-scene':
+        this.toggleScene();
+        break;
+      case 'next-line':
+        void this.playNextLine();
         break;
       case 'recenter':
         break;

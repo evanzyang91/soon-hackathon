@@ -2,7 +2,7 @@ import { Euler, Quaternion } from 'three';
 import { describe, expect, it } from 'vitest';
 import type { SceneState } from '@shared/protocol';
 import type { SceneManifest } from '@shared/schema';
-import { anchorFor, captionFor, SceneClockTracker } from './scene-sync.ts';
+import { anchorFor, captionFor, DialogueActivity, SceneClockTracker } from './scene-sync.ts';
 import { attitudeOf } from './viewfinder.ts';
 
 const q = (yaw: number, pitch = 0) => {
@@ -81,5 +81,29 @@ describe('attitudeOf', () => {
     expect(a.headingDeg).toBeCloseTo(90, 6);
     expect(a.pitchDeg).toBeCloseTo(0.1 * (180 / Math.PI), 6);
     expect(attitudeOf(q(Math.PI / 2)).headingDeg).toBeCloseTo(270, 6);
+  });
+});
+
+describe('DialogueActivity (ACTION / CUT)', () => {
+  it('is running while the clock plays and a line is spoken, across the gap between lines', () => {
+    const d = new DialogueActivity(1200);
+    const speaking = state({ playing: true, speakingLineId: 's1-l1' });
+    const gap = state({ playing: true, speakingLineId: null });
+    expect(d.running(gap, 0)).toBe(false); // playing, but no dialogue yet
+    d.update(speaking, 1000);
+    expect(d.running(speaking, 1000)).toBe(true);
+    d.update(speaking, 3900); // the 4 Hz heartbeat keeps saying who speaks
+    d.update(gap, 4000);
+    expect(d.running(gap, 4500)).toBe(true); // 0.35 s pause between lines
+    expect(d.running(gap, 5300)).toBe(false); // dialogue over, clock still running
+  });
+
+  it('stops at once when the laptop pauses (CUT)', () => {
+    const d = new DialogueActivity();
+    d.update(state({ speakingLineId: 's1-l1' }), 0);
+    expect(d.running(state({ playing: false, speakingLineId: null }), 100)).toBe(false);
+    expect(d.running(null, 100)).toBe(false);
+    d.reset();
+    expect(d.running(state({ speakingLineId: null }), 100)).toBe(false);
   });
 });

@@ -11,7 +11,13 @@ import { Gestures } from './gestures.ts';
 import { KeyboardWalk, TouchStick } from './joystick.ts';
 import { HandheldNudge } from './nudge.ts';
 import { RelayClient, relayUrl, type ConnState } from './relay-client.ts';
-import { anchorFor, captionFor, SceneClockTracker, type Anchor } from './scene-sync.ts';
+import {
+  anchorFor,
+  captionFor,
+  DialogueActivity,
+  SceneClockTracker,
+  type Anchor,
+} from './scene-sync.ts';
 import { OrientationTracker, screenAngle, toQuat } from './sensors.ts';
 import { LEVELS, RenderGovernor } from './render-governor.ts';
 import { PoseThrottle, poseKey } from './throttle.ts';
@@ -38,6 +44,7 @@ const nudge = new HandheldNudge({ gain: SWAY_GAIN });
 const walker = new Walker();
 const throttle = new PoseThrottle(30, 250);
 const clock = new SceneClockTracker();
+const dialogue = new DialogueActivity();
 /** ?governor=0 disables adaptive render throttling (always render every frame). */
 const governor = new RenderGovernor({ enabled: params.get('governor') !== '0' });
 
@@ -84,6 +91,8 @@ const debug = {
   viewStatus: '',
   yawOffset: 0,
   anchor,
+  /** The laptop is running the scene (clock + dialogue): the ACTION button shows CUT. */
+  sceneRunning: false,
   /** Joystick walk offset from the anchor (m, world frame) — also in every PhonePose. */
   offset: [0, 0, 0] as Vec3,
   /** Walking heading (rad, 0 = −Z), from the camera's view direction. */
@@ -223,6 +232,8 @@ function start(): void {
   });
   ui.onRecord(() => setRecording(!recording, true));
   ui.onNextCamera(() => relay?.send({ type: 'cmd', cmd: 'next-camera' }));
+  ui.onAction(() => sendSceneCommand('play-scene'));
+  ui.onNextLine(() => sendSceneCommand('next-line'));
   setFov(fovDeg);
   requestAnimationFrame(frame);
   // rAF stalls when rendering is slow or the tab is hidden; keep the pose stream alive anyway.
@@ -317,6 +328,15 @@ function setFov(f: number) {
   ui.setLens(focalLabel(fovDeg));
 }
 
+/** ACTION / CUT and Line ›: the laptop owns the scene clock and the dialogue. */
+function sendSceneCommand(cmd: 'play-scene' | 'next-line') {
+  if (!scene || !debug.peers.laptop) {
+    ui.toast('No scene yet — open one on the laptop');
+    return;
+  }
+  relay?.send({ type: 'cmd', cmd });
+}
+
 function setRecording(on: boolean, fromUser: boolean) {
   if (on === recording) return;
   recording = on;
@@ -354,9 +374,11 @@ function onScene(s: SceneState) {
   scene = s;
   debug.scene = s;
   clock.update(s, performance.now());
+  dialogue.update(s, performance.now());
   if (s.manifestUrl !== manifestUrlLoaded) {
     manifestUrlLoaded = s.manifestUrl;
     manifest = null;
+    dialogue.reset();
     void fetchManifest(s.manifestUrl);
     void loadScene(s.manifestUrl);
   }
@@ -489,6 +511,8 @@ function frame(now: number) {
     `HDG ${a.headingDeg.toFixed(0).padStart(3, '0')}° TILT ${a.pitchDeg.toFixed(0)}° ROLL ${a.rollDeg.toFixed(0)}°`,
   );
   if (recording) ui.setRecordTime((now - recordStartedAt) / 1000);
+  debug.sceneRunning = dialogue.running(scene, now);
+  ui.setAction(debug.sceneRunning);
   ui.setWalkReadout(walkReadout(walker.offset));
 }
 

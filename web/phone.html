@@ -222,6 +222,41 @@
         margin-right: 4px;
         animation: blink 1s steps(2) infinite;
       }
+      /* ---- ACTION / CUT + next line (top right) ---- */
+      #top-right {
+        position: absolute;
+        top: max(10px, env(safe-area-inset-top));
+        right: var(--gutter-r);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        pointer-events: auto;
+      }
+      #action {
+        min-width: 92px;
+        min-height: 40px;
+        padding: 8px 14px;
+        border-radius: 12px;
+        background: #1f8f4e;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        box-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+      }
+      #action::before {
+        content: '▶ ';
+      }
+      #action[aria-pressed='true'] {
+        background: var(--rec);
+      }
+      #action[aria-pressed='true']::before {
+        content: '■ ';
+      }
+      #action:active,
+      #next-line:active {
+        transform: scale(0.96);
+      }
       #controls {
         position: absolute;
         right: var(--gutter-r);
@@ -495,6 +530,10 @@
       <div id="top-center">
         <span class="pill"><span id="cam-name">No camera</span><span id="lens">--mm</span></span>
         <span class="pill" id="rec-badge" hidden><span id="rec-time">00:00</span></span>
+      </div>
+      <div id="top-right">
+        <button id="action" type="button" aria-pressed="false" title="Laptop: play the scene (dialogue in order + clock)">ACTION</button>
+        <button id="next-line" class="small" type="button" title="Laptop: play the next dialogue line">Line ›</button>
       </div>
       <div id="controls">
         <button id="recenter" class="small" type="button">Recenter</button>

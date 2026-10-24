@@ -12,6 +12,10 @@ export interface PrevizDebugState {
   time: number;
   playing: boolean;
   speakingLineId: string | null;
+  /** Last line started (what the phone's "Line ›" continues from). */
+  lastLineId: string | null;
+  /** Clock playing with dialogue under way: the phone shows CUT. */
+  sceneRunning: boolean;
   cameras: number;
   activeCameraId: string | null;
   linkStatus: string;
@@ -85,6 +89,8 @@ export function installDebugHook(director: Director) {
       time: rt?.time ?? 0,
       playing: !!rt?.playing,
       speakingLineId: director.speakingLineId,
+      lastLineId: director.lastLineId,
+      sceneRunning: director.sceneRunning,
       cameras: director.cameras.length,
       activeCameraId: director.activeCameraId,
       linkStatus: director.linkStatus,

@@ -5,6 +5,7 @@ import {
   cycleCamera,
   initialPhoneLink,
   nextCameraName,
+  nextLineId,
   normalizeQuat,
   parseServerMessage,
   phoneAnchor,
@@ -233,5 +234,21 @@ describe('camera helpers', () => {
 
   it('builds protocol-valid phone commands', () => {
     expect(ClientMessage.parse(phoneCommand('recenter'))).toEqual({ type: 'cmd', cmd: 'recenter' });
+    expect(ClientMessage.parse(phoneCommand('play-scene')).type).toBe('cmd');
+    expect(ClientMessage.parse(phoneCommand('next-line')).type).toBe('cmd');
+  });
+
+  it('picks the line after the last one played, in scene order, wrapping to the first', () => {
+    const lines = [
+      { id: 'c', order: 2 },
+      { id: 'a', order: 0 },
+      { id: 'b', order: 1 },
+    ];
+    expect(nextLineId(lines, null)).toBe('a');
+    expect(nextLineId(lines, 'a')).toBe('b');
+    expect(nextLineId(lines, 'b')).toBe('c');
+    expect(nextLineId(lines, 'c')).toBe('a');
+    expect(nextLineId(lines, 'gone')).toBe('a');
+    expect(nextLineId([], null)).toBeNull();
   });
 });
