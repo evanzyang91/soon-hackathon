@@ -65,14 +65,16 @@ export function mountProjectsPanel(director: Director) {
   const chip = (p: ProjectStatus, job: SceneJob, stage: (typeof STAGES)[number]) => {
     const st = (job.stages as Partial<SceneJob['stages']>)[stage];
     if (!st) return null;
-    const failed = st.status === 'failed';
+    // done-but-fallback (mannequin / beeps while keys are set) can be retried to upgrade it
+    const fallback = st.status === 'done' && /fallback/.test(st.note ?? '');
+    const retryable = st.status === 'failed' || fallback;
     return h(
       'span',
       {
-        class: `chip ${st.status}`,
-        title: `${stage}: ${st.status}${st.note ? ` — ${st.note}` : ''}${failed ? ' (click to retry)' : ''}`,
+        class: `chip ${st.status}${fallback ? ' fallback' : ''}`,
+        title: `${stage}: ${st.status}${st.note ? ` — ${st.note}` : ''}${retryable ? ' (click to retry)' : ''}`,
         'data-stage': stage,
-        onclick: failed
+        onclick: retryable
           ? (e: Event) => {
               e.stopPropagation();
               void retryStage(p.id, job.sceneIndex, stage).then(refresh, () => {});

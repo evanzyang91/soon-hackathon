@@ -30,7 +30,7 @@ import {
   type DialogueLine,
   type ScenePlan,
 } from '../../shared/schema.ts';
-import { env } from '../env.ts';
+import { env, keyPresence } from '../env.ts';
 import { buildActor } from './actors.ts';
 import { parseFountain } from './fountain.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
@@ -78,14 +78,24 @@ export interface StoreOptions {
   /** Server-wide MOCK: new projects are mock projects; real projects are not resumed. */
   mock: boolean;
   marbleModel?: string;
-  /** Key presence (never values). Missing keys fall back to offline stages. Defaults to env. */
-  keys?: { anthropic: boolean; marble: boolean };
+  /**
+   * Key presence (never values). Missing keys fall back to offline stages. Defaults to env.
+   * `modal` / `tts` decide whether a cached `fallback: true` actor / line may be upgraded.
+   */
+  keys?: StoreKeys;
   deps?: Partial<PipelineDeps>;
   maxWorldJobs?: number;
   maxActorJobs?: number;
   maxTtsJobs?: number;
   /** Mirror project log lines to the console (default true). */
   echo?: boolean;
+}
+
+export interface StoreKeys {
+  anthropic: boolean;
+  marble: boolean;
+  modal?: boolean;
+  tts?: boolean;
 }
 
 export class PipelineError extends Error {
@@ -145,7 +155,7 @@ export class ProjectStore {
   readonly dataDir: string;
   private readonly mock: boolean;
   private readonly model: string;
-  private readonly keys: { anthropic: boolean; marble: boolean };
+  private readonly keys: StoreKeys;
   private readonly deps: PipelineDeps;
   private readonly echo: boolean;
   private readonly worldSem: Semaphore;
@@ -167,7 +177,7 @@ export class ProjectStore {
     this.dataDir = resolve(o.dataDir);
     this.mock = o.mock;
     this.model = o.marbleModel ?? env.marbleModel;
-    this.keys = o.keys ?? { anthropic: !!env.keys.anthropic, marble: !!env.keys.marble };
+    this.keys = o.keys ?? keyPresence();
     this.deps = {
       parseScreenplay: o.deps?.parseScreenplay ?? parseScreenplay,
       generateWorld: o.deps?.generateWorld ?? generateWorld,
@@ -267,8 +277,10 @@ export class ProjectStore {
       if (job.stages.world.status === 'failed') this.worldRetryFailed.add(`${id}:${sceneIndex}`);
     } else if (stage === 'actors') {
       for (const cid of scene.characterIds) {
-        if (redo) await rm(join(this.dir(id), 'actors', cid, 'actor.json'), { force: true });
-        if (redo || !(await exists(join(this.dir(id), 'actors', cid, 'actor.json'))))
+        const cachePath = join(this.dir(id), 'actors', cid, 'actor.json');
+        if (redo) await rm(cachePath, { force: true });
+        const cached = ActorAsset.safeParse(await readJson(cachePath).catch(() => undefined));
+        if (redo || !cached.success || this.upgradable(st, cached.data, 'modal'))
           this.actorBuilds.delete(`${id}:${cid}`);
       }
     } else if (stage === 'tts' && redo) {
@@ -336,6 +348,14 @@ export class ProjectStore {
 
   projectDir(id: string): string {
     return this.dir(id);
+  }
+
+  /**
+   * A cached offline fallback (mannequin / beeps) is not final in a live project once the keys
+   * that could replace it are present: it is rebuilt on the next run or retry instead.
+   */
+  private upgradable(st: ProjectStatus, asset: { fallback?: boolean }, key: 'modal' | 'tts') {
+    return !!asset.fallback && !st.mock && !!this.keys[key];
   }
 
   // -------------------------------------------------------------------------
@@ -578,9 +598,10 @@ export class ProjectStore {
       });
     } else {
       const kinds = [...new Set(built.map((a) => a!.kind))].join(', ');
+      const fallbacks = built.filter((a) => a!.fallback).length;
       await this.setStage(id, idx, 'actors', {
         status: 'done',
-        note: `${cast.length} actor(s): ${kinds}`,
+        note: `${cast.length} actor(s): ${kinds}${fallbacks ? ` — ${fallbacks} fallback (retry to upgrade)` : ''}`,
       });
     }
   }
@@ -596,7 +617,8 @@ export class ProjectStore {
     const log = this.logger(st.id, `actor ${character.id}: `);
     const p = (async () => {
       const cached = ActorAsset.safeParse(await readJson(cachePath).catch(() => undefined));
-      if (cached.success) return cached.data;
+      if (cached.success && !this.upgradable(st, cached.data, 'modal')) return cached.data;
+      if (cached.success) log('cached actor is a fallback and Modal keys are set; rebuilding');
       await mkdir(actorDir, { recursive: true });
       try {
         const raw = await this.actorSem.use(() =>
@@ -632,7 +654,10 @@ export class ProjectStore {
         LineAudio.array().safeParse(await readJson(cachePath).catch(() => undefined)).data ?? []
       ).map((a) => [a.lineId, a]),
     );
-    const todo = scene.dialogue.filter((l) => !cached.has(l.id));
+    const todo = scene.dialogue.filter((l) => {
+      const c = cached.get(l.id);
+      return !c || this.upgradable(st, c, 'tts');
+    });
     await this.setStage(id, idx, 'tts', { status: 'running', note: `${todo.length} line(s)` });
     await mkdir(outDir, { recursive: true });
     const chars = this.characterMap(plan);
@@ -651,6 +676,7 @@ export class ProjectStore {
             lineId: line.id,
             url: await toProjectUrl(audio.url, outDir, projectDir),
             durationSeconds: audio.durationSeconds,
+            ...(audio.fallback ? { fallback: true } : {}),
           });
         } catch (e) {
           errors.push(`${line.id}: ${errMsg(e)}`);
@@ -666,7 +692,11 @@ export class ProjectStore {
         note: `${errors.length}/${scene.dialogue.length} line(s) failed — ${errors[0]}`,
       });
     } else {
-      await this.setStage(id, idx, 'tts', { status: 'done', note: `${ordered.length} line(s)` });
+      const fallbacks = ordered.filter((a) => a.fallback).length;
+      await this.setStage(id, idx, 'tts', {
+        status: 'done',
+        note: `${ordered.length} line(s)${fallbacks ? ` — ${fallbacks} fallback (retry to upgrade)` : ''}`,
+      });
     }
   }
 
