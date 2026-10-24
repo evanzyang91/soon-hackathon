@@ -35,6 +35,8 @@ function setup() {
 }
 
 const to = (out: Outbound[], id: string) => out.filter((o) => o.to === id).map((o) => o.msg);
+/** What a laptop receives for `pose(t)` sent by phone peer `phoneId`. */
+const fwd = (t: number, phoneId = 'P'): PhonePose => ({ ...pose(t), phoneId });
 
 describe('room codes', () => {
   it('reserves unique 4-char codes from the unambiguous alphabet', () => {
@@ -145,21 +147,30 @@ describe('pose forwarding', () => {
     join('P', 'phone');
     const out = send('P', pose(1), 100);
     expect(out.map((o) => o.to).sort()).toEqual(['L1', 'L2']);
-    expect(out[0]!.msg).toEqual(pose(1));
+    expect(out[0]!.msg).toEqual(fwd(1));
+  });
+
+  it('stamps the sender as phoneId, overwriting a client-supplied one', () => {
+    const { send, join } = setup();
+    join('L', 'laptop');
+    join('P1', 'phone');
+    join('P2', 'phone');
+    expect(to(send('P1', { ...pose(1), phoneId: 'P2' }, 100), 'L')).toEqual([fwd(1, 'P1')]);
+    expect(to(send('P2', pose(2), 101), 'L')).toEqual([fwd(2, 'P2')]);
   });
 
   it('coalesces: within one 33 ms window only the latest pose survives', () => {
     const { hub, send, join } = setup();
     join('L', 'laptop');
     join('P', 'phone');
-    expect(to(send('P', pose(1), 100), 'L')).toEqual([pose(1)]); // leading edge: immediate
+    expect(to(send('P', pose(1), 100), 'L')).toEqual([fwd(1)]); // leading edge: immediate
     expect(send('P', pose(2), 105)).toEqual([]);
     expect(send('P', pose(3), 110)).toEqual([]);
     expect(send('P', pose(4), 120)).toEqual([]);
     expect(hub.tick(125)).toEqual([]); // window not over yet
-    expect(to(hub.tick(133), 'L')).toEqual([pose(4)]); // trailing edge: latest only
+    expect(to(hub.tick(133), 'L')).toEqual([fwd(4)]); // trailing edge: latest only
     expect(hub.tick(200)).toEqual([]); // nothing pending
-    expect(to(send('P', pose(5), 210), 'L')).toEqual([pose(5)]);
+    expect(to(send('P', pose(5), 210), 'L')).toEqual([fwd(5)]);
   });
 
   it('throttles each phone independently', () => {
@@ -170,7 +181,7 @@ describe('pose forwarding', () => {
     expect(send('P1', pose(1), 100)).toHaveLength(1);
     expect(send('P2', pose(2), 101)).toHaveLength(1);
     expect(send('P1', pose(3), 110)).toHaveLength(0);
-    expect(to(hub.tick(140), 'L')).toEqual([pose(3)]);
+    expect(to(hub.tick(140), 'L')).toEqual([fwd(3, 'P1')]);
   });
 
   it('a pending pose is discarded when the phone leaves', () => {
