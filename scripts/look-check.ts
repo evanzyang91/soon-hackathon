@@ -259,7 +259,8 @@ async function presets(browser: Browser, o: Record<string, string>, out: string,
 async function parity(browser: Browser, o: Record<string, string>, out: string) {
   const project = o.project!;
   const scene = Number(o.scene ?? 0);
-  const look = {
+  // --plain: no grade (shows how far apart the two renders are without any look)
+  const look = o.plain === '1' ? { name: 'Plain' } : {
     name: 'Parity check',
     exposure: 0.25,
     contrast: 1.12,
@@ -306,7 +307,11 @@ async function parity(browser: Browser, o: Record<string, string>, out: string) 
   const b = await stableShot(phone, '#gl');
   await writeFile(join(out, 'parity-laptop.png'), a);
   await writeFile(join(out, 'parity-phone.png'), b);
-  const phoneState = await phone.evaluate(() => (window as unknown as { __phone: { look: unknown; renderLevel: number } }).__phone.look);
+  const phoneState = await phone.evaluate(() => ({
+    ...(window as unknown as { __phone: { look: object } }).__phone.look,
+    // the HUD's toast (hidden for the capture) names the look when it changes
+    toast: document.getElementById('toast')?.textContent ?? null,
+  }));
   const res = compare(decode(a), decode(b), 2);
   // reset the scene's saved look for the next checks
   await lap.page.evaluate(() => (window as unknown as { __look: { session: { apply(l: unknown, c: string | null): void } } }).__look.session.apply({ name: 'Default' }, null));
