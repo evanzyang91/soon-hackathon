@@ -74,6 +74,35 @@ describe('worldTransform', () => {
     close([v.x, v.y, v.z], applyWorldTransform(t, p));
   });
 
+  it('a room alignment turns about +Y after the flip and shifts on the floor, like three.js YXZ', () => {
+    const t = worldTransform({
+      metricScaleFactor: 0.7,
+      groundPlaneOffset: 1.2,
+      roomAlign: { yaw: 0.9, x: 1.5, z: -2 },
+    });
+    expect([t.rotationY, t.positionX, t.positionZ]).toEqual([0.9, 1.5, -2]);
+    const o = new THREE.Object3D();
+    o.rotation.order = 'YXZ';
+    o.rotation.set(t.rotationX, t.rotationY, 0);
+    o.scale.setScalar(t.scale);
+    o.position.set(t.positionX, t.positionY, t.positionZ);
+    o.updateMatrixWorld(true);
+    for (const p of [
+      [0.3, 1.2, -5],
+      [-2, 0.4, 3],
+      [0, 0, 0],
+    ] as Vec3[]) {
+      const v = new THREE.Vector3(...p).applyMatrix4(o.matrixWorld);
+      close([v.x, v.y, v.z], applyWorldTransform(t, p));
+    }
+    // the source camera (raw origin) lands on the alignment's shift; the floor stays at y = 0
+    close(
+      applyWorldTransform(t, [0, 1.2 / 0.7, 0]).map((v, i) => (i === 1 ? v : 0)) as Vec3,
+      [0, 0, 0],
+    );
+    expect(worldTransform({ metricScaleFactor: 1, groundPlaneOffset: 0 }).rotationY).toBe(0);
+  });
+
   it('applies a scale calibration on top of the metric scale with the floor still at y = 0', () => {
     const w = { metricScaleFactor: 0.8, groundPlaneOffset: 1.4, opencvFrame: true };
     const t = worldTransform({ ...w, scaleCalibration: { factor: 0.9 } });
@@ -111,7 +140,12 @@ describe('worldTransform', () => {
   });
 
   it('scales the floor shift with the calibration (the world grows about the declared floor)', () => {
-    const w = { metricScaleFactor: 1, groundPlaneOffset: 1.5, opencvFrame: false, floorOffsetMeters: 0.12 };
+    const w = {
+      metricScaleFactor: 1,
+      groundPlaneOffset: 1.5,
+      opencvFrame: false,
+      floorOffsetMeters: 0.12,
+    };
     const t = worldTransform({ ...w, scaleCalibration: { factor: 0.8 } });
     expect(t.positionY).toBeCloseTo(0.8 * 1.5 + 0.8 * 0.12);
     // the visible ground (raw y = -1.62 in this Y-up asset) still lands at 0
@@ -130,7 +164,12 @@ describe('worldTransform', () => {
 
   it('keeps the collider in sync: a child of the raised world has its floor at 0 for placement', () => {
     // a collider floor quad 14 cm below Marble's plane (rooftop), raw OpenCV coordinates
-    const w = { metricScaleFactor: 1.25, groundPlaneOffset: 2.17, opencvFrame: true, floorOffsetMeters: 0.14 };
+    const w = {
+      metricScaleFactor: 1.25,
+      groundPlaneOffset: 2.17,
+      opencvFrame: true,
+      floorOffsetMeters: 0.14,
+    };
     const yRaw = (2.17 + 0.14) / 1.25;
     const raw = [-6, yRaw, -6, 6, yRaw, -6, 6, yRaw, 6, -6, yRaw, -6, 6, yRaw, 6, -6, yRaw, 6];
     const t = worldTransform(w);
@@ -138,7 +177,9 @@ describe('worldTransform', () => {
     root.rotation.x = t.rotationX;
     root.scale.setScalar(t.scale);
     root.position.y = t.positionY;
-    const mesh = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(raw, 3)));
+    const mesh = new THREE.Mesh(
+      new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(raw, 3)),
+    );
     root.add(mesh);
     root.updateMatrixWorld(true);
     const world = new Float32Array(raw.length);

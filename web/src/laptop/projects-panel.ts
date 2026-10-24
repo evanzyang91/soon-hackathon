@@ -2,7 +2,16 @@
 // one row per character (build detail, kind, fallback) with the "High detail" rebuild button.
 import { api } from '@shared/api';
 import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
-import { createProject, getHealth, listProjects, rebuildActor, retryStage } from './api';
+import {
+  buildRoomWorld,
+  createProject,
+  getHealth,
+  getRoomCapture,
+  listProjects,
+  rebuildActor,
+  retryStage,
+  type RoomCaptureStatus,
+} from './api';
 import type { Director } from './director';
 import { byId, h } from './dom';
 import { SAMPLE_SCREENPLAY, SAMPLE_TITLE } from './sample';
@@ -65,6 +74,9 @@ export function mountProjectsPanel(director: Director) {
   let apiDown = false;
   let modalKeys: boolean | null = null;
   const rebuildErrors = new Map<string, string>();
+  /** Room scans uploaded by the iPhone app, for the open scene (`<project>:<scene>`). */
+  const roomScans = new Map<string, RoomCaptureStatus>();
+  const roomErrors = new Map<string, string>();
   /** project:character → the actor detail last applied to the open scene (hot-swap trigger). */
   const applied = new Map<string, string>();
   void getHealth()
@@ -204,6 +216,44 @@ export function mountProjectsPanel(director: Director) {
     );
   };
 
+  /** The open scene's scanned room: what was uploaded and the button that builds the set. */
+  const roomRow = (p: ProjectStatus, job: SceneJob) => {
+    const key = `${p.id}:${job.sceneIndex}`;
+    const scan = roomScans.get(key)?.capture;
+    if (!scan) return null;
+    const building = job.stages.world.status === 'running';
+    const error = roomErrors.get(key);
+    return h(
+      'div',
+      { class: 'room-scan', 'data-testid': 'room-scan' },
+      h(
+        'span',
+        { class: 'muted small', title: `Uploaded ${new Date(scan.createdAt).toLocaleString()}` },
+        `Scanned room: ${scan.room.area.toFixed(1)} m², ${scan.video.seconds.toFixed(0)} s video`,
+      ),
+      h(
+        'button',
+        {
+          class: 'small',
+          disabled: building || p.mock ? '' : undefined,
+          title: p.mock
+            ? 'MOCK project: building needs a live project'
+            : 'Turns the scan into this scene\'s world (Marble video, ~5 min, ~1,600 credits). The current world is kept as world.prev-<k>.',
+          onclick: (e: Event) => {
+            e.stopPropagation();
+            roomErrors.delete(key);
+            void buildRoomWorld(p.id, job.sceneIndex).then(refresh, (err) => {
+              roomErrors.set(key, err instanceof Error ? err.message : String(err));
+              render();
+            });
+          },
+        },
+        building ? 'Building…' : 'Build set from scanned room',
+      ),
+      error ? h('div', { class: 'error small' }, error) : null,
+    );
+  };
+
   const render = () => {
     list.replaceChildren();
     if (apiDown) {
@@ -238,6 +288,10 @@ export function mountProjectsPanel(director: Director) {
             h('span', { class: 'chips' }, ...STAGES.map((s) => chip(p, job, s))),
           ),
         );
+        if (current) {
+          const row = roomRow(p, job);
+          if (row) scenes.append(row);
+        }
       }
       list.append(
         h(
@@ -268,6 +322,15 @@ export function mountProjectsPanel(director: Director) {
       apiDown = false;
     } catch {
       apiDown = true;
+    }
+    // the open scene's room scan (the iPhone app uploads it while the laptop is open)
+    if (director.projectId !== null && director.sceneIndex !== null) {
+      const key = `${director.projectId}:${director.sceneIndex}`;
+      try {
+        roomScans.set(key, await getRoomCapture(director.projectId, director.sceneIndex));
+      } catch {
+        roomScans.delete(key);
+      }
     }
     // a finished rebuild rewrote the manifests: swap that actor in the open scene
     const current = projects.find((x) => x.id === director.projectId);

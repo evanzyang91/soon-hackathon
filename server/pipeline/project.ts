@@ -761,6 +761,8 @@ export class ProjectStore {
     log: (m: string) => void,
   ): Promise<{ asset: WorldAsset; note: string }> {
     if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
+    // a scanned room is scaled and floored from the LiDAR scan itself (room-world.ts)
+    if (asset.source === 'room-scan') return { asset, note: '' };
     const marks = scene.blocking.map((b) => [b.position[0], b.position[2]] as const);
     if (asset.scaleCalibration) {
       // carried by a library copy: re-decided from its stored report (no Claude call), with the
@@ -1159,7 +1161,7 @@ export class ProjectStore {
         world: worldAsset,
         actors: actorAssets,
         audio,
-        startCamera: START_CAMERA,
+        startCamera: rawWorld.startCamera ?? START_CAMERA,
       });
       await writeJsonAtomic(join(sceneDir, 'manifest.json'), manifest);
       job.manifestUrl = api.manifest(id, idx);

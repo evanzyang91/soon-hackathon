@@ -62,8 +62,23 @@ export interface GenerateWorldOptions {
    * prompt; `prompt` then only names the change (it keys the receipt).
    */
   imagePrompt?: ImagePrompt;
+  /**
+   * Generate from a video (the director's scanned room, recorded by the ARKit app): uploaded as a
+   * Marble media asset (≤ 100 MB) and sent as the video prompt; `prompt` keys the receipt.
+   */
+  videoPrompt?: VideoPrompt;
   deps?: MarbleDeps;
 }
+
+export interface VideoPrompt {
+  /** Local .mp4 / .mov file. */
+  file: string;
+  /** Optional text alongside the video (omitted: Marble captions it). */
+  textPrompt?: string;
+}
+
+/** Marble's limit for a video prompt. */
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 
 export interface ImagePrompt {
   /** Local PNG file. */
@@ -74,8 +89,27 @@ export interface ImagePrompt {
   textPrompt?: string;
 }
 
-/** `POST /marble/v1/media-assets:prepare_upload` body for a PNG. */
-export const prepareUploadBody = (fileName: string) => ({ file_name: fileName, kind: 'image', extension: 'png' });
+/** `POST /marble/v1/media-assets:prepare_upload` body for a PNG (or a video: mp4 / mov). */
+export function prepareUploadBody(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return ['mp4', 'mov', 'webm'].includes(ext)
+    ? { file_name: fileName, kind: 'video', extension: ext }
+    : { file_name: fileName, kind: 'image', extension: 'png' };
+}
+
+/** The exact `POST /marble/v1/worlds:generate` body for an uploaded video prompt. */
+export function videoRequestBody(o: { name: string; model?: string; mediaAssetId: string; textPrompt?: string }) {
+  return {
+    display_name: o.name.slice(0, 100),
+    model: marbleModel(o.model),
+    world_prompt: {
+      type: 'video',
+      video_prompt: { source: 'media_asset', media_asset_id: o.mediaAssetId },
+      ...(o.textPrompt ? { text_prompt: o.textPrompt, disable_recaption: true } : {}),
+    },
+    permission: { public: false },
+  };
+}
 
 /** The exact `POST /marble/v1/worlds:generate` body for an uploaded image prompt. */
 export function imageRequestBody(o: { name: string; model?: string; mediaAssetId: string; isPano: boolean; textPrompt?: string }) {
@@ -154,6 +188,18 @@ export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAs
   if (opts.dryRun ?? env.marbleDryRun) {
     const base = opts.deps?.baseUrl ?? BASE_URL;
     const url = `${base}/marble/v1/worlds:generate`;
+    if (opts.videoPrompt) {
+      const vid = opts.videoPrompt;
+      const bytes = (await stat(vid.file)).size;
+      const upload = { method: 'POST', url: `${base}/marble/v1/media-assets:prepare_upload`, body: prepareUploadBody(basename(vid.file)) };
+      const body = videoRequestBody({ ...opts, ...vid, mediaAssetId: '<dry-run: not uploaded>' });
+      await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), {
+        upload: { ...upload, then: `PUT <upload_url> ${bytes} bytes (${vid.file})` },
+        generate: { method: 'POST', url, body },
+      });
+      opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not uploaded: ${bytes} byte video; not submitted: POST ${url} ${JSON.stringify(body)}`);
+      return mockWorld(opts.outDir, opts.log);
+    }
     if (opts.imagePrompt) {
       const img = opts.imagePrompt;
       const bytes = (await stat(img.file)).size;
@@ -318,11 +364,18 @@ class MarbleRun {
   private async submit(prev: MarbleReceipt | undefined): Promise<MarbleReceipt> {
     // an image prompt is uploaded first (free, no receipt needed: nothing is charged yet)
     const img = this.o.imagePrompt;
-    const mediaAssetId = img ? await this.uploadImage(img.file) : undefined;
+    const vid = this.o.videoPrompt;
+    const mediaAssetId = vid
+      ? await this.uploadImage(vid.file)
+      : img
+        ? await this.uploadImage(img.file)
+        : undefined;
     const body =
-      img && mediaAssetId
-        ? imageRequestBody({ ...this.o, ...img, model: this.model, mediaAssetId })
-        : generateRequestBody({ ...this.o, model: this.model });
+      vid && mediaAssetId
+        ? videoRequestBody({ ...this.o, ...vid, model: this.model, mediaAssetId })
+        : img && mediaAssetId
+          ? imageRequestBody({ ...this.o, ...img, model: this.model, mediaAssetId })
+          : generateRequestBody({ ...this.o, model: this.model });
     const t = nowIso();
     let r: MarbleReceipt = {
       schema: 'previz.marble-receipt/1',
@@ -381,9 +434,13 @@ class MarbleRun {
     return r;
   }
 
-  /** prepare_upload + PUT of a PNG; returns the media asset id. */
+  /** prepare_upload + PUT of a PNG or a video; returns the media asset id. */
   private async uploadImage(file: string): Promise<string> {
     const data = await readFile(file);
+    const kind = prepareUploadBody(basename(file));
+    if (kind.kind === 'video' && data.length > MAX_VIDEO_BYTES)
+      throw new MarbleError(`${basename(file)} is ${data.length} bytes; Marble takes ≤ 100 MB`, 'invalid');
+    const contentType = kind.kind === 'video' ? (kind.extension === 'mov' ? 'video/quicktime' : `video/${kind.extension}`) : 'image/png';
     const prepared = await this.api<{
       media_asset?: { id?: string; media_asset_id?: string };
       upload_info?: { upload_url?: string; upload_method?: string; required_headers?: Record<string, string> };
@@ -397,7 +454,7 @@ class MarbleRun {
       // presigned upload URL: authenticates itself, never send the API key there
       res = await this.fetch(info.upload_url, {
         method: info.upload_method ?? 'PUT',
-        headers: { 'content-type': 'image/png', ...(info.required_headers ?? { 'x-goog-content-length-range': '0,104857600' }) },
+        headers: { 'content-type': contentType, ...(info.required_headers ?? { 'x-goog-content-length-range': '0,104857600' }) },
         body: data,
       });
     } catch {

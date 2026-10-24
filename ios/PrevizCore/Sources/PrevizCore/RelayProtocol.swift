@@ -211,9 +211,18 @@ public struct ManifestStart: Decodable, Sendable, Equatable {
     public var fovDeg: Double
   }
 
+  public struct World: Decodable, Sendable, Equatable {
+    /// 'room-scan' for a world built from this app's room scan (server/pipeline/room-world.ts).
+    public var source: String?
+  }
+
   public var projectId: String
   public var plan: Plan
   public var startCamera: Camera
+  public var world: World?
+
+  /// The scene is the scanned room: restore the scan's frame to walk it 1:1.
+  public var isRoomScan: Bool { world?.source == "room-scan" }
 }
 
 /// Active drop camera → else the manifest's start camera → else a standing eye height at origin.

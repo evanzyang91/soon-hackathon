@@ -1,10 +1,12 @@
 // Join → Track → See. The native side is the room's phone: it alone talks to the relay (Hello,
 // PhonePose at ≤ 30 Hz, commands) and feeds the web page poses and relay messages.
+import CoreVideo
 import Foundation
 import Observation
 import PrevizCore
 import UIKit
 import os
+import simd
 
 private let log = Logger(subsystem: "dev.previz.camera", category: "app")
 
@@ -74,6 +76,14 @@ final class AppModel {
   @ObservationIgnored private var roomSentForRecentre = -1
   @ObservationIgnored private var lastRoomText: String?
   @ObservationIgnored private var scanTimer: Timer?
+  /// The Recentre map the last scan was made in: a scene built from it restores it (1:1 walk).
+  @ObservationIgnored private var scanFrame: SceneFrame?
+  @ObservationIgnored private var recorder: ScanRecorder?
+  @ObservationIgnored private var scanStart: RoomCapture.Start?
+  /// A finished scan waiting to reach the laptop (uploads when a scene is open).
+  @ObservationIgnored private var pendingCapture: (url: URL, capture: RoomCapture)?
+  @ObservationIgnored private var uploading = false
+  @ObservationIgnored private var lastOrientation = InterfaceOrientation.landscapeRight
 
   init() {
     hostInput = defaults.string(forKey: "previz.lastHost") ?? ""
@@ -236,8 +246,9 @@ final class AppModel {
   // MARK: - Controls
 
   func recentre() {
-    poses.recentre(toYaw: anchor.yaw)
-    show("Recentred to \(anchor.name)")
+    recentreOrRestore(announce: true)
+    // a scene rebuilt from the scan keeps its manifest URL: look again for "room-scan"
+    if let url = manifestURL { fetchManifest(url) }
   }
 
   func shutter() {
@@ -270,12 +281,22 @@ final class AppModel {
       if let area = roomArea {
         sendRoom()
         show(String(format: "Room scanned: %.1f m²", area))
+        finishCapture()
       } else {
+        recorder = nil
         show("No floor found yet. Point the phone at the floor and scan again")
       }
     } else {
       scanning = true
-      show("Walk around the room, pointing at the floor")
+      scanFrame = poses.frame
+      scanStart = nil
+      let rec = ScanRecorder()
+      recorder = rec
+      // the camera feed becomes the video the laptop turns into the set
+      tracker?.onCapturedImage = { [weak self] image, time, transform in
+        MainActor.assumeIsolated { self?.record(image, time, transform) }
+      }
+      show("Walk around the room slowly: floor, walls and corners (30 s max)")
       scanTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
         Task { @MainActor in self?.updateRoom() }
       }
@@ -286,6 +307,67 @@ final class AppModel {
     scanTimer?.invalidate()
     scanTimer = nil
     scanning = false
+    tracker?.onCapturedImage = nil
+  }
+
+  private func record(_ image: CVPixelBuffer, _ time: Double, _ transform: simd_float4x4) {
+    guard let recorder, let frame = scanFrame else { return }
+    let portrait = lastOrientation == .portrait || lastOrientation == .portraitUpsideDown
+    if recorder.append(image, at: time, portrait: portrait) {
+      scanStart = RoomCapture.start(camera: PoseMath.double(transform), orientation: lastOrientation, frame: frame)
+    }
+    if recorder.full { toggleScan() }  // 30 s: the video is as long as Marble takes well
+  }
+
+  /// Video + outline + first-frame camera → the laptop (PUT room-capture), so it can build the set.
+  private func finishCapture() {
+    guard let rec = recorder, let frame = scanFrame, let room else { return }
+    recorder = nil
+    Task { [weak self] in
+      guard let self else { return }
+      guard let made = await rec.finish(), let start = self.scanStart else {
+        if let why = rec.failed { self.banner = why }
+        return
+      }
+      let msg = room.message(source: ARTracker.hasLiDAR ? .lidar : .planes, toScene: frame.toScene)
+      let capture = RoomCapture(
+        room: msg, start: start, video: .init(seconds: made.seconds, bytes: made.bytes),
+        createdAt: ISO8601DateFormatter().string(from: Date()))
+      self.pendingCapture = (rec.url, capture)
+      await self.uploadCapture()
+    }
+  }
+
+  private func uploadCapture() async {
+    guard let pending = pendingCapture, !uploading else { return }
+    guard let scene, let target else {
+      show("Scan saved. Open a scene on the laptop to send it")
+      return
+    }
+    uploading = true
+    defer { uploading = false }
+    let base = "/api/projects/\(scene.projectId)/scenes/\(scene.sceneIndex)/room-capture"
+    do {
+      guard let videoURL = target.resolve("\(base)/video"), let metaURL = target.resolve(base) else {
+        throw URLError(.badURL)
+      }
+      show(String(format: "Sending the scanned room (%.0f MB)…", Double(pending.capture.video.bytes) / 1e6))
+      var put = URLRequest(url: videoURL)
+      put.httpMethod = "PUT"
+      put.setValue("video/mp4", forHTTPHeaderField: "content-type")
+      let (_, r1) = try await trust.dataSession.upload(for: put, fromFile: pending.url)
+      guard (r1 as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+      var meta = URLRequest(url: metaURL)
+      meta.httpMethod = "PUT"
+      meta.setValue("application/json", forHTTPHeaderField: "content-type")
+      let (_, r2) = try await trust.dataSession.upload(for: meta, from: Data(try Wire.encode(pending.capture).utf8))
+      guard (r2 as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+      pendingCapture = nil
+      try? FileManager.default.removeItem(at: pending.url)
+      show("Scanned room sent. Build it on the laptop")
+    } catch {
+      banner = "Couldn't send the scanned room: \(error.localizedDescription). It retries with the next scene"
+    }
   }
 
   private func updateRoom() {
@@ -310,6 +392,7 @@ final class AppModel {
   private func onFrame(_ f: FrameData) {
     if tracking != f.sample.quality { tracking = f.sample.quality }
     if interrupted { interrupted = false }
+    lastOrientation = f.orientation
     let pose = poses.update(f.sample, orientation: f.orientation)
     // a Recentre moved the offset frame: the room follows it
     if room != nil, poses.recentres != roomSentForRecentre { sendRoom() }
@@ -373,6 +456,7 @@ final class AppModel {
 
   private func onScene(_ s: SceneState) {
     scene = s
+    if pendingCapture != nil, !uploading { Task { await uploadCapture() } }
     if scenePlaying != s.playing { scenePlaying = s.playing }
     if s.manifestUrl != manifestURL {
       manifestURL = s.manifestUrl
@@ -406,7 +490,19 @@ final class AppModel {
     debug.anchor.name = next.name
     debug.anchor.key = next.key
     debug.anchor.yaw = next.yaw
-    if changed { poses.recentre(toYaw: next.yaw) }
+    if changed { recentreOrRestore(announce: false) }
+  }
+
+  /// A scene built from this phone's scan puts the phone back in the scan's frame (the generated
+  /// room over the real one, 1:1); any other scene re-centres onto the attached camera.
+  private func recentreOrRestore(announce: Bool) {
+    if manifest?.isRoomScan == true, let frame = scanFrame {
+      poses.adopt(frame)
+      show("Walking your scanned room 1:1")
+    } else {
+      poses.recentre(toYaw: anchor.yaw)
+      if announce { show("Recentred to \(anchor.name)") }
+    }
   }
 
   private func fetchManifest(_ reference: String) {
@@ -418,8 +514,10 @@ final class AppModel {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         let start = try JSONDecoder().decode(ManifestStart.self, from: data)
         guard self.manifestURL == reference else { return }  // the scene changed meanwhile
+        let becameRoom = start.isRoomScan && self.manifest?.isRoomScan != true
         self.manifest = start
         self.refreshAnchor()
+        if becameRoom, self.scanFrame != nil { self.recentreOrRestore(announce: false) }
       } catch {
         log.warning("manifest fetch failed: \(error.localizedDescription, privacy: .public)")
       }

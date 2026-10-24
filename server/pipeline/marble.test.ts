@@ -176,6 +176,45 @@ describe('marble client', () => {
     });
   });
 
+  it('a video prompt is uploaded as a video media asset and sent as the video world prompt', async () => {
+    const video = join(outDir, 'room.mp4');
+    await writeFile(video, Buffer.alloc(2048, 7));
+    const m = fakeMarble();
+    const seen: { prepare?: unknown; put?: string | null; body?: unknown } = {};
+    const spy = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('media-assets:prepare_upload')) {
+        seen.prepare = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            media_asset: { id: 'ma-9' },
+            upload_info: { upload_url: 'https://upload.test/put?sig=x', required_headers: {} },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.startsWith('https://upload.test/')) {
+        seen.put = new Headers(init?.headers).get('content-type');
+        return new Response('', { status: 200 });
+      }
+      if (url.endsWith('worlds:generate')) seen.body = JSON.parse(String(init?.body));
+      return m.fetch(input, init);
+    }) as typeof fetch;
+    await run(spy, { model: 'marble-1.1', videoPrompt: { file: video } });
+    expect(seen.prepare).toEqual({ file_name: 'room.mp4', kind: 'video', extension: 'mp4' });
+    expect(seen.put).toBe('video/mp4');
+    expect(seen.body).toEqual({
+      display_name: 'test world',
+      model: 'marble-1.1',
+      world_prompt: {
+        type: 'video',
+        video_prompt: { source: 'media_asset', media_asset_id: 'ma-9' },
+      },
+      permission: { public: false },
+    });
+    expect((await receipt()).media_asset_id).toBe('ma-9');
+  });
+
   it('a crash while polling resumes by polling the recorded operation, never resubmitting', async () => {
     const m = fakeMarble({ pollsUntilDone: 3 });
     const crash = async () => {

@@ -44,6 +44,25 @@ export const rebuildActor = async (id: string, characterId: string, detail: Acto
   return (await res.json()) as ProjectStatus;
 };
 
+/** The room scan the iPhone app uploaded for a scene (server/pipeline/room-routes.ts). */
+export interface RoomCaptureStatus {
+  capture: { room: { area: number }; video: { seconds: number }; createdAt: string } | null;
+  videoBytes: number;
+}
+const roomUrl = (id: string, n: number, what: string) =>
+  `/api/projects/${encodeURIComponent(id)}/scenes/${n}/${what}`;
+export const getRoomCapture = (id: string, n: number) =>
+  fetch(roomUrl(id, n, 'room-capture')).then((r) => json<RoomCaptureStatus>(r));
+/** Build the scene's world from the scanned room (Marble video; 202 → ProjectStatus). */
+export const buildRoomWorld = async (id: string, n: number) => {
+  const res = await fetch(roomUrl(id, n, 'room-world'), { method: 'POST' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as ProjectStatus;
+};
+
 /** Fresh room code, or the LAN phone URL for a code kept from a previous load. */
 export const newRoom = (keep?: string) =>
   fetch(keep ? `${api.newRoom}?room=${encodeURIComponent(keep)}` : api.newRoom).then((r) =>

@@ -202,6 +202,33 @@ outlines its view in red with `Wall 0.3 m` before you walk into a real wall, and
 outside the scanned room. The outline is the convex hull of the floor ARKit found (an L-shaped
 room comes out as its hull).
 
+### My room becomes the set
+
+The same scan can become the scene's world. While **Scan room** runs, the app also records the
+camera feed (≤ 30 s, 30 fps, ~8 Mbit/s, so well under Marble's 100 MB video limit) and remembers
+where the camera stood at the first frame. On **Done** it uploads the video and the scan to the
+open scene (`PUT /api/projects/:id/scenes/:n/room-capture[/video]`; free, so the phone may do
+it). The laptop's project panel then shows **Scanned room: 12.4 m², 22 s video** under the scene
+with **Build set from scanned room**, which spends Marble credits and so only works on the laptop
+(`POST …/room-world`, ~5 min). `server/pipeline/room-world.ts` sends the video as a Marble video
+prompt and places the result over the real room:
+
+- Marble does not document a video world's frame; like an image prompt's world, its origin is
+  taken to be the first frame's camera, looking down −Z.
+- **Scale:** the phone's height above the LiDAR floor at the first frame ÷ the world camera's
+  height above its splat ground (`calibrate-ground.ts`); outside ×0.4–2.5 Marble's scale is kept
+  and marked unscaled.
+- **Floor:** that splat ground is y = 0. **Placement:** `WorldAsset.roomAlign` turns the world by
+  the first frame's heading and shifts it to where the phone stood, so the scene frame is the scan's
+  own walking frame; the world's `startCamera` is the scan's Recentre point at standing height.
+- The app keeps the scan's Recentre map; in a scene built from its scan it restores that map
+  instead of re-centring (Recentre does the same), so walking moves you through the generated room
+  1:1 with the real one. This needs the same app session as the scan (ARKit's world resets when
+  the app restarts; re-centre by hand then).
+
+The previous world is kept as `scene-<n>/world.prev-<k>/`; actors keep their planned marks, which
+may fall outside a small room (drag them, or "move Leo closer").
+
 ## Controls
 
 **Laptop**

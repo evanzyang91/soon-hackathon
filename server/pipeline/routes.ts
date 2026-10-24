@@ -7,6 +7,7 @@ import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
 import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
+import { handleRoomRequest, roomRoute } from './room-routes.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -118,6 +119,8 @@ export function createPipelineHandler(
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
     // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
     if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
+    // PUT room-capture(/video) from the iPhone app; POST room-world builds the set (paid)
+    if (roomRoute(parts)) return handleRoomRequest(req, res, parts, getStore());
     const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';
     if (parts.length > 4 && !rebuild) return false;
     if (parts.length === 4 && parts[3] !== 'retry') return false;

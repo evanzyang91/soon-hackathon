@@ -261,6 +261,13 @@ map the camera gets, so the outline is in the pose `offset` frame. The app sends
 (cached per room for laptops that join later), to its own page (wall warning), again after every
 Recentre or camera switch, and again when the relay reconnects.
 
+The scan also records the camera feed (`ScanRecorder`: `ARFrame.capturedImage` → H.264 .mp4,
+≤ 30 s, 30 fps) and the first frame's camera in the scan's frame (`RoomCapture.start`). On Done
+both go to the open scene (`PUT …/room-capture/video`, then `PUT …/room-capture`), retried when a
+scene opens if none was. The scan's Recentre map (`PoseTracker.frame`) is kept; when the open
+scene's manifest says `world.source: "room-scan"` the app `adopt`s it instead of re-centring, so
+the generated room lines up with the real one.
+
 ## Debugging
 
 - Tap the tracking badge for the in-app debug overlay (JSON).

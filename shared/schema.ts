@@ -176,6 +176,20 @@ export const WorldAsset = z.object({
    * actors stand on the visible ground. Absent = 0.
    */
   floorOffsetMeters: z.number().optional(),
+  /** Where the world came from: a prompt (default) or the director's scanned room (Marble video). */
+  source: z.enum(['generated', 'room-scan']).optional(),
+  /**
+   * room-scan worlds: a rigid placement applied after the metric transform (turn about +Y by
+   * `yaw`, then shift by x / z metres) so the scene frame is the scan's pose `offset` frame and
+   * the generated room sits exactly over the real one (server/pipeline/room-world.ts).
+   */
+  roomAlign: z.object({ yaw: z.number(), x: z.number(), z: z.number() }).optional(),
+  /**
+   * The camera this world wants the scene to start from (a scanned room: the scan's Recentre
+   * point at standing height, so a phone that restores the scan's frame walks the room 1:1).
+   * Absent: the default start camera.
+   */
+  startCamera: z.object({ position: Vec3, quaternion: Quat, fovDeg: z.number() }).optional(),
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 

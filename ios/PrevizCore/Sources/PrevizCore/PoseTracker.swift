@@ -89,6 +89,23 @@ public struct TrackedPose: Sendable, Equatable {
   }
 }
 
+/// One Recentre map: ARKit world → the pose `offset` frame. A room scan keeps the map it was made
+/// in, so a later scene built from that scan can put the phone back in exactly that frame.
+public struct SceneFrame: Sendable, Equatable {
+  public var recentreYaw: Double
+  public var origin: SIMD3<Double>
+
+  public init(recentreYaw: Double, origin: SIMD3<Double>) {
+    self.recentreYaw = recentreYaw
+    self.origin = origin
+  }
+
+  /// An ARKit world point in this frame.
+  public func toScene(_ p: SIMD3<Double>) -> SIMD3<Double> {
+    PoseMath.yawQuaternion(recentreYaw).act(p - origin)
+  }
+}
+
 public struct PoseTracker: Sendable {
   /// ψ: yaw added to ARKit's heading (radians).
   public private(set) var recentreYaw: Double = 0
@@ -113,7 +130,19 @@ public struct PoseTracker: Sendable {
   /// An ARKit world point in the pose `offset` frame (the same rigid map the camera gets), so
   /// things measured in the real room (the scanned floor) line up with where the phone walks.
   public func toScene(_ p: SIMD3<Double>) -> SIMD3<Double> {
-    PoseMath.yawQuaternion(recentreYaw).act(p - origin)
+    frame.toScene(p)
+  }
+
+  /// The current Recentre map.
+  public var frame: SceneFrame { SceneFrame(recentreYaw: recentreYaw, origin: origin) }
+
+  /// Use a saved map instead of re-centring (a scanned-room scene: walk the room 1:1). Any pending
+  /// Recentre is dropped; ARKit's world must be the one the map was made in (same session).
+  public mutating func adopt(_ f: SceneFrame) {
+    recentreYaw = f.recentreYaw
+    origin = f.origin
+    pendingRecentre = nil
+    recentres += 1
   }
 
   public mutating func update(_ sample: CameraSample, orientation: InterfaceOrientation) -> TrackedPose {

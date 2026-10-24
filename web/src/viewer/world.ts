@@ -218,9 +218,10 @@ class LoadedScene implements SceneRuntime {
 
     const t = worldTransform(world);
     this.worldRoot.name = 'world';
-    this.worldRoot.rotation.x = t.rotationX;
+    this.worldRoot.rotation.order = 'YXZ'; // room alignment turns the flipped world about +Y
+    this.worldRoot.rotation.set(t.rotationX, t.rotationY, 0);
     this.worldRoot.scale.setScalar(t.scale);
-    this.worldRoot.position.y = t.positionY;
+    this.worldRoot.position.set(t.positionX, t.positionY, t.positionZ);
     this.scene.add(this.worldRoot);
 
     this.grid = new THREE.GridHelper(30, 30, 0x8ab4d8, 0x56606b);

@@ -16,6 +16,7 @@
 		873E24A768328E0FF41D7DB0 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE9F61755F35A67D7F73DBC9 /* QRScanner.swift */; };
 		BF9132109B8AD943F431143A /* PrevizCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2291206424D821F6CB3ADA0E /* PrevizCore */; };
 		D03968D42F66AFA6E05741B9 /* StageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772D69DE0B7A35A55B73CED8 /* StageView.swift */; };
+		5CA7A3E1B2D94F0A8C6E1F21 /* ScanRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA7A3E1B2D94F0A8C6E1F22 /* ScanRecorder.swift */; };
 		E651F6CF5AC780F59A76D583 /* RelayConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EDC4F8D910C6242F6FBEF30 /* RelayConnection.swift */; };
 		EB2430CDF2CD6689078A2030 /* ARTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D13F81559A61DB8979362DAC /* ARTracker.swift */; };
 /* End PBXBuildFile section */
@@ -28,6 +29,7 @@
 		6BAAA6EAC1944C20BDEF5FF4 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		6C9A5E7DF04674F5757937EC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		772D69DE0B7A35A55B73CED8 /* StageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageView.swift; sourceTree = "<group>"; };
+		5CA7A3E1B2D94F0A8C6E1F22 /* ScanRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanRecorder.swift; sourceTree = "<group>"; };
 		961FCCBABD0B5FEB3832AE2E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A186DB6587E139FA3F57B9A3 /* DevTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevTrust.swift; sourceTree = "<group>"; };
 		A6CEAC06064CC7634F7BD14F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -86,6 +88,7 @@
 				AE9F61755F35A67D7F73DBC9 /* QRScanner.swift */,
 				1EDC4F8D910C6242F6FBEF30 /* RelayConnection.swift */,
 				772D69DE0B7A35A55B73CED8 /* StageView.swift */,
+				5CA7A3E1B2D94F0A8C6E1F22 /* ScanRecorder.swift */,
 				15B4F56BDD20FDE2F0116CAB /* WebStage.swift */,
 			);
 			path = Sources;
@@ -193,6 +196,7 @@
 				873E24A768328E0FF41D7DB0 /* QRScanner.swift in Sources */,
 				E651F6CF5AC780F59A76D583 /* RelayConnection.swift in Sources */,
 				D03968D42F66AFA6E05741B9 /* StageView.swift in Sources */,
+				5CA7A3E1B2D94F0A8C6E1F21 /* ScanRecorder.swift in Sources */,
 				5465A1CEBE92FD0AA079A543 /* WebStage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

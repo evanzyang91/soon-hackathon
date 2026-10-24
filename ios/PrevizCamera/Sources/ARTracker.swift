@@ -20,6 +20,9 @@ struct FrameData {
 final class ARTracker: NSObject, ARSessionDelegate {
   let session = ARSession()
   var onFrame: ((FrameData) -> Void)?
+  /// While set (a room scan is recording): every frame's camera image, its time and the camera
+  /// transform. The pixel buffer is only valid during the call.
+  var onCapturedImage: ((CVPixelBuffer, Double, simd_float4x4) -> Void)?
   var onError: ((String) -> Void)?
   /// Frames stopped (another app took the camera, Split View, …) or resumed.
   var onInterrupted: ((Bool) -> Void)?
@@ -115,6 +118,7 @@ final class ARTracker: NSObject, ARSessionDelegate {
     if frameCount % 30 == 0, sample.quality.isGood, ui != .unknown, size.width > 0, size.height > 0 {
       check = crossCheck(camera, ui: ui, size: size, sample: sample, intrinsics: intrinsics)
     }
+    onCapturedImage?(frame.capturedImage, frame.timestamp, camera.transform)
     onFrame?(FrameData(sample: sample, intrinsics: intrinsics, orientation: lastOrientation, check: check))
   }
 
