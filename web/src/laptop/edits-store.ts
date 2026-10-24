@@ -22,6 +22,8 @@ export class EditsStore implements ManipEdits {
   adopting = false;
   private preview_: { base: SceneEdits; doc: SceneEdits; fn: Fn } | null = null;
   private readonly server = new WeakMap<SceneRuntime, SceneEdits>();
+  /** Documents this store made itself (previews, optimistic commits): never a server revision. */
+  private readonly locals = new WeakSet<SceneEdits>();
   private chain: Promise<unknown> = Promise.resolve();
   private pending = 0;
 
@@ -46,8 +48,10 @@ export class EditsStore implements ManipEdits {
   preview(fn: Fn) {
     const rt = this.rt;
     if (!rt) return;
+    this.noteShown(rt);
     const base = this.base() ?? emptySceneEdits();
     this.preview_ = { base, doc: fn(base), fn };
+    this.locals.add(this.preview_.doc);
     rt.edits = this.preview_.doc;
   }
 
@@ -63,8 +67,10 @@ export class EditsStore implements ManipEdits {
     const id = this.director.projectId;
     const n = this.director.sceneIndex;
     if (!rt) return Promise.resolve(false);
+    this.noteShown(rt);
     // optimistic: the change shows now, the save follows
     const local = fn(this.base() ?? emptySceneEdits());
+    this.locals.add(local);
     this.preview_ = null;
     rt.edits = local;
     if (id == null || n == null) return Promise.resolve(false);
@@ -85,6 +91,7 @@ export class EditsStore implements ManipEdits {
     } catch {
       // the look saves on its own schedule; ours still goes through
     }
+    this.noteShown(rt);
     let doc = this.server.get(rt) ?? (await fetchEdits(id, n));
     for (let attempt = 0; attempt < 4; attempt++) {
       const r = await putEdits(id, n, fn(doc));
@@ -112,8 +119,18 @@ export class EditsStore implements ManipEdits {
     }
     if (p && this.preview_ === p) {
       this.preview_ = { base: doc, doc: p.fn(doc), fn: p.fn };
+      this.locals.add(this.preview_.doc);
       rt.edits = this.preview_.doc;
     }
+  }
+
+  /**
+   * The look session puts each document it saved into rt.edits (not through adoptEdits): when the
+   * scene shows a document this store did not make, it is the newest stored one (spares a 409).
+   */
+  private noteShown(rt: SceneRuntime) {
+    const shown = rt.edits;
+    if (shown && !this.locals.has(shown)) this.noteServer(rt, shown);
   }
 
   /** Another writer's document (the look session, the Edit tab) is the newest one we know. */
