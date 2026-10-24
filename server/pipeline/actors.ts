@@ -19,6 +19,15 @@
 //      (sequence.json `rig` -> rig.json, rig-splats.bin, motion-library.json, motion-clips.bin)
 //      in the same directory; the viewer prefers it and falls back to the baked frames.
 // An existing valid actors/<id>/sequence is reused without any network call.
+//
+// A director's photo (Character.referenceImage, an upload from the project chat) replaces step 1:
+//   the upload is copied to actors/<id>/reference-source.<ext> and normalised into reference.png
+//   with OpenAI `images/edits` (gpt-image-1.5, input_fidelity high, PHOTO_PROMPT, 1024x1536): the
+//   same person standing full-body and front-facing on a plain background. Without an OpenAI key
+//   (or in MOCK) the photo itself stands in (letterboxed to a portrait PNG; the worker's rembg
+//   cuts the person out). actors/<id>/reference.json records which photo (sha256) reference.png
+//   came from, and <build dir>/build-source.json which reference a sequence / Modal receipt was
+//   built from, so a new photo never reuses or recovers the previous person's build.
 // MOCK, missing keys, or ANY failure -> the free offline fallback
 //   { kind: 'glb-humanoid', glb: 'procedural:mannequin', clips, tint }
 // Outside MOCK the fallback is marked `fallback: true`, so project.ts rebuilds it (once keys and
@@ -27,12 +36,15 @@
 // scheme is deliberate: an empty string would be rewritten into a directory path by
 // project.ts `toProjectUrl`, a URL scheme is passed through untouched.
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ActorAsset, ActorDetail, Character } from '../../shared/schema.ts';
 import { env } from '../env.ts';
-import { exists } from './fsutil.ts';
+import { exists, readJson, writeFileAtomic, writeJsonAtomic } from './fsutil.ts';
+import { IMAGE_EDIT_MODELS, openaiImageEdit } from './openai-image.ts';
+import { PHOTO_EXT, PHOTO_MIME, photoToPng, portraitPng, readPhoto, type Photo } from './photo.ts';
+import { isPng } from './reprompt/png.ts';
 import { measurePly, parseGaussianPly, validateSequence } from '../../shared/actor-sequence.ts';
 import { tintFor } from '../../shared/tint.ts';
 
@@ -84,6 +96,39 @@ export function referencePrompt(character: Character): string {
   ].join(' ');
 }
 
+/** images/edits instruction for a director's photo (the photo is the input image). */
+export const PHOTO_PROMPT =
+  'the same person, full-body photograph standing upright, front-facing, arms slightly away from the body, ' +
+  'whole body from head to shoes with margin, neutral expression, plain light-grey seamless studio background, ' +
+  'soft even lighting, photoreal; keep the face, hair, build and clothing exactly';
+
+/** actors/<id>/reference.json: what reference.png was made from. */
+export const REFERENCE_FILE = 'reference.json';
+/** <build dir>/build-source.json: which reference the sequence / Modal receipt there belongs to. */
+export const BUILD_SOURCE_FILE = 'build-source.json';
+
+export interface ReferenceRecord {
+  schema: 'previz.actor-reference/1';
+  from: 'photo' | 'description';
+  /** photo: the plan's upload, its sha256, and the copy kept next to the build */
+  source?: string;
+  sourceSha256?: string;
+  copy?: string;
+  /** 'openai-edit' = normalised, 'as-is' = the photo itself (no OpenAI key / MOCK), 'generated' */
+  method: 'openai-edit' | 'as-is' | 'generated';
+  model?: string;
+  createdAt: string;
+}
+
+/** sha256 of the character's photo as it is on disk now; undefined without one (or if it is gone). */
+export async function photoSha(projectDir: string, character: Character): Promise<string | undefined> {
+  if (!character.referenceImage) return undefined;
+  return readPhoto(projectDir, character.referenceImage).then(
+    (p) => p.sha256,
+    () => undefined,
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Decision logic (pure, unit tested)
 // ---------------------------------------------------------------------------------------------
@@ -100,13 +145,22 @@ export interface ActorState {
   hasReference: boolean;
   sequenceValid: boolean;
   receipt?: ReceiptState;
+  /** The character has a director's photo: a reference can always be made from it. */
+  photo?: boolean;
 }
 
 export type ActorPlan =
   | { action: 'fallback'; reason: string }
   | { action: 'cached' }
   | { action: 'recover' }
-  | { action: 'run'; needsReference: boolean };
+  /** fromPhoto: the reference is the director's photo, normalised (else generated from the description) */
+  | { action: 'run'; needsReference: boolean; fromPhoto?: true };
+
+const runPlan = (s: ActorState): ActorPlan => ({
+  action: 'run',
+  needsReference: !s.hasReference,
+  ...(s.photo ? { fromPhoto: true as const } : {}),
+});
 
 export function planActor(s: ActorState): ActorPlan {
   if (s.mock) return { action: 'fallback', reason: 'MOCK' };
@@ -119,11 +173,11 @@ export function planActor(s: ActorState): ActorPlan {
         action: 'fallback',
         reason: `previous LHM run ended ${s.receipt.resultStatus}; delete recovery-receipt.json to retry`,
       };
-    if (s.receipt.status === 'prepared') return { action: 'run', needsReference: !s.hasReference };
+    if (s.receipt.status === 'prepared') return runPlan(s);
     return { action: 'recover' };
   }
-  if (!s.hasReference && !s.hasOpenAI) return { action: 'fallback', reason: 'no reference image and no OpenAI key' };
-  return { action: 'run', needsReference: !s.hasReference };
+  if (!s.hasReference && !s.hasOpenAI && !s.photo) return { action: 'fallback', reason: 'no reference image and no OpenAI key' };
+  return runPlan(s);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -136,9 +190,13 @@ export interface WorkerResult {
   result?: Record<string, unknown> & { error?: string; running?: boolean };
 }
 
+export type PhotoInput = { bytes: Buffer; mime: (typeof PHOTO_MIME)[keyof typeof PHOTO_MIME] };
+
 export interface ActorDeps {
   keys: { openai: string; modalTokenId: string; modalTokenSecret: string };
   generateReference(prompt: string, out: string, log: (m: string) => void): Promise<void>;
+  /** A director's photo -> the LHM-ready full-body reference PNG at `out` (OpenAI images/edits). */
+  normalisePhoto(photo: PhotoInput, out: string, log: (m: string) => void): Promise<{ model: string }>;
   runWorker(args: string[], log: (m: string) => void): Promise<WorkerResult>;
   pollSeconds: number;
   timeoutMs: number;
@@ -180,6 +238,24 @@ async function openaiReference(prompt: string, out: string, log: (m: string) => 
     return;
   }
   throw new Error(lastError || 'no image model configured');
+}
+
+async function openaiNormalisePhoto(
+  photo: PhotoInput,
+  out: string,
+  log: (m: string) => void,
+): Promise<{ model: string }> {
+  const { png, model } = await openaiImageEdit({
+    image: photo.bytes,
+    mime: photo.mime,
+    prompt: PHOTO_PROMPT,
+    size: '1024x1536',
+    quality: process.env.ACTOR_IMAGE_QUALITY ?? 'medium',
+    log,
+  });
+  if (!isPng(png)) throw new Error(`OpenAI image edit (${model}) did not return a PNG`);
+  await writeFileAtomic(out, png);
+  return { model };
 }
 
 function pythonBin(): string {
@@ -240,6 +316,7 @@ async function runActorCli(args: string[], log: (m: string) => void, timeoutMs: 
 const defaultDeps = (): ActorDeps => ({
   keys: env.keys,
   generateReference: openaiReference,
+  normalisePhoto: openaiNormalisePhoto,
   runWorker: (args, log) => runActorCli(args, log, Number(process.env.ACTOR_TIMEOUT_MS ?? 45 * 60_000)),
   pollSeconds: 30,
   timeoutMs: Number(process.env.ACTOR_TIMEOUT_MS ?? 45 * 60_000),
@@ -309,14 +386,38 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
   const withDetail = (a: Extract<ActorAsset, { kind: 'splat-sequence' }>): ActorAsset =>
     detail === 'standard' ? a : { ...a, detail };
   try {
-    const cached = opts.mock ? null : await sequenceAsset(character, projectDir, sequenceDir);
+    const baseDir = actorDirFor(projectDir, character.id);
+    const photo = character.referenceImage
+      ? await readPhoto(projectDir, character.referenceImage).catch((e: Error) => {
+          log(`${e.message}; building from the description`);
+          return null;
+        })
+      : null;
+    const hasOpenAI = !!deps.keys.openai && !opts.mock;
+    let ref = await readJson<ReferenceRecord>(join(baseDir, REFERENCE_FILE)).catch(() => undefined);
+    if (photo) ref = await preparePhoto(photo, baseDir, ref, log);
+    const hasReference =
+      (await exists(referencePath)) &&
+      (photo
+        ? ref?.sourceSha256 === photo.sha256 && (ref.method === 'openai-edit' || !hasOpenAI)
+        : ref?.from !== 'photo');
+    // a sequence or Modal receipt made from another reference (an earlier photo, or the generated
+    // one before the director's photo) is another person: never reused, never recovered
+    const source = await readJson<{ referenceSha256?: string | null }>(join(actorDir, BUILD_SOURCE_FILE)).catch(() => undefined);
+    const sameSource = (source?.referenceSha256 ?? null) === (photo?.sha256 ?? null);
+    if (!sameSource && !opts.mock && (await exists(receiptPath))) {
+      await rename(receiptPath, `${receiptPath}.${Date.now()}.stale`);
+      log('the previous build used another reference image; starting a new one');
+    }
+    const cached = opts.mock || !sameSource ? null : await sequenceAsset(character, projectDir, sequenceDir);
     const plan = planActor({
       mock: opts.mock,
       hasModal: !!(deps.keys.modalTokenId && deps.keys.modalTokenSecret),
-      hasOpenAI: !!deps.keys.openai,
-      hasReference: await exists(referencePath),
+      hasOpenAI,
+      hasReference,
       sequenceValid: !!cached,
-      receipt: await readReceipt(receiptPath),
+      receipt: sameSource ? await readReceipt(receiptPath) : undefined,
+      photo: !!photo,
     });
     if (plan.action === 'fallback') return fallback(plan.reason);
     if (plan.action === 'cached') {
@@ -328,10 +429,26 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
     if (plan.action === 'run') {
       // a receipt that never reached Modal ('prepared') is stale: keep it, but out of the way
       if (await exists(receiptPath)) await rename(receiptPath, `${receiptPath}.${Date.now()}.stale`);
-      if (plan.needsReference) {
+      if (plan.needsReference && plan.fromPhoto && photo) {
+        await normaliseReference(photo, baseDir, hasOpenAI, deps, log);
+      } else if (plan.needsReference) {
         log(`generating reference image (${IMAGE_MODELS.join(' -> ')}, 1024x1536)`);
+        await keepAside(baseDir, ref);
         await deps.generateReference(referencePrompt(character), referencePath, log);
+        await writeJsonAtomic(join(baseDir, REFERENCE_FILE), {
+          schema: 'previz.actor-reference/1',
+          from: 'description',
+          method: 'generated',
+          createdAt: new Date().toISOString(),
+        } satisfies ReferenceRecord);
       }
+      // written before the Modal call, so an interrupted run's receipt is attributable too
+      await writeJsonAtomic(join(actorDir, BUILD_SOURCE_FILE), {
+        referenceSha256: photo?.sha256 ?? null,
+        ...(photo ? { photo: photo.file } : {}),
+        detail,
+        startedAt: new Date().toISOString(),
+      });
       log(
         detail === 'high'
           ? 'running LHM-1B + fine-tune on Modal (L4), about 5 minutes'
@@ -351,10 +468,113 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
     const asset = await sequenceAsset(character, projectDir, sequenceDir);
     if (!asset) return fallback('worker reported success but the sequence is invalid');
     const cost = outcome.result?.estimatedComputeUSD;
-    log(`LHM avatar ready: ${asset.sequenceDir} @ ${asset.fps} fps${typeof cost === 'number' ? ` (~$${cost.toFixed(3)} GPU)` : ''}`);
+    log(
+      `LHM avatar ready: ${asset.sequenceDir} @ ${asset.fps} fps${typeof cost === 'number' ? ` (~$${cost.toFixed(3)} GPU)` : ''}${photo ? ' — built from your photo' : ''}`,
+    );
     return withDetail(asset);
   } catch (err) {
     if (err instanceof ActorBuildError) throw err;
     return fallback(err instanceof Error ? err.message : String(err));
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Director's photo -> reference.png
+// ---------------------------------------------------------------------------------------------
+
+/** A reference.png made from something else is renamed, not overwritten (never delete a build input). */
+async function keepAside(baseDir: string, ref: ReferenceRecord | undefined): Promise<void> {
+  const current = join(baseDir, 'reference.png');
+  if (!(await exists(current))) return;
+  const tag = ref?.sourceSha256?.slice(0, 12) ?? ref?.from ?? 'previous';
+  let dest = join(baseDir, `reference.${tag}.png`);
+  for (let k = 2; await exists(dest); k++) dest = join(baseDir, `reference.${tag}-${k}.png`);
+  await rename(current, dest);
+}
+
+/**
+ * The photo itself as an LHM-ready PNG (no OpenAI key, MOCK, or until the normalisation runs):
+ * converted to PNG when it is a JPEG / WebP, letterboxed to a portrait. Throws when this machine
+ * cannot convert it.
+ */
+async function photoAsIs(photo: Photo, out: string, log: (m: string) => void): Promise<string> {
+  const tmp = `${out}.${process.pid}.src.png`;
+  try {
+    const how = await photoToPng(photo, tmp, log);
+    if (!how) throw new Error(`the ${photo.kind.toUpperCase()} photo needs OPENAI_API_KEY (or sips / Pillow) to become an LHM reference`);
+    await writeFileAtomic(out, portraitPng(await readFile(tmp)));
+    return how;
+  } finally {
+    await rm(tmp, { force: true });
+  }
+}
+
+/**
+ * Copies the upload next to the build (reference-source.<ext>) and, unless reference.png already
+ * comes from this photo, lets the photo itself stand in as reference.png (cheap and local: the
+ * Scene tab shows it, MOCK and key-less builds use it); a live run with an OpenAI key normalises
+ * it before LHM. Returns the reference record in effect.
+ */
+async function preparePhoto(
+  photo: Photo,
+  baseDir: string,
+  ref: ReferenceRecord | undefined,
+  log: (m: string) => void,
+): Promise<ReferenceRecord | undefined> {
+  await mkdir(baseDir, { recursive: true });
+  const copy = `reference-source.${PHOTO_EXT[photo.kind]}`;
+  if (ref?.sourceSha256 !== photo.sha256 || !(await exists(join(baseDir, copy))))
+    await writeFileAtomic(join(baseDir, copy), photo.bytes);
+  if (ref?.sourceSha256 === photo.sha256 && (await exists(join(baseDir, 'reference.png')))) return ref;
+  try {
+    await keepAside(baseDir, ref);
+    const how = await photoAsIs(photo, join(baseDir, 'reference.png'), log);
+    const next: ReferenceRecord = {
+      schema: 'previz.actor-reference/1',
+      from: 'photo',
+      source: photo.file,
+      sourceSha256: photo.sha256,
+      copy,
+      method: 'as-is',
+      createdAt: new Date().toISOString(),
+    };
+    await writeJsonAtomic(join(baseDir, REFERENCE_FILE), next);
+    log(`your photo ${photo.file} copied to ${copy} (${how}); it stands in as reference.png until normalised`);
+    return next;
+  } catch (e) {
+    log(`your photo could not stand in as reference.png: ${(e as Error).message}`);
+    return ref;
+  }
+}
+
+/** The run's reference: the photo normalised with images/edits, or the photo itself without a key. */
+async function normaliseReference(
+  photo: Photo,
+  baseDir: string,
+  hasOpenAI: boolean,
+  deps: ActorDeps,
+  log: (m: string) => void,
+): Promise<void> {
+  const out = join(baseDir, 'reference.png');
+  const record = (method: ReferenceRecord['method'], model?: string): ReferenceRecord => ({
+    schema: 'previz.actor-reference/1',
+    from: 'photo',
+    source: photo.file,
+    sourceSha256: photo.sha256,
+    copy: `reference-source.${PHOTO_EXT[photo.kind]}`,
+    method,
+    ...(model ? { model } : {}),
+    createdAt: new Date().toISOString(),
+  });
+  if (!hasOpenAI) {
+    const how = await photoAsIs(photo, out, log);
+    await writeJsonAtomic(join(baseDir, REFERENCE_FILE), record('as-is'));
+    log(`using your photo as it is (${how}; OPENAI_API_KEY not set, so it is not normalised)`);
+    return;
+  }
+  log(`normalising your photo with OpenAI images/edits (${IMAGE_EDIT_MODELS.join(' -> ')}, input_fidelity high, 1024x1536)`);
+  const t0 = Date.now();
+  const { model } = await deps.normalisePhoto({ bytes: photo.bytes, mime: PHOTO_MIME[photo.kind] }, out, log);
+  await writeJsonAtomic(join(baseDir, REFERENCE_FILE), record('openai-edit', model));
+  log(`your photo normalised into reference.png via ${model} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
