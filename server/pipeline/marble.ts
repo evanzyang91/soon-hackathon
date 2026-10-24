@@ -331,6 +331,10 @@ class MarbleRun {
     let lastNote = '';
     let lastLogAt = 0;
     let errors = 0;
+    let firstErrorAt = 0;
+    // The operation is already paid for, so a laptop losing Wi-Fi for a while must not fail it:
+    // keep retrying transient errors until they have persisted this long.
+    const TRANSIENT_BUDGET_MS = 15 * 60_000;
     this.log(`polling operation ${id} every ${Math.round(this.interval / 1000)} s`);
     for (;;) {
       let op: {
@@ -342,13 +346,20 @@ class MarbleRun {
       try {
         op = await this.api('GET', `/marble/v1/operations/${encodeURIComponent(id)}`);
         errors = 0;
+        firstErrorAt = 0;
       } catch (e) {
         const err = e as MarbleError;
         const transient =
           err.kind === 'network' ||
           (err.kind === 'http' && ((err.status ?? 0) >= 500 || err.status === 429));
-        if (!transient || ++errors >= 6) throw err;
-        this.log(`${err.message}; retrying (${errors}/5)`);
+        if (!transient) throw err;
+        firstErrorAt ||= Date.now();
+        const down = Date.now() - firstErrorAt;
+        if (down >= TRANSIENT_BUDGET_MS) throw err;
+        errors += 1;
+        this.log(
+          `${err.message}; retrying (${errors}, ${Math.round(down / 1000)} s of ${TRANSIENT_BUDGET_MS / 60_000} min)`,
+        );
         await this.sleep(this.interval);
         continue;
       }
