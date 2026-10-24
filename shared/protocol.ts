@@ -18,6 +18,8 @@ export const PhonePose = z.object({
   type: z.literal('pose'),
   /** Stamped by the relay (never trusted from the client) so a laptop can tell phones apart. */
   phoneId: z.string().optional(),
+  /** Where the pose comes from: browser sensors (default) or the native ARKit app (true 6DoF). */
+  source: z.enum(['browser', 'arkit']).optional(),
   /** performance.now()-style monotonic ms on the phone. */
   t: z.number(),
   /** Orientation of the phone camera in the world frame (after re-center). */
@@ -50,6 +52,13 @@ export const SceneState = z.object({
   activeCameraId: z.string().nullable(),
   /** Dialogue line currently being spoken, if any. */
   speakingLineId: z.string().nullable(),
+  /**
+   * Look + edits revision of `scene-<n>/edits.json`; the phone re-fetches that file when it
+   * changes so it renders the director's grade, lights and edits. Absent = defaults.
+   */
+  editsRevision: z.number().int().nonnegative().optional(),
+  /** Live look while the director drags a slider (sent at ≤ 10 Hz; the file is the truth). */
+  look: z.record(z.string(), z.unknown()).optional(),
 });
 export type SceneState = z.infer<typeof SceneState>;
 
