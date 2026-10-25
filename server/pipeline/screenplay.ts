@@ -49,22 +49,25 @@ type Point = z.infer<typeof Point>;
 
 // The SDK's schema transform turns an enum into a description (it is not enforced), so names come
 // back as text and draftToPlan checks them: an unknown preset derives the look from the heading, an
-// unknown prop kind becomes generic, an unknown LUT is dropped, all with a note instead of a failed
-// plan. Adjustments are nullable (null = the preset's value) and unbounded here for the same
-// reason: draftToPlan clamps them.
+// unknown prop kind becomes generic, an unknown adjustment or LUT is dropped, all with a note
+// instead of a failed plan. Adjustments are a list of only what the scene changes, not one
+// nullable field each: nine nullable fields per scene made the structured-output grammar too large
+// for the API (400 "compiled grammar is too large"). Ranges are not enforced either: draftToPlan
+// clamps.
 const oneOf = (names: readonly string[]) => `one of: ${names.join(', ')}`;
+const LOOK_ADJUST = ['exposure', 'temperature', 'saturation', 'contrast', 'bloom', 'vignette', 'fog', 'skyTint', 'lut'] as const;
 const DraftLook = z.object({
   preset: z.string().describe(oneOf(LookPresetName.options)),
   mood: z.string().describe('2-4 mood words for the look name, e.g. "cold, eerie, damp stone"'),
-  exposure: z.number().nullable(),
-  temperature: z.number().nullable(),
-  saturation: z.number().nullable(),
-  contrast: z.number().nullable(),
-  bloom: z.number().nullable(),
-  vignette: z.number().nullable(),
-  fog: z.object({ color: z.string(), density: z.number() }).nullable(),
-  skyTint: z.object({ color: z.string(), strength: z.number() }).nullable(),
-  lut: z.string().nullable().describe(`null, or ${oneOf(LutPreset.options)}`),
+  adjust: z
+    .array(
+      z.object({
+        name: z.string().describe(oneOf(LOOK_ADJUST)),
+        value: z.number().describe('the new value (fog: density, skyTint: strength, lut: 0)'),
+        text: z.string().describe(`fog / skyTint: "#rrggbb"; lut: ${oneOf(LutPreset.options)}; else ""`),
+      }),
+    )
+    .describe('only what this scene changes from the preset; usually [] or 1-3 entries'),
 });
 type DraftLook = z.infer<typeof DraftLook>;
 
@@ -187,7 +190,7 @@ Look (per scene: the grade the scene opens with)
   period-warm: gilded historical interior, gentle warm light
   dreamlike: dream, memory, vision
 - "mood": 2-4 words for the look's name ("cold, eerie, damp stone"), at most 60 characters.
-- Adjustments only where this scene differs from the preset, else null: exposure in stops (-1 to 1), temperature (-1 cool to 1 warm), saturation and contrast (1 neutral, 0.5-1.5), bloom and vignette (0-1), fog {color "#rrggbb", density 0-0.4}, skyTint {color "#rrggbb", strength 0-1}, lut.
+- "adjust" lists only what this scene changes from the preset (usually nothing or 1-3 entries): exposure in stops (-1 to 1), temperature (-1 cool to 1 warm), saturation and contrast (1 neutral, 0.5-1.5), bloom and vignette (0-1), fog (value = density 0-0.4, text = colour "#rrggbb"), skyTint (value = strength 0-1, text = colour), lut (text = the LUT name).
 
 Shots
 - 2-3 camera setups that would cover the scene (for example a wide master, a two-shot, an over-the-shoulder or a close-up). "position" is the camera location (eye height 1.5-1.7 m unless motivated otherwise) and "lookAt" is the point it aims at (usually a character's head, y about 1.6). fovDeg between 25 and 70.
@@ -378,36 +381,28 @@ function draftLook(d: DraftLook, fallback: () => LookSeed, where: string, notes:
     return { ...fallback(), ...(d.mood.trim() ? { mood: clip(d.mood, 60) } : {}) };
   }
   const seed: Record<string, unknown> = { preset: preset.data, mood: clip(d.mood, 60) };
-  for (const k of Object.keys(LOOK_RANGE) as (keyof typeof LOOK_RANGE)[]) {
-    const v = d[k];
-    if (v === null) continue;
-    if (!Number.isFinite(v)) {
-      notes.push(`${where}.look.${k} is not a number; dropped`);
-      continue;
+  // later entries of the same name win, like a director saying it twice
+  for (const a of d.adjust) {
+    const k = LOOK_ADJUST.find((x) => x.toLowerCase() === a.name.trim().toLowerCase().replace(/[\s_-]+/g, ''));
+    const at = `${where}.look.${k ?? a.name}`;
+    if (!k) {
+      notes.push(`${at}: not an adjustment; dropped`);
+    } else if (k === 'lut') {
+      const lut = LutPreset.safeParse(name(a.text));
+      if (lut.success) seed.lut = lut.data;
+      else notes.push(`${at} "${a.text}" is not a LUT; dropped`);
+    } else if (!Number.isFinite(a.value)) {
+      notes.push(`${at} is not a number; dropped`);
+    } else if (k === 'fog' || k === 'skyTint') {
+      const color = hexColor(a.text);
+      if (!color) notes.push(`${at} dropped (colour "${a.text}" is not #rrggbb)`);
+      else seed[k] = { color, [k === 'fog' ? 'density' : 'strength']: round3(clamp(a.value, 0, 1)) };
+    } else {
+      const [lo, hi] = LOOK_RANGE[k];
+      const c = round3(clamp(a.value, lo, hi));
+      if (c !== round3(a.value)) notes.push(`${at} ${a.value} clamped to ${c}`);
+      seed[k] = c;
     }
-    const [lo, hi] = LOOK_RANGE[k];
-    const c = round3(clamp(v, lo, hi));
-    if (c !== round3(v)) notes.push(`${where}.look.${k} ${v} clamped to ${c}`);
-    seed[k] = c;
-  }
-  for (const [k, amount] of [
-    ['fog', 'density'],
-    ['skyTint', 'strength'],
-  ] as const) {
-    const g = d[k] as { color: string; density?: number; strength?: number } | null;
-    if (!g) continue;
-    const color = hexColor(g.color);
-    const v = g[amount];
-    if (!color || typeof v !== 'number' || !Number.isFinite(v)) {
-      notes.push(`${where}.look.${k} dropped (colour "${g.color}" is not #rrggbb or no ${amount})`);
-      continue;
-    }
-    seed[k] = { color, [amount]: round3(clamp(v, 0, 1)) };
-  }
-  if (d.lut) {
-    const lut = LutPreset.safeParse(name(d.lut));
-    if (lut.success) seed.lut = lut.data;
-    else notes.push(`${where}.look.lut "${d.lut}" is not a LUT; dropped`);
   }
   const ok = LookSeed.safeParse(seed);
   if (ok.success) return ok.data;
