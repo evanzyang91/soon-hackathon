@@ -5,7 +5,8 @@
 // disk, so the laptop's look panel and the re-prompt planner (WP G) can both write safely.
 //
 // Server-side writers (WP G) use `EditsStore.update(id, n, fn)`, which re-reads, applies `fn`
-// and bumps the revision under the same lock.
+// and bumps the revision under the same lock. The manifest stage's first look (look-seed.ts) uses
+// `createIfAbsent`, which writes revision 1 only while there is no file yet.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { emptySceneEdits, SceneEdits } from '../../shared/look.ts';
@@ -72,13 +73,37 @@ export class EditsStore {
     fn: (current: SceneEdits) => SceneEdits | Promise<SceneEdits>,
   ): Promise<SceneEdits> {
     const key = this.path(projectId, sceneIndex);
-    const run = async () => {
+    return this.locked(key, async () => {
       const current = await this.read(projectId, sceneIndex);
       const next = SceneEdits.parse(await fn(structuredClone(current)));
       const saved: SceneEdits = { ...next, version: 1, revision: current.revision + 1 };
       await writeJsonAtomic(key, saved);
       return saved;
-    };
+    });
+  }
+
+  /**
+   * Writes `make()` as revision 1 only while the scene has no edits.json at all (the server's first
+   * look, look-seed.ts). Runs under the same lock as update(), so a first PUT from the laptop that
+   * lands meanwhile wins and this resolves null; an unreadable file counts as present (never
+   * overwritten).
+   */
+  createIfAbsent(
+    projectId: string,
+    sceneIndex: number,
+    make: () => SceneEdits,
+  ): Promise<SceneEdits | null> {
+    const key = this.path(projectId, sceneIndex);
+    return this.locked(key, async () => {
+      if (!(await exists(this.sceneDir(projectId, sceneIndex)))) throw new EditsNotFound('no such scene');
+      if (await exists(key)) return null;
+      const saved: SceneEdits = { ...SceneEdits.parse(make()), version: 1, revision: 1 };
+      await writeJsonAtomic(key, saved);
+      return saved;
+    });
+  }
+
+  private locked<T>(key: string, run: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
     const p = prev.then(run, run);
     const tail = p.catch(() => {});
