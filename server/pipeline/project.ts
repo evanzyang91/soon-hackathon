@@ -84,6 +84,7 @@ import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
 import { lookSeedFor, seedSceneLook, styleForPlan } from './look-seed.ts';
 import { ASSET_FILE, generateWorld, promptKey, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
+import { mockSetFromCaption, pickMockSet } from './mock-set.ts';
 import { photoToPng, readPhoto } from './photo.ts';
 import { dropRegionEdits, findGeneratedWorld, produceRegenWorld, type RegenSpec } from './reprompt/regen.ts';
 import { parseScreenplay } from './screenplay.ts';
@@ -1131,6 +1132,8 @@ export class ProjectStore {
     const outDir = join(this.sceneDir(id, idx), 'world');
     const offline = st.mock || !this.keys.marble;
     const sceneLog = this.logger(id, `[scene ${idx}] world: `);
+    // the procedural set a mock world (MOCK, no key, MARBLE_DRY_RUN) uses: one that fits the heading
+    const mockSet = pickMockSet(scene, (await this.plan(id))?.style);
     await this.setStage(id, idx, 'world', { status: 'running', note: 'queued' });
     try {
       // the director's photo of the place is the image prompt: never a library world
@@ -1145,7 +1148,7 @@ export class ProjectStore {
       const asset = await this.worldSem.use(async () => {
         await this.setStage(id, idx, 'world', {
           status: 'running',
-          note: offline ? 'copying mock world' : `generating with Marble${photo?.png ? ' from your photo' : ''} (~5 min)`,
+          note: offline ? `copying mock world (${mockSet} set)` : `generating with Marble${photo?.png ? ' from your photo' : ''} (~5 min)`,
         });
         return this.deps.generateWorld({
           prompt: scene.worldPrompt,
@@ -1153,6 +1156,7 @@ export class ProjectStore {
           outDir,
           model: this.model,
           mock: offline,
+          mockSet,
           ...(photo?.png
             ? { imagePrompt: { file: photo.png, isPano: photo.isPano, textPrompt: scene.worldPrompt } }
             : {}),
@@ -1171,14 +1175,15 @@ export class ProjectStore {
       await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
       const cal = await this.calibrateStep(st, scene, outDir, asset, sceneLog);
       const staged = await this.stageStep(st, scene, outDir, cal.asset, sceneLog);
+      const mockNote = `mock world: ${mockSetFromCaption(asset.caption) ?? mockSet} set`;
       const note =
         (asset.provider === 'marble'
           ? `marble world ${asset.worldId ?? ''}`.trim()
           : st.mock
-            ? 'mock world'
+            ? mockNote
             : offline
-              ? 'mock world (WLT_API_KEY not set)'
-              : 'mock world (MARBLE_DRY_RUN: request logged, not submitted)') +
+              ? `${mockNote} (WLT_API_KEY not set)`
+              : `${mockNote} (MARBLE_DRY_RUN: request logged, not submitted)`) +
         (photo?.png && !offline ? ' from your photo' : '') +
         (photo?.note ? ` — ${photo.note}` : '');
       await this.worldDone(st, idx, cal.asset, note + cal.note + staged);
