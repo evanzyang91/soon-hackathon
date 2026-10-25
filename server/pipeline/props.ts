@@ -347,7 +347,8 @@ export class PropJobs {
       const outcome = await this.deps.runWorker(
         ['--image', join(dir, 'reference.png'), '--out', join(dir, 'model.glb'), '--report', join(dir, 'modal-run.json')],
         (line) => {
-          const stage = /^\[prop\]\s*(.+)$/.exec(line.trim())?.[1];
+          // the wrapper's own lines and the container's (streamed through, maybe prefixed)
+          const stage = /\[prop\]\s*(.+)$/.exec(line.trim())?.[1];
           if (!stage) return;
           log(`modal: ${stage.slice(0, 200)}`);
           if (Date.now() - lastNote < 300) return;

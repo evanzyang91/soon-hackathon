@@ -200,6 +200,22 @@ export function createModelProp(model: PropModel, url: string, label = ''): Mode
   };
 }
 
+/**
+ * The model's own bounding-box height (glTF units are metres), loaded through the same cache the
+ * prop will use; null when it cannot be loaded or is empty.
+ */
+export async function modelHeight(url: string): Promise<number | null> {
+  const e = acquire(url);
+  try {
+    const { box } = await e.promise;
+    return box.isEmpty() ? null : box.getSize(new THREE.Vector3()).y;
+  } catch {
+    return null;
+  } finally {
+    release(e);
+  }
+}
+
 /** The prop for a scene element: its own model for kind 'model', else the procedural kind. */
 export function createElementProp(el: DynamicElement, resolve?: (file: string) => string): Prop {
   if (el.kind === 'model' && el.model && resolve) return createModelProp(el.model, resolve(el.model.file), el.label);

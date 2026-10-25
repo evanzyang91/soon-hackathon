@@ -1,6 +1,6 @@
 import { api } from '@shared/api';
 import type { Attachment, ChatRequest, ChatResponse, ProjectChat } from '@shared/chat';
-import type { ActorDetail, ProjectStatus, ScreenplayPlan } from '@shared/schema';
+import type { ActorDetail, ProjectStatus, PropJob, ScreenplayPlan } from '@shared/schema';
 
 export interface Health {
   ok: boolean;
@@ -96,3 +96,28 @@ export const sendChat = (id: string, req: ChatRequest) => postJson<ChatResponse>
 export const confirmChatAction = (id: string, messageId: string, actionId: string, decline = false) =>
   postJson<ChatResponse>(api.chatConfirm(id), { messageId, actionId, ...(decline ? { decline } : {}) });
 export const generateProject = (id: string) => postJson<ProjectStatus>(api.generate(id), {});
+
+// ---- props by import or by prompt (docs/PLAN-v4.md; server/pipeline/prop-upload.ts + props.ts) --
+
+/** What the uploads route answers for a .glb: `file` goes into PropModel.file. */
+export interface ModelUpload {
+  id: string;
+  kind: 'model';
+  file: string;
+  name?: string;
+  bytes: number;
+}
+
+/** A glTF binary (≤ 25 MB) → the stored model (201; the same bytes twice are one file). */
+export const uploadModel = (id: string, body: Blob, name: string) =>
+  call<ModelUpload>(`${api.uploads(id)}?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'model/gltf-binary' },
+    body,
+  });
+
+/** Starts a generation (202 PropJob); poll it with getPropJob. */
+export const generateProp = (id: string, prompt: string, sceneIndex: number) =>
+  postJson<PropJob>(api.propsGenerate(id), { prompt, sceneIndex });
+
+export const getPropJob = (id: string, jobId: string) => call<PropJob>(api.propJob(id, jobId));
