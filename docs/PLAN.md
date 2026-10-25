@@ -14,8 +14,8 @@ and speak their lines out loud so you can film a take before going on location.
 - Everything the user touches runs in a browser (laptop: Chrome; phone: iOS Safari / Android Chrome).
 - Real Marble + Modal + Claude + TTS when keys are present; a `MOCK=1` mode that exercises the
   entire pipeline with local fixtures so tests never need credits.
-- Every piece verified: vitest unit tests, Playwright e2e with two browser contexts (laptop + a
-  simulated phone with injected `deviceorientation` events), and a final verification loop.
+- Every piece verified: Playwright e2e with two browser contexts (laptop + a simulated phone with
+  injected `deviceorientation` events), rendered evidence, and a final verification loop (no unit-test files).
 
 ## Architecture
 
@@ -138,7 +138,7 @@ Claude from the action lines, rendered as a normal three.js mesh composited with
 
 ## Verification loop
 
-1. Each work package ships with vitest unit tests and runs `pnpm typecheck && pnpm test`.
+1. Each work package runs `pnpm typecheck` and proves its change with rendered evidence (no unit-test files).
 2. `pnpm e2e` (Playwright): starts the server in `MOCK=1`, creates a project from
    `fixtures/screenplay.fountain`, waits for scenes, opens the laptop page, pairs a second context
    as the phone (inject `deviceorientation`), asserts: scene renders (non-black pixels), pose
