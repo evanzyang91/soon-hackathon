@@ -438,7 +438,8 @@ export function heuristicShots(blocking: Blocking[]): SuggestedShot[] {
 // ---------------------------------------------------------------------------
 
 /** The genres the heuristics know; free-text styles (Claude's) are read back into one of them. */
-export type GenreKey = 'fantasy' | 'scifi' | 'horror' | 'western' | 'period' | 'noir' | 'contemporary';
+export type GenreKey =
+  'fantasy' | 'scifi' | 'horror' | 'western' | 'period' | 'noir' | 'contemporary';
 
 /** One style per genre: what the mock planner writes, and the chat's "make it a western". */
 export const GENRE_STYLES: Record<GenreKey, VisualStyle> = {
@@ -452,7 +453,8 @@ export const GENRE_STYLES: Record<GenreKey, VisualStyle> = {
   scifi: {
     genre: 'science fiction',
     era: 'spacefaring 22nd century',
-    worldStyle: 'Photoreal hard science-fiction film still, practical industrial set design, hard clean light',
+    worldStyle:
+      'Photoreal hard science-fiction film still, practical industrial set design, hard clean light',
     palette: 'cold steel blue, white strip light, warning orange',
   },
   horror: {
@@ -477,13 +479,15 @@ export const GENRE_STYLES: Record<GenreKey, VisualStyle> = {
   noir: {
     genre: 'film noir',
     era: '1940s American city',
-    worldStyle: 'Black-and-white film noir still, hard low-key light, venetian-blind shadows, wet streets',
+    worldStyle:
+      'Black-and-white film noir still, hard low-key light, venetian-blind shadows, wet streets',
     palette: 'inky blacks, silver highlights, cigarette smoke',
   },
   contemporary: {
     genre: 'contemporary drama',
     era: 'present day',
-    worldStyle: 'Photoreal cinematic film still, natural practical light, lived-in real-world locations',
+    worldStyle:
+      'Photoreal cinematic film still, natural practical light, lived-in real-world locations',
     palette: 'natural tones, warm practicals, cool night blues',
   },
 };
@@ -530,7 +534,8 @@ export function heuristicStyle(script: string, headings: string[] = []): VisualS
     if (n > top) [best, top] = [key, n];
   }
   const style = { ...GENRE_STYLES[best] };
-  if (best === 'period' && decade) style.era = decade[2] ? `${decade[1]}s ${decade[2]}` : `${decade[1]}s`;
+  if (best === 'period' && decade)
+    style.era = decade[2] ? `${decade[1]}s ${decade[2]}` : `${decade[1]}s`;
   return style;
 }
 
@@ -542,7 +547,11 @@ export function genreKey(style: VisualStyle | undefined): GenreKey {
   if (/western|frontier/.test(g)) return 'western';
   if (/sci-?fi|science.fiction|space|cyberpunk|futur|\b2[1-9]\d\d/.test(g)) return 'scifi';
   if (/fantasy|myth|fairy|sword|sorcery/.test(g)) return 'fantasy';
-  if (/period|histor|victorian|regency|edwardian|georgian|costume|1[5-9]\d0s|\b1[5-9]th.century/.test(g))
+  if (
+    /period|histor|victorian|regency|edwardian|georgian|costume|1[5-9]\d0s|\b1[5-9]th.century/.test(
+      g,
+    )
+  )
     return 'period';
   return 'contemporary';
 }
@@ -587,14 +596,19 @@ const FOREST_RE = /\b(forest|woods?|woodland|glade|clearing|grove|meadow|moss\w*
 const SNOW_RE = /\b(snow\w*|blizzard|sleet)\b/i;
 const STORM_RE =
   /\b(storm\w*|thunder\w*|lightning|downpour|torrential|gale|raining|pouring rain|heavy rain)\b|\brain (?:falls|lashes|pours|hammers|beats|drums|sheets)\b/i;
-const FIRE_RE = /\b(torch\w*|candle\w*|oil lamps?|lanterns?|firelight|fire ?pit|hearth|fireplace)\b/i;
+const FIRE_RE =
+  /\b(torch\w*|candle\w*|oil lamps?|lanterns?|firelight|fire ?pit|hearth|fireplace)\b/i;
 
 /**
  * A scene's look from its heading, the screenplay's style and its action (the mock planner, and
  * plans made before looks were planned): weather outside first (snow, storm), then interior or
  * exterior by time of day with the genre's own night, day and dusk.
  */
-export function heuristicLookSeed(h: ParsedHeading, style: VisualStyle | undefined, action: string): LookSeed {
+export function heuristicLookSeed(
+  h: ParsedHeading,
+  style: VisualStyle | undefined,
+  action: string,
+): LookSeed {
   const g = genreKey(style);
   const preset = ((): LookPresetName => {
     if (!h.interior && SNOW_RE.test(action)) return 'snowfall';
@@ -603,18 +617,22 @@ export function heuristicLookSeed(h: ParsedHeading, style: VisualStyle | undefin
     const late = h.timeOfDay === 'night' || h.timeOfDay === 'dusk';
     if (g === 'horror') return h.interior || late ? 'horror' : 'overcast';
     if (g === 'scifi') {
-      const city = /\b(city|street|neon|alley|downtown|megacity|market)\b/i.test(`${h.location} ${action}`);
+      const city = /\b(city|street|neon|alley|downtown|megacity|market)\b/i.test(
+        `${h.location} ${action}`,
+      );
       return h.timeOfDay === 'night' && city && !h.interior ? 'neon-noir' : 'cold-steel';
     }
     if (h.interior) {
-      if (g === 'period' && /\b(chandeliers?|ballroom|gilded|blaz\w*)\b/i.test(action)) return 'period-warm';
+      if (g === 'period' && /\b(chandeliers?|ballroom|gilded|blaz\w*)\b/i.test(action))
+        return 'period-warm';
       if (late && (g === 'fantasy' || g === 'period' || g === 'western')) return 'candlelit';
       if (g === 'period') return 'period-warm';
       if (g === 'fantasy' && FIRE_RE.test(action)) return 'candlelit';
       return 'warm-interior';
     }
     if (h.timeOfDay === 'night') return g === 'contemporary' ? 'night-street' : 'moonlit';
-    if (g === 'fantasy' && h.timeOfDay !== 'dusk' && FOREST_RE.test(`${h.location} ${action}`)) return 'enchanted';
+    if (g === 'fantasy' && h.timeOfDay !== 'dusk' && FOREST_RE.test(`${h.location} ${action}`))
+      return 'enchanted';
     if (h.timeOfDay === 'dusk') return 'golden-hour';
     if (h.timeOfDay === 'dawn')
       return /\b(grey|gray|blue|cold|chill|frost\w*)\b/i.test(action) ? 'blue-hour' : 'golden-hour';
@@ -659,19 +677,27 @@ function lighting(g: GenreKey, h: ParsedHeading): string {
   return (h.interior ? INTERIOR_LIGHTING : LIGHTING)[h.timeOfDay];
 }
 
-const SETS: Record<GenreKey, { interior: (w: string) => string; exterior: (w: string, era: string) => string }> = {
+const SETS: Record<
+  GenreKey,
+  { interior: (w: string) => string; exterior: (w: string, era: string) => string }
+> = {
   fantasy: {
-    interior: (w) => `interior of the ${w}: ancient stone walls, heavy timber beams, iron fittings, woven banners and furs`,
+    interior: (w) =>
+      `interior of the ${w}: ancient stone walls, heavy timber beams, iron fittings, woven banners and furs`,
     exterior: (w, era) =>
       `exterior ${w} in a ${era}: ancient trees, moss-covered stone, ferns and wild grass, an earthen path`,
   },
   scifi: {
-    interior: (w) => `interior of the ${w}: steel deck plates, exposed conduit, bulkheads, glowing control panels`,
-    exterior: (w) => `exterior ${w}: engineered structures, landing pads, antennas and modular habitats`,
+    interior: (w) =>
+      `interior of the ${w}: steel deck plates, exposed conduit, bulkheads, glowing control panels`,
+    exterior: (w) =>
+      `exterior ${w}: engineered structures, landing pads, antennas and modular habitats`,
   },
   horror: {
-    interior: (w) => `interior of the ${w}: stained walls, rotting wood, cobwebs, old furniture half in shadow`,
-    exterior: (w) => `exterior ${w}: dead vegetation, a sagging fence, rusted ironwork, a treeline in mist`,
+    interior: (w) =>
+      `interior of the ${w}: stained walls, rotting wood, cobwebs, old furniture half in shadow`,
+    exterior: (w) =>
+      `exterior ${w}: dead vegetation, a sagging fence, rusted ironwork, a treeline in mist`,
   },
   western: {
     interior: (w) =>
@@ -682,10 +708,12 @@ const SETS: Record<GenreKey, { interior: (w: string) => string; exterior: (w: st
   period: {
     interior: (w) =>
       `interior of the ${w}: ornate plasterwork, polished wood, brocade drapes, period furniture and candelabra`,
-    exterior: (w, era) => `exterior ${w}, ${era}: cobblestones, stone facades with tall windows, wrought-iron lamps`,
+    exterior: (w, era) =>
+      `exterior ${w}, ${era}: cobblestones, stone facades with tall windows, wrought-iron lamps`,
   },
   noir: {
-    interior: (w) => `interior of a ${w}: venetian blinds, worn wood and leather, a desk lamp, cigarette haze`,
+    interior: (w) =>
+      `interior of a ${w}: venetian blinds, worn wood and leather, a desk lamp, cigarette haze`,
     exterior: (w) => `exterior ${w}: wet brick and asphalt, fire escapes, a lone streetlamp`,
   },
   contemporary: {
@@ -695,7 +723,10 @@ const SETS: Record<GenreKey, { interior: (w: string) => string; exterior: (w: st
 };
 
 /** The mock planner's world prompt: the style's render words first, then a genre-fitting set. */
-export function heuristicWorldPrompt(h: ParsedHeading, style: VisualStyle = GENRE_STYLES.contemporary): string {
+export function heuristicWorldPrompt(
+  h: ParsedHeading,
+  style: VisualStyle = GENRE_STYLES.contemporary,
+): string {
   const g = genreKey(style);
   const where = h.location.toLowerCase();
   const set = h.interior ? SETS[g].interior(where) : SETS[g].exterior(where, style.era);
@@ -759,7 +790,10 @@ export function mockPlan(
     return id;
   };
 
-  const style = heuristicStyle(text, raw.scenes.map((s) => s.heading));
+  const style = heuristicStyle(
+    text,
+    raw.scenes.map((s) => s.heading),
+  );
   const slugs = new Set<string>();
   const scenes: ScenePlan[] = raw.scenes.map((s, index) => {
     const heading = parseHeading(s.heading);
