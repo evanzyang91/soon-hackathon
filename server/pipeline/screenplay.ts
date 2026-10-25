@@ -10,7 +10,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 import {
+  DynamicElementKind,
+  LookPresetName,
+  LookSeed,
+  LutPreset,
   ScreenplayPlan,
+  VisualStyle,
   type Blocking,
   type Character,
   type DynamicElement,
@@ -24,8 +29,11 @@ import {
   VOICE_IDS,
   countSceneHeadings,
   heuristicBlocking,
+  heuristicLookSeed,
+  heuristicStyle,
   mockPlan,
   parseFountain,
+  parseHeading,
 } from './fountain.ts';
 import { clamp, lookAtQuat, round3, slugify, uniqueSlug, yawFacing } from './geometry.ts';
 
@@ -39,8 +47,36 @@ const WORLD_PROMPT_MAX = 600;
 const Point = z.object({ x: z.number(), y: z.number(), z: z.number() });
 type Point = z.infer<typeof Point>;
 
+// The SDK's schema transform turns an enum into a description (it is not enforced), so names come
+// back as text and draftToPlan checks them: an unknown preset derives the look from the heading, an
+// unknown prop kind becomes generic, an unknown LUT is dropped, all with a note instead of a failed
+// plan. Adjustments are nullable (null = the preset's value) and unbounded here for the same
+// reason: draftToPlan clamps them.
+const oneOf = (names: readonly string[]) => `one of: ${names.join(', ')}`;
+const DraftLook = z.object({
+  preset: z.string().describe(oneOf(LookPresetName.options)),
+  mood: z.string().describe('2-4 mood words for the look name, e.g. "cold, eerie, damp stone"'),
+  exposure: z.number().nullable(),
+  temperature: z.number().nullable(),
+  saturation: z.number().nullable(),
+  contrast: z.number().nullable(),
+  bloom: z.number().nullable(),
+  vignette: z.number().nullable(),
+  fog: z.object({ color: z.string(), density: z.number() }).nullable(),
+  skyTint: z.object({ color: z.string(), strength: z.number() }).nullable(),
+  lut: z.string().nullable().describe(`null, or ${oneOf(LutPreset.options)}`),
+});
+type DraftLook = z.infer<typeof DraftLook>;
+
 const Draft = z.object({
   title: z.string(),
+  // before the scenes, so every world prompt is written in it
+  style: z.object({
+    genre: z.string(),
+    era: z.string(),
+    worldStyle: z.string().describe('render style every world prompt opens with'),
+    palette: z.string(),
+  }),
   characters: z.array(
     z.object({
       id: z.string().describe('lowercase slug of the name, e.g. "maya"; used everywhere else'),
@@ -60,6 +96,7 @@ const Draft = z.object({
       timeOfDay: z.enum(['dawn', 'day', 'dusk', 'night']),
       interior: z.boolean(),
       worldPrompt: z.string(),
+      look: DraftLook,
       characterIds: z.array(z.string()),
       dialogue: z.array(
         z.object({
@@ -78,7 +115,7 @@ const Draft = z.object({
       ),
       dynamics: z.array(
         z.object({
-          kind: z.enum(['car', 'bus', 'bicycle', 'bird', 'pedestrian', 'generic']),
+          kind: z.string().describe(oneOf(DynamicElementKind.options)),
           label: z.string(),
           path: z.array(Point),
           speed: z.number().describe('meters per second'),
@@ -102,6 +139,9 @@ type Draft = z.infer<typeof Draft>;
 
 export const SYSTEM_PROMPT = `You are a previsualization assistant. You turn a short screenplay into a structured staging plan that is used to build one walkable 3D set per scene (a gaussian-splat world generated from a text prompt), place 3D actors in it, voice their lines with text-to-speech, and suggest camera setups. Return one JSON object matching the schema.
 
+Style (decide it first: every world prompt and every character's wardrobe follow it)
+- "style" holds for the whole screenplay, a few words each. genre: "high fantasy", "hard science fiction", "folk horror", "western", "1890s period drama", "contemporary drama". era: the setting every prompt keeps ("medieval-inspired kingdom", "2140s orbital station", "present-day Chicago"). worldStyle: how every world is rendered, at most 200 characters ("Photoreal cinematic film still, soft natural light, muted earth tones"; a fantasy may be "Lush, painterly-realistic ..."). palette: "desaturated greens, cold steel, candle warmth".
+
 Scenes
 - One scene per scene heading (INT., EXT., EST., INT./EXT., I/E), in script order. Copy the heading verbatim. "action" is the scene's action/description text, verbatim, paragraphs separated by blank lines.
 - timeOfDay: dawn, day, dusk or night from the heading and action (MORNING is day unless it is explicitly early or dawn). interior: true for INT.
@@ -121,15 +161,39 @@ Blocking (world frame)
 - "facing" is the point the character looks toward: usually the other character's position, or the origin when they address no one in particular. "pose" is sitting when the action says they sit, walking when they are described as moving, otherwise standing.
 
 Dynamics
-- Things that move through the scene according to the action lines (a car driving by, a bus, cyclists, birds, joggers), never the speaking characters. kind is car, bus, bicycle, bird, pedestrian or generic.
-- Ground traffic: a straight path across the view on the ground (y = 0), 8-15 m out (z between -8 and -15), x from about -30 to 30 or the reverse. Speeds: cars about 8 m/s, buses 6, bicycles 5, pedestrians 1.4. loop true with a 2-4 s pause. Birds: a closed loop of 8-12 points, 6-12 m up, speed about 6, pause 0. scale 1 unless the script implies otherwise.
-- Only include what the script implies; an empty list is fine (interiors usually have none).
+- Things that move through the scene according to the action lines, never the speaking characters. kind: car, bus, truck, motorcycle, bicycle, pedestrian, bird, dog, horse (the label says "rider" when ridden), wagon (a horse-drawn cart or stagecoach; its horses belong to it), boat, dragon, drone, spacecraft, or generic for anything else.
+- Ground movers: a straight path across the view on the ground (y = 0), 8-15 m out (z between -8 and -15), x from about -30 to 30 or the reverse, loop true with a 2-4 s pause. Speeds in m/s: car 8, bus 6, truck 7, motorcycle 9, bicycle 5, pedestrian 1.4, dog 2.5, horse 4, wagon 2.5. Boat: straight on the water (y = 0), 20-40 m out, speed 3.
+- Fliers: bird a closed loop of 8-12 points 6-12 m up, speed 6, pause 0. Dragon a closed loop of 10-14 points 15-30 m up and 30-60 m out, speed 10, pause 0. Drone hovering 2-4 m up on a short path near the action, speed 4. Spacecraft high and far (40-80 m up, 80-150 m out; a lift-off rises from the ground), speed 15.
+- scale 1 unless the script implies otherwise. Only include what the script implies; an empty list is fine (interiors usually have none).
+
+Look (per scene: the grade the scene opens with)
+- "preset", from time of day, interior, weather and mood words in the action:
+  daylight-neutral: clear day, neutral
+  overcast: grey sky, flat soft light
+  golden-hour: low warm sun at dusk or early morning
+  blue-hour: cold twilight before sunrise or after sunset
+  storm: rain, wind, thunder outside
+  snowfall: snow falling or lying outside
+  night-street: city night under streetlights
+  warm-interior: lived-in room by lamps or window light
+  candlelit: firelight, candles, torches, oil lamps
+  moonlit: night outdoors away from city light
+  enchanted: magical forest or glade, mist, glow
+  cold-steel: spaceship, station, lab, industrial metal
+  neon-noir: neon city night, cyberpunk
+  horror: dread, darkness, decay
+  western-dust: frontier town or desert in hard sun
+  film-noir: black-and-white noir
+  period-warm: gilded historical interior, gentle warm light
+  dreamlike: dream, memory, vision
+- "mood": 2-4 words for the look's name ("cold, eerie, damp stone"), at most 60 characters.
+- Adjustments only where this scene differs from the preset, else null: exposure in stops (-1 to 1), temperature (-1 cool to 1 warm), saturation and contrast (1 neutral, 0.5-1.5), bloom and vignette (0-1), fog {color "#rrggbb", density 0-0.4}, skyTint {color "#rrggbb", strength 0-1}, lut.
 
 Shots
 - 2-3 camera setups that would cover the scene (for example a wide master, a two-shot, an over-the-shoulder or a close-up). "position" is the camera location (eye height 1.5-1.7 m unless motivated otherwise) and "lookAt" is the point it aims at (usually a character's head, y about 1.6). fovDeg between 25 and 70.
 
 World prompt
-- "worldPrompt" describes ONLY the environment of the scene, for a text-to-3D-world generator, as a rich photographic description: the space and its layout, architecture, materials and textures, props and set dressing, lighting quality and direction, time of day and weather, color palette and atmosphere. It contains no people, no characters, no animals, no vehicles, and no action or story: just the empty set as seen from where the camera stands, with open floor in the foreground where the actors will stand. At most ${WORLD_PROMPT_MAX} characters.
+- "worldPrompt" describes ONLY the environment of the scene, for a text-to-3D-world generator, in the style's register: open with the render style from worldStyle ("Photoreal cinematic film still of ...", "Lush, painterly-realistic ..."), then the set: the space and its layout, architecture, materials and textures true to the era, props and set dressing, lighting quality and direction, time of day and weather, color palette and atmosphere. It contains no people, no characters, no animals, no vehicles, and no action or story: just the empty set as seen from where the camera stands, with open floor in the foreground where the actors will stand. At most ${WORLD_PROMPT_MAX} characters.
 
 Title: the screenplay's title from its title page, or a short fitting one.`;
 
@@ -255,6 +319,102 @@ function trimPrompt(s: string): string {
     : cut.slice(0, cut.lastIndexOf(' '));
 }
 
+/** Whitespace-collapsed and cut at a word boundary to `max` characters. */
+function clip(s: string, max: number): string {
+  const t = s.trim().replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:·-]+$/, '');
+}
+
+/** "Golden Hour" / "golden_hour" → "golden-hour" (how a name slips when it is only described). */
+const name = (s: string) => s.trim().toLowerCase().replace(/[\s_]+/g, '-');
+
+/** "#abc" / "abc" / "#AABBCC" → "#aabbcc"; anything else (a colour name) → undefined. */
+function hexColor(s: string): string | undefined {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s.trim());
+  if (!m) return undefined;
+  const h = m[1]!.toLowerCase();
+  return `#${h.length === 3 ? [...h].map((c) => c + c).join('') : h}`;
+}
+
+const STYLE_MAX = { genre: 80, era: 120, worldStyle: 200, palette: 120 } as const;
+
+/** Claude's style within the contract's lengths; an unusable one is read from the script instead. */
+function draftStyle(d: Draft['style'], screenplay: string, notes: string[]): VisualStyle {
+  const style = Object.fromEntries(
+    (Object.keys(STYLE_MAX) as (keyof typeof STYLE_MAX)[]).map((k) => {
+      const v = clip(d[k], STYLE_MAX[k]);
+      if (v.length < d[k].trim().replace(/\s+/g, ' ').length) notes.push(`style.${k} trimmed to ${v.length} chars`);
+      return [k, v];
+    }),
+  );
+  const ok = VisualStyle.safeParse(style);
+  if (ok.success && ok.data.genre && ok.data.worldStyle) return ok.data;
+  notes.push('style was empty or invalid; read from the screenplay keywords instead');
+  const raw = parseFountain(screenplay);
+  return heuristicStyle(screenplay, raw.scenes.map((s) => s.heading));
+}
+
+const LOOK_RANGE = {
+  exposure: [-3, 3],
+  temperature: [-1, 1],
+  saturation: [0, 2],
+  contrast: [0.5, 2],
+  bloom: [0, 1],
+  vignette: [0, 1],
+} as const;
+
+/**
+ * Claude's look as a LookSeed: out-of-range adjustments are clamped and a fog or sky tint whose
+ * colour is not a hex value is dropped (each with a note), so one slip never fails the plan. A
+ * look that still does not validate is derived from the heading instead.
+ */
+function draftLook(d: DraftLook, fallback: () => LookSeed, where: string, notes: string[]): LookSeed {
+  const preset = LookPresetName.safeParse(name(d.preset));
+  if (!preset.success) {
+    notes.push(`${where}.look.preset "${d.preset}" is not a preset; derived from the heading`);
+    return { ...fallback(), ...(d.mood.trim() ? { mood: clip(d.mood, 60) } : {}) };
+  }
+  const seed: Record<string, unknown> = { preset: preset.data, mood: clip(d.mood, 60) };
+  for (const k of Object.keys(LOOK_RANGE) as (keyof typeof LOOK_RANGE)[]) {
+    const v = d[k];
+    if (v === null) continue;
+    if (!Number.isFinite(v)) {
+      notes.push(`${where}.look.${k} is not a number; dropped`);
+      continue;
+    }
+    const [lo, hi] = LOOK_RANGE[k];
+    const c = round3(clamp(v, lo, hi));
+    if (c !== round3(v)) notes.push(`${where}.look.${k} ${v} clamped to ${c}`);
+    seed[k] = c;
+  }
+  for (const [k, amount] of [
+    ['fog', 'density'],
+    ['skyTint', 'strength'],
+  ] as const) {
+    const g = d[k] as { color: string; density?: number; strength?: number } | null;
+    if (!g) continue;
+    const color = hexColor(g.color);
+    const v = g[amount];
+    if (!color || typeof v !== 'number' || !Number.isFinite(v)) {
+      notes.push(`${where}.look.${k} dropped (colour "${g.color}" is not #rrggbb or no ${amount})`);
+      continue;
+    }
+    seed[k] = { color, [amount]: round3(clamp(v, 0, 1)) };
+  }
+  if (d.lut) {
+    const lut = LutPreset.safeParse(name(d.lut));
+    if (lut.success) seed.lut = lut.data;
+    else notes.push(`${where}.look.lut "${d.lut}" is not a LUT; dropped`);
+  }
+  const ok = LookSeed.safeParse(seed);
+  if (ok.success) return ok.data;
+  notes.push(`${where}.look invalid (${ok.error.issues[0]?.message ?? 'unknown'}); derived from the heading`);
+  return fallback();
+}
+
 export interface DraftCheck {
   plan?: ScreenplayPlan;
   problems: string[];
@@ -297,6 +457,7 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
       `the plan has ${gotLines} dialogue lines but the screenplay has about ${expectedLines}; include every line`,
     );
   }
+  const style = draftStyle(draft.style, screenplay, notes);
 
   // Characters: normalized unique ids, distinct voices where the pool allows.
   const idMap = new Map<string, string>();
@@ -382,13 +543,16 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
         notes.push(`${where}.dynamics[${k}]: path has < 2 points; dropped`);
         return [];
       }
+      const known = DynamicElementKind.safeParse(name(d.kind));
+      const kind = known.success ? known.data : 'generic';
+      if (!known.success) notes.push(`${where}.dynamics[${k}]: kind "${d.kind}" shown as generic`);
       return [
         {
-          id: `s${index + 1}-${d.kind}-${k + 1}`,
-          kind: d.kind,
-          label: d.label.trim() || d.kind,
+          id: `s${index + 1}-${kind}-${k + 1}`,
+          kind,
+          label: d.label.trim() || kind,
           path: d.path.map(v3),
-          speed: d.speed > 0 ? d.speed : DEFAULT_SPEED[d.kind],
+          speed: d.speed > 0 ? d.speed : DEFAULT_SPEED[kind],
           loop: d.loop,
           pauseSeconds: Math.max(0, d.pauseSeconds),
           scale: d.scale > 0 ? d.scale : 1,
@@ -406,6 +570,13 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
       };
     });
 
+    const look = draftLook(
+      s.look,
+      () => heuristicLookSeed({ interior: s.interior, timeOfDay: s.timeOfDay, location: parseHeading(s.heading).location }, style, s.action),
+      where,
+      notes,
+    );
+
     const worldPrompt = trimPrompt(s.worldPrompt);
     if (worldPrompt.length < s.worldPrompt.trim().length)
       notes.push(`${where}: worldPrompt trimmed to ${worldPrompt.length} chars`);
@@ -419,6 +590,7 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
       worldPrompt,
       timeOfDay: s.timeOfDay,
       interior: s.interior,
+      look,
       characterIds,
       dialogue,
       blocking,
@@ -430,6 +602,7 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
   if (problems.length) return { problems, notes };
   const checked = ScreenplayPlan.safeParse({
     title: titleOverride?.trim() || draft.title.trim() || 'Untitled',
+    style,
     characters,
     scenes,
   });
@@ -446,6 +619,8 @@ export function summarizePlan(plan: ScreenplayPlan): string {
   const lines = [
     `"${plan.title}": ${plan.scenes.length} scene(s), ${plan.characters.length} character(s)`,
   ];
+  if (plan.style)
+    lines.push(`  style: ${plan.style.genre} · ${plan.style.era} · ${plan.style.palette}`, `    render: ${plan.style.worldStyle}`);
   for (const c of plan.characters)
     lines.push(
       `  ${c.name} (${c.id}, ${c.voice.gender}, voice ${c.voice.id}${c.heightMeters ? `, ${c.heightMeters.toFixed(2)} m` : ''}): ${c.description}`,
@@ -455,6 +630,11 @@ export function summarizePlan(plan: ScreenplayPlan): string {
       `  [${s.index}] ${s.heading} — ${s.timeOfDay}${s.interior ? ', interior' : ''}; ${s.dialogue.length} line(s), ${s.dynamics.length} dynamic(s), ${s.shots.length} shot(s)`,
     );
     lines.push(`      world: ${s.worldPrompt}`);
+    if (s.look) {
+      const { preset, mood, ...adjust } = s.look;
+      const set = Object.entries(adjust).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+      lines.push(`      look: ${preset}${mood ? ` "${mood}"` : ''}${set.length ? ` (${set.join(', ')})` : ''}`);
+    }
     for (const b of s.blocking) {
       lines.push(
         `      ${b.characterId} @ [${b.position.join(', ')}] yaw ${b.yaw.toFixed(2)} ${b.pose}`,
