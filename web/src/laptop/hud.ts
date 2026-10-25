@@ -1,6 +1,6 @@
 // Viewport overlays and the top bar's breadcrumb: `Project · Sc 1 · HEADING`, the warnings that
 // matter to the director (a stand-in world, a rebuilt actor waiting for a reload), loading / error,
-// caption, PiP frame, REC badge, PiP + frame-guide toggles, and the viewport keys Space / V / R.
+// caption, PiP frame, REC badge, PiP + frame-guide toggles, and the viewport keys Space / 0 / V / R.
 // (Splat quality, grid, collider and reload live in Tools › Developer, tools.ts.)
 import type { WorldAsset } from '@shared/schema';
 import type { Director } from './director';
@@ -39,7 +39,8 @@ export function mountHud(director: Director, projects: ProjectsPanel) {
       e.preventDefault();
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       director.togglePlay();
-    } else if (e.code === 'KeyV') director.setViewFromPhone(!director.viewFromPhone);
+    } else if (e.code === 'Digit0' || e.code === 'Numpad0') director.resetScene();
+    else if (e.code === 'KeyV') director.setViewFromPhone(!director.viewFromPhone);
     else if (e.code === 'KeyR') void director.toggleRecording();
   });
 
