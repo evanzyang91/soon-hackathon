@@ -30,6 +30,7 @@
         --hover: rgba(255, 255, 255, 0.05);
         --accent: #5a7bf0;
         --on-accent: #ffffff;
+        --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
         --ok: #6fae8c;
         --warn: #c9a45c;
         --bad: #d06a6a;
@@ -171,7 +172,8 @@
         font-size: var(--fs-sm);
       }
 
-      /* ---- HUD ---- */
+      /* ---- HUD: the frame first. One quiet label, a dot, the camera controls on the right
+         edge, the walk controls on the left; everything small and translucent ---- */
       #hud {
         position: fixed;
         inset: 0;
@@ -191,69 +193,72 @@
         font-size: var(--fs-sm);
         white-space: nowrap;
       }
-      #top-left {
-        position: absolute;
-        top: max(10px, env(safe-area-inset-top));
-        left: var(--gutter);
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-        max-width: 45vw;
-      }
-      #room {
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        letter-spacing: 0.12em;
-      }
-      #conn {
-        width: 6px;
-        height: 6px;
+      /* round glass icon buttons (44 px touch targets) */
+      .glass {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        padding: 0;
         border-radius: 50%;
-        background: var(--warn);
-      }
-      #conn[data-state='open'] {
-        background: var(--ok);
-      }
-      #conn[data-state='closed'] {
-        background: var(--bad);
-      }
-      #conn[data-state='reconnecting'] {
-        animation: blink 0.8s steps(2) infinite;
-      }
-      #conn-label,
-      #peers {
-        color: var(--muted);
-      }
-      #peers[data-ok='true'] {
+        background: var(--glass);
+        box-shadow: inset 0 0 0 1px var(--hairline);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         color: var(--text);
+        pointer-events: auto;
+        -webkit-touch-callout: none;
       }
-      #top-center {
+      .glass:active {
+        transform: scale(0.94);
+      }
+      .glass svg,
+      .cam-menu svg {
+        width: 20px;
+        height: 20px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #top {
         position: absolute;
         top: max(10px, env(safe-area-inset-top));
         left: 50%;
         transform: translateX(-50%);
         display: flex;
         gap: 6px;
+        max-width: calc(100vw - 2 * 64px);
+      }
+      #cam-label {
+        min-width: 0;
+        color: var(--text);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        /* swipe sideways for the next / previous shot */
+        pointer-events: auto;
+        touch-action: none;
       }
       #cam-name {
-        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      #lens,
-      #clock {
-        font-variant-numeric: tabular-nums;
-        color: var(--muted);
+      #conn {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--warn);
       }
-      #clock[data-playing='true'] {
-        color: var(--ok);
+      #conn[data-level='ok'] {
+        background: var(--ok);
       }
-      #perf {
-        position: absolute;
-        right: var(--gutter-r);
-        bottom: max(6px, env(safe-area-inset-bottom));
-        font-size: var(--fs-xs);
-        font-variant-numeric: tabular-nums;
-        color: var(--muted);
-        text-shadow: 0 1px 2px #000;
+      #conn[data-level='bad'] {
+        background: var(--bad);
+      }
+      #conn[data-state='reconnecting'] {
+        animation: blink 0.8s steps(2) infinite;
       }
       #rec-badge {
         gap: 6px;
@@ -269,53 +274,33 @@
         background: var(--bad);
         animation: blink 1s steps(2) infinite;
       }
-      /* ---- ACTION / CUT + next line (top right) ---- */
-      #top-right {
+      #perf {
+        position: absolute;
+        right: var(--gutter-r);
+        bottom: max(6px, env(safe-area-inset-bottom));
+        font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+        text-shadow: 0 1px 2px #000;
+      }
+      /* play / pause the scene on the laptop (hold: the next line) */
+      #play {
         position: absolute;
         top: max(10px, env(safe-area-inset-top));
         right: var(--gutter-r);
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        pointer-events: auto;
       }
-      #action {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        min-width: 96px;
-        height: 40px;
-        padding: 0 14px;
-        border-radius: var(--radius);
-        background: var(--accent);
-        color: var(--on-accent);
-        font-weight: 600;
-        letter-spacing: 0.08em;
+      #play .i-pause,
+      #play[aria-pressed='true'] .i-play {
+        display: none;
       }
-      /* a play triangle; a stop square while the scene runs */
-      #action::before {
-        content: '';
-        width: 0;
-        height: 0;
-        border-style: solid;
-        border-width: 5px 0 5px 8px;
-        border-color: transparent transparent transparent currentColor;
+      #play[aria-pressed='true'] .i-pause {
+        display: block;
       }
-      #action[aria-pressed='true'] {
-        background: var(--bad);
+      #play svg path {
+        stroke-width: 1.75;
       }
-      #action[aria-pressed='true']::before {
-        width: 9px;
-        height: 9px;
-        border: none;
-        border-radius: 1.5px;
-        background: currentColor;
-      }
-      #action:active,
-      #next-line:active,
-      .small:active {
-        transform: scale(0.96);
+      #play .i-play path {
+        fill: currentColor;
       }
       #controls {
         position: absolute;
@@ -325,20 +310,16 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 14px;
+        gap: 12px;
         pointer-events: auto;
       }
-      .small {
-        min-width: 64px;
-        height: 40px;
-        padding: 0 12px;
-        border-radius: var(--radius);
-        background: var(--glass);
-        box-shadow: inset 0 0 0 1px var(--hairline);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        font-size: var(--fs-sm);
-        font-weight: 600;
+      #recenter svg {
+        width: 18px;
+        height: 18px;
+      }
+      #cam[aria-expanded='true'] {
+        background: var(--text);
+        color: var(--bg);
       }
       #shutter {
         width: 64px;
@@ -377,6 +358,80 @@
         height: 18px;
         border-radius: 4px;
       }
+      /* ---- the camera popover: the scene's shots, Handheld, Add shot from here ---- */
+      .cam-menu {
+        position: absolute;
+        display: flex;
+        flex-direction: column;
+        width: min(280px, calc(100vw - 32px));
+        padding: 4px;
+        border-radius: 10px;
+        background: var(--scrim);
+        box-shadow: var(--shadow), inset 0 0 0 1px var(--hairline);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        pointer-events: auto;
+        z-index: 7;
+      }
+      .cam-shots {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
+      .cam-menu button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 44px;
+        padding: 0 10px;
+        border-radius: var(--radius);
+        background: transparent;
+        text-align: left;
+        font-size: var(--fs);
+        -webkit-touch-callout: none;
+      }
+      .cam-menu button:active {
+        background: var(--hover);
+      }
+      .cam-menu button[aria-checked='true'] {
+        background: var(--accent-soft);
+      }
+      .cam-menu .num {
+        flex: none;
+        min-width: 26px;
+        color: var(--muted);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .cam-menu [aria-checked='true'] .num {
+        color: var(--accent);
+      }
+      .cam-menu .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cam-menu .lens {
+        flex: none;
+        color: var(--muted);
+        font-size: var(--fs-sm);
+        font-variant-numeric: tabular-nums;
+      }
+      .cam-menu .sep {
+        height: 1px;
+        margin: 4px 6px;
+        background: var(--hairline);
+      }
+      .cam-menu .num svg {
+        display: block;
+        width: 16px;
+        height: 16px;
+      }
       #caption {
         position: absolute;
         left: 50%;
@@ -392,27 +447,6 @@
         font-weight: 500;
         text-align: center;
         text-wrap: balance;
-      }
-      #bottom-left {
-        position: absolute;
-        left: var(--gutter);
-        bottom: calc(max(10px, env(safe-area-inset-bottom)) + 178px);
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        align-items: flex-start;
-      }
-      #attitude {
-        font-size: var(--fs-xs);
-        font-variant-numeric: tabular-nums;
-        color: var(--muted);
-        text-shadow: 0 1px 2px #000;
-      }
-      body[data-view='viewfinder'] #attitude {
-        display: none; /* the viewfinder draws the same numbers large */
-      }
-      #hint:empty {
-        display: none;
       }
       /* ---- walk: left-thumb joystick + height slider ---- */
       #joystick {
@@ -449,27 +483,17 @@
         margin: -22px 0 0 -22px;
         border-radius: 50%;
         background: var(--text);
-        opacity: 0.8;
+        opacity: 0.7;
         box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
-      }
-      #joy-label {
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: -2px;
-        text-align: center;
-        font-size: var(--fs-xs);
-        color: var(--muted);
-        text-shadow: 0 1px 2px #000;
       }
       #height {
         position: absolute;
-        right: calc(var(--gutter-r) + 96px);
+        right: calc(var(--gutter-r) + 88px);
         top: 50%;
-        width: 40px;
+        width: 44px;
         height: 156px;
         margin-top: -78px;
-        border-radius: 20px;
+        border-radius: 22px;
         background: var(--glass);
         box-shadow: inset 0 0 0 1px var(--hairline);
         pointer-events: auto;
@@ -503,19 +527,18 @@
       #height[data-active] {
         box-shadow: inset 0 0 0 1px var(--muted);
       }
-      #walk-readout:empty {
-        display: none;
-      }
+      /* under the label, clear of the subject in the middle of the frame */
       #toast {
         position: absolute;
-        top: 50%;
+        top: calc(max(10px, env(safe-area-inset-top)) + 40px);
         left: 50%;
-        transform: translate(-50%, -50%);
-        padding: 10px 16px;
+        transform: translateX(-50%);
+        padding: 8px 14px;
         border-radius: var(--radius);
         background: var(--scrim);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
+        font-size: var(--fs-sm);
         font-weight: 500;
         text-align: center;
         /* centred with left 50 %: without max-content it would wrap at half the screen width */
@@ -545,6 +568,7 @@
           transform: translate(-50%, 60px);
           color: var(--muted);
           font-size: var(--fs-sm);
+          white-space: nowrap;
         }
         #controls {
           top: auto;
@@ -552,13 +576,12 @@
           right: 50%;
           transform: translateX(50%);
           flex-direction: row;
+          gap: 16px;
         }
         #caption {
-          bottom: calc(max(16px, env(safe-area-inset-bottom)) + 96px);
+          /* above the joystick (in portrait it sits on the row of controls) */
+          bottom: calc(max(16px, env(safe-area-inset-bottom)) + 276px);
           max-width: 90vw;
-        }
-        #bottom-left {
-          bottom: calc(max(16px, env(safe-area-inset-bottom)) + 280px);
         }
         #joystick {
           bottom: calc(max(16px, env(safe-area-inset-bottom)) + 96px);
@@ -576,12 +599,14 @@
       [data-pose='external'] #joystick,
       [data-pose='external'] #height,
       [data-pose='external'] #controls,
-      [data-pose='external'] #top-right,
-      [data-pose='external'] #top-left,
-      [data-pose='external'] #walk-readout,
-      [data-pose='external'] #hint,
+      [data-pose='external'] #play,
+      [data-pose='external'] #cam-menu,
+      [data-pose='external'] #conn,
       [data-pose='external'] #rotate {
         display: none;
+      }
+      [data-pose='external'] #cam-label {
+        pointer-events: none;
       }
       @keyframes blink {
         to {
@@ -604,46 +629,75 @@
     <div id="stage"></div>
 
     <div id="hud" hidden>
-      <div id="top-left">
-        <span class="pill"
-          ><span id="conn" data-state="idle"></span><span id="room">----</span></span
-        >
-        <span class="pill"
-          ><span id="conn-label">offline</span> · <span id="peers">waiting for director</span></span
-        >
-      </div>
-      <div id="top-center">
-        <span class="pill"
-          ><span id="cam-name">No camera</span><span id="lens">--mm</span
-          ><span id="clock" hidden title="Scene clock (the laptop plays / pauses it)">⏸ 0:00</span></span
+      <div id="top">
+        <span id="cam-label" class="pill" title="The shot the phone is on · swipe for the next one"
+          ><span id="conn" data-state="idle" data-level="wait" role="img" aria-label="Offline"></span
+          ><span id="cam-name">Handheld</span></span
         >
         <span class="pill" id="rec-badge" hidden><span id="rec-time">00:00</span></span>
       </div>
-      <div id="top-right">
-        <button id="action" type="button" aria-pressed="false" title="Laptop: play the scene (dialogue in order + clock)">ACTION</button>
-        <button id="next-line" class="small" type="button" title="Laptop: play the next dialogue line">Line ›</button>
-      </div>
+      <button
+        id="play"
+        class="glass"
+        type="button"
+        aria-pressed="false"
+        aria-label="Play the scene"
+        title="Play the scene on the laptop (lines in order + clock); hold for the next line"
+      >
+        <svg class="i-play" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5 3.4v9.2a.4.4 0 0 0 .6.34l7.2-4.6a.4.4 0 0 0 0-.68L5.6 3.06a.4.4 0 0 0-.6.34Z" />
+        </svg>
+        <svg class="i-pause" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5.5 3.5v9M10.5 3.5v9" />
+        </svg>
+      </button>
       <div id="controls">
-        <button id="recenter" class="small" type="button">Recenter</button>
-        <button id="shutter" type="button" aria-label="Shutter"></button>
-        <button id="record" type="button" aria-label="Record" aria-pressed="false"></button>
-        <button id="next-cam" class="small" type="button">Cam ›</button>
+        <button
+          id="recenter"
+          class="glass"
+          type="button"
+          aria-label="Recenter"
+          title="Recenter: where the phone points now becomes the shot's heading"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="4.25" />
+            <path d="M8 1.5v2.25M8 12.25v2.25M1.5 8h2.25M12.25 8h2.25" />
+          </svg>
+        </button>
+        <button id="shutter" type="button" aria-label="Shutter" title="Save a frame on the laptop"></button>
+        <button
+          id="record"
+          type="button"
+          aria-label="Record"
+          aria-pressed="false"
+          title="Record a take on the laptop"
+        ></button>
+        <button
+          id="cam"
+          class="glass"
+          type="button"
+          aria-label="Cameras"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="cam-menu"
+          title="Switch to another shot, go handheld, or add a shot from here"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="1.75" y="4.25" width="9" height="7.5" rx="1.5" />
+            <path d="m10.75 7 3.5-2v6l-3.5-2" />
+          </svg>
+        </button>
       </div>
-      <div id="bottom-left">
-        <span id="hint" class="pill"></span>
-        <span id="walk-readout" class="pill"></span>
-        <span id="attitude"></span>
-      </div>
-      <div id="joystick" aria-label="Walk: drag to move, double-tap to return to the camera">
+      <div id="cam-menu" class="cam-menu" role="menu" aria-label="Cameras" hidden></div>
+      <div id="joystick" aria-label="Walk: drag to move, double-tap to return to the shot">
         <div id="joy-base"><div id="joy-knob"></div></div>
-        <span id="joy-label">walk · 2× tap = back</span>
       </div>
       <div id="height" aria-label="Height: drag up or down">
         <div id="height-knob"></div>
       </div>
       <div id="caption" hidden></div>
-      <div id="perf" title="3D frames per second · render quality (the governor lowers it when the phone is too slow)"></div>
-      <div id="toast" hidden></div>
+      <div id="perf" hidden title="3D frames per second · render quality (?perf=1)"></div>
+      <div id="toast" role="status" hidden></div>
       <div id="rotate">Rotate to landscape for the widest frame</div>
     </div>
     <div id="flash"></div>
