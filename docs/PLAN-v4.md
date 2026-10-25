@@ -74,6 +74,18 @@ marked), "Free (handheld)", and **"Add shot from here"**, which places the phone
 as a new shot on both the laptop's shot list and the phone (`PhoneCommand` `select-camera` /
 `add-shot`; the laptop owns the list and broadcasts `SceneState.cameras`).
 
+## Props by import or by prompt (2026-10-25)
+
+Besides the procedural kinds, a director can put their own object in the scene: **Import a 3D model**
+(a .glb dropped on the viewport or picked in Scene › Background › Add prop) or **Generate from a
+description** ("a weathered wooden barrel"). Generation = a reference image of the object on a plain
+background (OpenAI image) → image-to-3D on Modal (an open-source model that returns a textured glTF
+binary) → `props/<jobId>/model.glb`; `PropJob` reports progress; MOCK / no keys returns a bundled sample
+after a short delay. Either way the prop lands as a `prop-add` scene edit of kind `model`
+(`DynamicElement.model`), static (one-point path, speed 0), 2 m in front of the camera on the ground,
+scaled to `heightM`; it is then an object like any other: drag, scale, delete, Re-prompt, phone sync.
+Also: a **Reset** button beside Play (clock to 0:00, everyone back on their marks, start view; key 0).
+
 ## Contracts (lead-owned, `shared/`)
 
 - `shared/shots.ts`: `Shot` { id, name, position, quaternion, fovDeg, heightM?, note?, frame?
