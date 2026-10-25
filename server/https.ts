@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generate } from 'selfsigned';
 
+
 export interface Certs {
   key: string;
   cert: string;
@@ -23,6 +24,7 @@ interface CertMeta {
   ips: string[];
   notAfter: string;
 }
+
 
 const DEFAULT_DIR = fileURLToPath(new URL('../certs/', import.meta.url));
 /** iOS rejects server certs valid for more than 825 days; one year is plenty for a dev cert. */
