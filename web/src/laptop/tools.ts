@@ -220,7 +220,10 @@ export function mountObjects(director: Director, look: LookPanel, manip: Manipul
     const doc = rt.edits;
     const groups: [string, HTMLElement[]][] = [];
     const props = [...rt.dynamics.items.map((i) => i.element), ...(doc ? effectiveProps(doc.edits).added : [])].filter((el) => !isPropRemoved(doc, el.id));
-    groups.push(['Props', props.map((el) => objectRow({ type: 'prop', id: el.id }, el.label || el.kind, el.kind))]);
+    // an imported / generated model says where it came from (the file name or the prompt)
+    const kindOf = (el: (typeof props)[number]) =>
+      el.kind !== 'model' || !el.model ? el.kind : `model · ${el.model.file.startsWith('props/') ? 'generated' : (el.model.source ?? 'imported')}`;
+    groups.push(['Props', props.map((el) => objectRow({ type: 'prop', id: el.id }, el.label || el.kind, kindOf(el)))]);
     const lights = look.session.look?.lights ?? [];
     groups.push(['Lights', lights.map((l) => objectRow({ type: 'light', id: l.id }, l.name, `${l.kind}${l.enabled ? '' : ' · off'}`))]);
     groups.push(['Shots', director.cameras.map((c) => objectRow({ type: 'camera', id: c.id }, c.name, c.id === director.activeCameraId ? 'on the phone' : lensLabel(c.fovDeg)))]);
