@@ -10,9 +10,8 @@
     "build": "vite build --config web/vite.config.ts",
     "start": "NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
     "e2e": "playwright test",
-    "check": "pnpm typecheck && pnpm test && pnpm e2e"
+    "check": "pnpm typecheck && pnpm e2e"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
@@ -33,8 +32,7 @@
     "prettier": "^3.9.8",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vite": "^8.3.5"
   },
   "engines": { "node": ">=22" },
   "prettier": { "singleQuote": true, "printWidth": 100, "tabWidth": 2 }

@@ -8,7 +8,9 @@ them in your report instead of editing them.
 
 - `pnpm install`
 - `pnpm dev` — HTTPS server (tsx watch) + Vite on https://localhost:5173 (phone URL printed + QR)
-- `pnpm typecheck` · `pnpm test` (vitest) · `pnpm e2e` (Playwright, MOCK=1) · `pnpm check` (all)
+- `pnpm typecheck` · `pnpm e2e` (Playwright, MOCK=1) · `pnpm check` (both)
+- No unit-test files: the project is evaluated by the e2e run and by rendered evidence
+  (screenshots / contact sheets in `docs/images/`), not by vitest cases.
 
 ## Conventions
 

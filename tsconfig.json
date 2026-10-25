@@ -15,5 +15,5 @@
     "baseUrl": ".",
     "paths": { "@shared/*": ["shared/*"] }
   },
-  "include": ["shared", "server", "web/src", "tests", "playwright.config.ts", "vitest.config.ts"]
+  "include": ["shared", "server", "web/src", "tests", "playwright.config.ts"]
 }
