@@ -132,7 +132,7 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
     .poll(async () => angleDiff(yawDeg((await laptopState(laptop)).gizmo.quaternion), 0) < 1)
     .toBe(true);
 
-  // -- phone next-camera → laptop switches the active shot -------------------------------------
+  // -- phone camera popover → laptop switches the active shot ---------------------------------
   // (the scene's shot list is seeded with 5 coverage shots; two added shots follow them, and the
   // last one added is the phone's)
   await laptop.getByTestId('tab-shots').click();
@@ -147,10 +147,30 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   expect(s.cameras).toBe(7);
   expect(s.activeCameraId).toBe(ids[6]);
   await expect.poll(async () => (await phoneState(phone))?.scene?.activeCameraId).toBe(ids[6]);
-  await phone.locator('#next-cam').click();
-  await expect.poll(async () => (await laptopState(laptop)).activeCameraId).toBe(ids[0]);
+  // the popover lists the 7 shots, the phone's marked; picking 1B puts the phone on it
+  await phone.locator('#cam').click();
+  await expect(phone.getByTestId('cam-shot')).toHaveCount(7);
+  await expect(phone.getByTestId('cam-shot').nth(6)).toHaveAttribute('aria-checked', 'true');
+  await phone.getByTestId('cam-shot').nth(1).click();
+  await expect(phone.locator('#cam-menu')).toBeHidden();
+  await expect.poll(async () => (await laptopState(laptop)).activeCameraId).toBe(ids[1]);
   // ...and the phone follows: it re-anchors to the new shot
-  await expect.poll(async () => (await phoneState(phone))?.anchor.key).toContain(ids[0]!);
+  await expect.poll(async () => (await phoneState(phone))?.anchor.key).toContain(ids[1]!);
+  await expect(phone.locator('#cam-name')).toHaveText(/^1B · /);
+
+  // -- phone "Add shot from here" → a new shot on the laptop's list, and the phone is on it -----
+  // (on 1B and not walked, the phone sees from 1B's spot)
+  const at = (await phoneState(phone))!.anchor.position;
+  await phone.locator('#cam').click();
+  await phone.getByTestId('cam-add').click();
+  await expect(laptop.getByTestId('shot-row')).toHaveCount(8);
+  const added = await laptop.getByTestId('shot-row').nth(7).getAttribute('data-id');
+  await expect.poll(async () => (await laptopState(laptop)).activeCameraId).toBe(added);
+  await expect(phone.locator('#cam-name')).toHaveText(/^1H\b/);
+  // the new shot is where the phone was looking from: re-anchored on it, the view stays put
+  await expect.poll(async () => (await phoneState(phone))?.anchor.key).toContain(added!);
+  const now = (await phoneState(phone))!.anchor.position;
+  expect(Math.max(...now.map((v, i) => Math.abs(v - at[i]!)))).toBeLessThan(0.01);
 
   // -- phone shutter → laptop takes a still (last: in SwiftShader the PNG encode hogs the page) -
   // (the PNG download itself is only timed by idle-time encoding, which a SwiftShader render

@@ -1,6 +1,8 @@
 // What the phone derives from the laptop's SceneState (pure).
+import { lensLabel } from '@shared/lens';
 import type { DropCamera, SceneState } from '@shared/protocol';
 import type { SceneManifest, Vec3 } from '@shared/schema';
+import { shotNumber } from '@shared/shots';
 import { yawOf } from './sensors.ts';
 
 export function activeCamera(state: SceneState | null): DropCamera | null {
@@ -65,15 +67,48 @@ export function captionFor(manifest: SceneManifest | null, lineId: string | null
   return { speaker: who?.name ?? line.characterId.toUpperCase(), text: line.text };
 }
 
-/** HUD scene clock: "▶ 0:04" while the laptop plays, "⏸ 1:02" while paused. */
-export function clockLabel(seconds: number, playing: boolean): string {
-  const s = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
-  return `${playing ? '▶' : '⏸'} ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+/** The laptop names its cameras after their shot: "1B · Two-shot". */
+const NUMBERED = /^\d+[A-Z]+ · /;
+
+/** A shot of the scene's list as the phone shows it (the camera popover, the label). */
+export interface ShotEntry {
+  id: string;
+  /** "1B": scene number + the shot's place in the list. */
+  number: string;
+  /** "Two-shot", without the number; '' for one still called "Shot 1B". */
+  name: string;
+  /** "35 mm" */
+  lens: string;
+}
+
+/** `SceneState.cameras` in order, numbered like the laptop's shot list. */
+export function shotEntries(state: SceneState | null): ShotEntry[] {
+  if (!state) return [];
+  return state.cameras.map((c, i) => {
+    const number = shotNumber(state.sceneIndex, i);
+    const name = c.name.replace(NUMBERED, '').trim();
+    return {
+      id: c.id,
+      number,
+      name: name === `Shot ${number}` ? '' : name,
+      lens: lensLabel(c.fovDeg),
+    };
+  });
+}
+
+/**
+ * The HUD's one label: "1B · Two-shot · 35 mm" on a shot, "Handheld · 35 mm" off one. The lens is
+ * the phone's own (`fovDeg`: the pinch lens), so it follows a pinch.
+ */
+export function shotLabel(state: SceneState | null, fovDeg: number): string {
+  const lens = lensLabel(fovDeg);
+  const shot = shotEntries(state).find((s) => s.id === state?.activeCameraId);
+  return shot ? [shot.number, shot.name, lens].filter(Boolean).join(' · ') : `Handheld · ${lens}`;
 }
 
 /**
  * Whether the laptop is running the scene (clock playing and dialogue under way): what the
- * phone's ACTION button shows as CUT. A line has to have been spoken within `holdMs`, which
+ * phone's play button shows as pause. A line has to have been spoken within `holdMs`, which
  * bridges the short pause the laptop leaves between lines.
  */
 export class DialogueActivity {
