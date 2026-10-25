@@ -101,10 +101,25 @@ export const DynamicElementKind = z.enum([
 ]);
 export type DynamicElementKind = z.infer<typeof DynamicElementKind>;
 
-/** A prop's own 3D model (kind 'model'): a .glb in the project (imported or generated). */
+/**
+ * A prop's own 3D model: a .glb in the project (imported, generated) or found in the open-licence
+ * model library during generation (docs/PLAN-v4.md "Found models"). For kind 'model' it is the
+ * whole prop; for any other kind it is optional detail: the viewer draws it when it loads (its own
+ * animation clips chosen by intent) and falls back to the kind's procedural body otherwise.
+ */
 export const PropModel = z.object({
-  /** Project-root relative path of the glTF binary: "uploads/<sha16>.glb" or "props/<jobId>/model.glb". */
+  /**
+   * Project-root relative path of the glTF binary ("uploads/<sha16>.glb", "props/<jobId>/model.glb")
+   * or an absolute `/models/<id>/model.glb` served from the shared model library.
+   */
   file: z.string(),
+  /** The model carries skeletal animation clips (a creature without them is drawn procedurally). */
+  animated: z.boolean().optional(),
+  /** Clip names the viewer should prefer per intent, when the file's names are not self-explanatory. */
+  clips: z.object({ idle: z.string().optional(), move: z.string().optional(), fast: z.string().optional() }).optional(),
+  /** Licence id ("CC0-1.0", "CC-BY-4.0") and the attribution line it requires, shown in Tools › Objects. */
+  license: z.string().max(40).optional(),
+  attribution: z.string().max(200).optional(),
   /** Standing height in metres the model is scaled to (its bounding box); absent = 1 m. */
   heightM: z.number().positive().max(100).optional(),
   /** Radians added to the heading so the model's front faces its direction of travel (models differ). */
@@ -124,7 +139,7 @@ export const DynamicElement = z.object({
   path: z.array(Vec3).min(1),
   /** Meters per second; 0 = static. */
   speed: z.number().nonnegative(),
-  /** kind 'model' only: the glTF binary to draw. */
+  /** The glTF binary to draw: the whole prop for kind 'model', optional detail for any other kind. */
   model: PropModel.optional(),
   loop: z.boolean().default(true),
   /** Seconds of pause at the end of the path before looping. */
