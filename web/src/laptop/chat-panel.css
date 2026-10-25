@@ -131,6 +131,44 @@ body.chat-docked.chat-wide #left {
   max-width: 520px;
   margin: 0 auto var(--s2);
 }
+/* first run: the three steps, one line each */
+.chat-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto var(--s3);
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  text-align: left;
+}
+.chat-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  counter-increment: step;
+}
+.chat-steps li::before {
+  content: counter(step);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--track);
+}
+#left .chat-steps {
+  width: auto;
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-sm);
+}
 #left .chat-hero h1 {
   display: none;
 }
