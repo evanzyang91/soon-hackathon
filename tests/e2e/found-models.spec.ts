@@ -124,7 +124,7 @@ test('a found model replaces the primitive, moves along the path, and the primit
   // Scene › Background (and Tools › Objects): the source and licence, and the choice of body
   const background = page.getByTestId('background');
   const line = background.locator(`[data-testid="found-model-line"][data-id="${car.id}"]`);
-  await expect(line).toContainText('Barrel by the fixtures · CC0-1.0');
+  await expect(line).toContainText('CC0-1.0 · Barrel by the fixtures');
   await expect(background.locator(`[data-testid="found-model-line"][data-id="${missing.id}"]`)).toContainText('Found model not used');
   await expect(page.getByTestId('tools-drawer').locator(`[data-testid="found-model-line"][data-id="${car.id}"]`)).toContainText('CC0-1.0');
   await line.getByTestId('found-use-primitive').click();

@@ -7,12 +7,15 @@ import { createElementProp } from './model-prop';
 import type { Prop } from './props';
 
 /** What an element's found model is doing (debug hook / e2e): absent without `element.model`. */
-export function foundState(element: DynamicElement, object: THREE.Object3D): { model?: string; body?: string; clip?: string; loadMs?: number; reason?: string } {
+export function foundState(
+  element: DynamicElement,
+  object: THREE.Object3D,
+): { model?: string; body?: string; clip?: string; loadMs?: number; reason?: string; rate?: number; parts?: string; facing?: string } {
   if (!element.model) return {};
   if (element.kind === 'model') return { model: String(object.userData.modelStatus ?? 'marker') };
   const f = object.userData.found as FoundInfo | undefined;
   if (!f) return {};
-  return { model: f.status, body: f.body, clip: f.clip, loadMs: f.loadMs, reason: f.reason };
+  return { model: f.status, body: f.body, clip: f.clip, loadMs: f.loadMs, reason: f.reason, rate: f.rate, parts: f.parts, facing: f.facing };
 }
 
 export interface DynamicInstance {

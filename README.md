@@ -514,6 +514,62 @@ map, so print and fine detail blur. Thin parts (chair legs, railings) can break 
 description. A job that is running when the server restarts reads back as failed (Retry starts it
 again). Re-prompt's region tools edit the splat world, not a model prop.
 
+### Found models: a real model when one is found, the primitive otherwise
+
+A background prop of any procedural kind can carry a found model (`DynamicElement.model`: an
+open-licence glTF the server found for its label, with its licence and attribution). The viewer
+(`web/src/viewer/found-model.ts`, shared by the laptop and the phone) builds the kind's
+primitive first and swaps the model in when it has loaded (one load per URL, at most 15 MB), so
+nothing flashes and nothing is missing while it loads.
+
+- **Size and facing.** The model is centred, stood on the ground and scaled to `heightM`, else to
+  the primitive it replaces: the height of a walker (creature, dog, horse, pedestrian), the length
+  of anything else, so "a huge T. rex" stays huge. A display platform under it is hidden.
+  Its front is found from its part names (head, jaw, beak, headlight, front, hood, FL/FR wheels
+  against tail, rear, trunk, exhaust), else from its walk clip's own travel, else from its shape:
+  an aircraft's length is the axis it is not mirror-symmetric across (a wingspan is often longer
+  than the fuselage) and the propeller marks its nose (else the fin its tail). Anything else faces
+  +Z (glTF's convention) when it is long along Z, and −X when it is long along X. This was checked
+  on 20 Objaverse models: every named one was right, and three of the four unnamed X-long cars
+  faced −X. **Turn around** fixes the rest.
+- **Animals and characters animate with their own clips.** Clips are chosen by name: idle, stand
+  and breath for standing; walk, trot, fly, flap and swim for moving; run, gallop and sprint above
+  the walk-to-run speed of the animal's size. Attacks, jumps, deaths, turns and strafes are never
+  chosen. An unnamed clip counts as a walk when its leg or wing bones repeat, or when it is a short
+  loop. A walk is driven by the distance travelled, and its natural speed comes from its root
+  motion (which is then taken out, because the path moves the body) or from cycles × stride ÷
+  duration, with a stride of 1.5 / 2.1 / 2.7 hip heights for a walk / trot / run. So the feet keep
+  pace with the ground at any path speed: the velociraptor below walks at 1.3 m/s with its clip at
+  ×0.93. At the end of the path it cross-fades to idle over 0.3 s. Birds and dragons flap on the
+  scene clock and keep the primitive's pitch into climbs and bank into turns.
+- **Vehicles, aircraft, boats and saucers move rigidly.** Nodes named wheel or tyre roll with the
+  distance, rotor, propeller, prop and fan spin, a turret sways. Their own clips (a propeller loop)
+  play on the scene clock. Aircraft pitch and bank. Hovering craft bob, and a flying saucer turns
+  slowly.
+- **Fallback.** A creature-like kind (creature, dog, horse, pedestrian, bird, dragon, and bicycle
+  or wagon, whose riders and horses the primitive draws) without a clip for what it does keeps its
+  primitive: a gliding statue is worse than a low-poly walker. So does any prop whose model is
+  missing, fails to load or is over budget.
+- **Credit and control.** Scene › Background and Tools › Objects show, under each such prop, its
+  licence and attribution (or why its model is not used). **Use primitive** / **Use found model**
+  and **Turn around** apply live and are remembered per scene in this browser. The phone draws the
+  server's choice until these become a scene edit.
+
+**Measured** (2026-10-25, GPU Chromium, 1440×900, MOCK field set, six found models in view:
+velociraptor 8.4 MB, race car, Cessna 4.0 MB, UFO, seagull, plus the clip-less allosaurus): each
+model, loaded alone from the local server, was ready 5–51 ms after its prop was created (fetch,
+decode and analysis). Uncapped, the laptop rendered 649 fps with the found models against 673
+with their primitives (1.54 against 1.49 ms per frame). With vsync both run at 60.
+
+![Found models: walk clip, rolling wheels, banking, hovering](docs/images/found-models-gallery.png)
+
+![Fallback: a clip-less model keeps its primitive next to an animated one](docs/images/found-models-fallback.png)
+
+`docs/images/found-models-scene.png` is the whole laptop, with the Background list showing each
+prop's licence. The test models are CC-BY-4.0 Sketchfab models from Objaverse, credited in the
+captions. Dev page: `/src/viewer/dev/found-models.html?cells=<json>` shows found models next to
+their primitives, with the facing used and the clip playing.
+
 ## Laptop layout and direct manipulation
 
 The director page has the script drawer on the left (the project chat above every project and its

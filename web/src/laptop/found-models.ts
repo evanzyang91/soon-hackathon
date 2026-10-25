@@ -43,11 +43,11 @@ export function foundInfo(d: Director, id: string): FoundInfo | undefined {
   return info;
 }
 
-/** "Velociraptor 1+motions by Kapi777 (Sketchfab) · CC-BY-4.0": the line its licence asks for. */
+/** "CC-BY-4.0 · Velociraptor 1+motions by Kapi777 (Sketchfab)": the licence first, so a narrow row keeps it. */
 export function attributionLine(el: DynamicElement): string {
   const m = el.model!;
   const who = m.attribution ?? m.source ?? m.file.split('/').slice(-2).join('/');
-  return m.license ? `${who} · ${m.license}` : who;
+  return m.license ? `${m.license} · ${who}` : who;
 }
 
 /**

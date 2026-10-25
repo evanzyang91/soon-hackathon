@@ -629,6 +629,8 @@ export interface FoundInfo {
    */
   rate?: number;
   gait?: string;
+  /** Rigid models: the named parts that turn ("4 roll, 1 spin"). */
+  parts?: string;
   facing?: FoundAnalysis['facing'];
   loadMs?: number;
   bytes?: number;
@@ -692,6 +694,10 @@ export function createFoundProp(el: DynamicElement, url: string): Prop {
       if (rig.gait) {
         info.rate = Math.round(rig.gait.rate * 100) / 100;
         info.gait = rig.gait.how;
+      }
+      if (a.parts.length) {
+        const n = (how: string) => a.parts.filter((p) => p.how === how).length;
+        info.parts = (['roll', 'spin', 'sway'] as const).filter((h) => n(h)).map((h) => `${n(h)} ${h}`).join(', ');
       }
       info.status = 'ready';
       show(usesFoundModel(el.id));

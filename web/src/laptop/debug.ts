@@ -64,6 +64,10 @@ export interface PrevizDebugState {
     clip?: string;
     loadMs?: number;
     reason?: string;
+    /** Walkers: the travelling clip's playback rate; rigid models: the parts that turn; how the front was found. */
+    rate?: number;
+    parts?: string;
+    facing?: string;
   }[];
   /**
    * Dialogue audio: WebAudio context state, actors whose voice is playing, loudest level now
