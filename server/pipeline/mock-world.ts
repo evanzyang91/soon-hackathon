@@ -1816,9 +1816,6 @@ export function mockSetSplats(set: MockSet = DEFAULT_MOCK_SET): Splat[] {
   return mockSetSplatsYUp(set).map(toOpenCv);
 }
 
-/** The original single mock world, i.e. the street set (older callers use this name). */
-export const mockWorldSplats = (): Splat[] => mockSetSplats('street');
-
 // ---------------------------------------------------------------------------
 // Offline preview: a small CPU gaussian splatter for the thumbnails and the view checks in tests.
 
