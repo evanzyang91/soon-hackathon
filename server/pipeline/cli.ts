@@ -52,7 +52,7 @@ import {
 } from './calibrate.ts';
 import { describeField, groundField } from './calibrate-ground.ts';
 import { EditsStore } from './edits.ts';
-import { readJson } from './fsutil.ts';
+import { readJson, writeJsonAtomic } from './fsutil.ts';
 import { lookSeedFor, styleForPlan, writeSceneLook } from './look-seed.ts';
 import { LookPresetName, ScreenplayPlan } from '../../shared/schema.ts';
 import {
@@ -281,6 +281,13 @@ async function main() {
         const store = new EditsStore(() => dirname(projectDir));
         const saved = await writeSceneLook(store, basename(projectDir), Number(n), seed, 'look from the plan (cli look)');
         log(`wrote scene-${n}/edits.json: look "${saved.look.name}", revision ${saved.revision} (${saved.edits.length} edit(s) and the history kept)`);
+        // a built scene's manifest carries the seed too (the laptop's "Scene's look" reads manifest.plan.look)
+        const manifestPath = join(projectDir, `scene-${n}`, 'manifest.json');
+        const raw = await readJson<{ plan?: Record<string, unknown> }>(manifestPath).catch(() => undefined);
+        if (raw?.plan) {
+          await writeJsonAtomic(manifestPath, { ...raw, plan: { ...raw.plan, look: seed } });
+          log(`wrote scene-${n}/manifest.json: plan.look = ${seed.preset}`);
+        }
       }
       return;
     }
