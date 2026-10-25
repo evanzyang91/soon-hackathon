@@ -45,7 +45,7 @@ import { fileURLToPath } from 'node:url';
 import type { ActorAsset, ActorDetail, Character, VisualStyle } from '../../shared/schema.ts';
 import { env } from '../env.ts';
 import { exists, readJson, writeFileAtomic, writeJsonAtomic } from './fsutil.ts';
-import { IMAGE_EDIT_MODELS, openaiImageEdit } from './openai-image.ts';
+import { IMAGE_EDIT_MODELS, openaiImageEdit, openaiImageGenerate } from './openai-image.ts';
 import { PHOTO_EXT, PHOTO_MIME, photoToPng, portraitPng, readPhoto, type Photo } from './photo.ts';
 import { isPng } from './reprompt/png.ts';
 import { measurePly, parseGaussianPly, validateSequence } from '../../shared/actor-sequence.ts';
@@ -240,36 +240,17 @@ export const IMAGE_MODELS = process.env.ACTOR_IMAGE_MODEL
   : ['gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'];
 
 async function openaiReference(prompt: string, out: string, log: (m: string) => void): Promise<void> {
-  let lastError = '';
-  for (const model of IMAGE_MODELS) {
-    const t0 = Date.now();
-    const res = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.keys.openai}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt, size: '1024x1536', quality: process.env.ACTOR_IMAGE_QUALITY ?? 'medium', n: 1 }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!res.ok) {
-      lastError = `OpenAI image (${model}) HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-      // only an unknown/unavailable model moves on to the next one
-      if ((res.status === 400 || res.status === 404) && /model|does not exist|invalid_value/i.test(lastError)) {
-        log(`${model} unavailable; trying the next image model`);
-        continue;
-      }
-      throw new Error(lastError);
-    }
-    const json = (await res.json()) as { data?: { b64_json?: string }[] };
-    const b64 = json.data?.[0]?.b64_json;
-    if (!b64) throw new Error(`OpenAI image (${model}) response has no b64_json`);
-    const png = Buffer.from(b64, 'base64');
-    if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('OpenAI image is not a PNG');
-    const tmp = `${out}.${process.pid}.tmp`;
-    await writeFile(tmp, png);
-    await rename(tmp, out);
-    log(`reference image via ${model}: ${png.length} bytes in ${Date.now() - t0}ms`);
-    return;
-  }
-  throw new Error(lastError || 'no image model configured');
+  const { png } = await openaiImageGenerate({
+    prompt,
+    models: IMAGE_MODELS,
+    size: '1024x1536',
+    quality: process.env.ACTOR_IMAGE_QUALITY ?? 'medium',
+    log,
+    what: 'reference image',
+  });
+  const tmp = `${out}.${process.pid}.tmp`;
+  await writeFile(tmp, png);
+  await rename(tmp, out);
 }
 
 async function openaiNormalisePhoto(
