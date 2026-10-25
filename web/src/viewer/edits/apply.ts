@@ -169,6 +169,18 @@ export class SceneEditsRuntime {
     this.attachRegions(true);
   }
 
+  /** The props prop-add edits put in the scene (debug hook / e2e): where each stands now. */
+  addedProps(): { id: string; kind: string; position: number[]; phase: string; visible: boolean; model?: string }[] {
+    return this.added.map((a) => ({
+      id: a.element.id,
+      kind: a.element.kind,
+      position: a.prop.object.position.toArray(),
+      phase: a.sampler ? 'moving' : 'parked',
+      visible: a.prop.object.visible,
+      ...(a.element.kind === 'model' ? { model: String(a.prop.object.userData.modelStatus ?? 'marker') } : {}),
+    }));
+  }
+
   debug(): EditsDebug {
     return {
       revision: this.applied?.revision ?? -1,
