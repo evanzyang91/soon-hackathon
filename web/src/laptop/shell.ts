@@ -1,30 +1,28 @@
-// Laptop layout (docs/PLAN-v2.md §3): the right panel's four tabs — Scene, Look (look-panel.ts as
-// it mounts itself), Edit (edit-panel.ts, or a placeholder until it exists), Shoot — the
-// collapsible project drawer on the left, the top bar (scene title + scale badge, the look's name,
-// clock + Play / Pause, an overflow menu with undo / redo / the cheatsheet), the keyboard & mouse
-// cheatsheet, a 3-step first-run tour (fly → drop a camera → pair the phone; dismissible,
-// remembered) and hover hints for buttons the panels render without one.
+// Laptop layout (docs/PLAN-v4.md): the right panel's three modes — Scene (heading, mood, cast,
+// lines, background action, location), Shots (the shot list) and Camera (phone, takes, clock) —
+// with Tab cycling them; the Tools drawer over the right panel (tools.ts, T); the collapsible
+// script drawer on the left ( [ ); the top bar (brand, `Project · Sc 1 · HEADING`, the look's
+// name, clock + Play / Pause, Export, Tools, an overflow menu with undo / redo / the cheatsheet);
+// the keyboard & mouse cheatsheet, a 3-step first-run tour (fly → add a shot → pair the phone;
+// dismissible, remembered) and hover hints for buttons the panels render without one.
 //
-// The Look and Edit panels build their own tab buttons; the shell replaces them with its own
-// (same data-testids: tab-look, tab-edit, tab-shoot, plus tab-scene) and shows a panel by
-// setting its section's `hidden`, which is what both panels check for their keyboard / pointer
-// handling.
+// A mode is shown by setting its pane's `hidden`.
 import type { Director } from './director';
 import { fmtTime, h, isTyping } from './dom';
 import { icon } from './icons';
 import { storageGet, storageSet } from './storage';
+import type { Tools } from './tools';
 
-export type Tab = 'scene' | 'look' | 'edit' | 'shoot';
+export type Mode = 'scene' | 'shots' | 'camera';
 
-const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: 'scene', label: 'Scene', hint: 'Scenes of this project, world quality, cast (High detail) and everything you can grab in the view' },
-  { id: 'look', label: 'Look', hint: 'Grade, film, atmosphere, lens and lights; the phone renders the same look' },
-  { id: 'edit', label: 'Edit', hint: 'Describe a change in words (re-prompt): recolour, move, add or remove things' },
-  { id: 'shoot', label: 'Shoot', hint: 'Phone pairing, cameras, scene clock, takes and dialogue' },
+const MODES: { id: Mode; label: string; hint: string }[] = [
+  { id: 'scene', label: 'Scene', hint: 'The scene: mood, cast and marks, lines, background action, location' },
+  { id: 'shots', label: 'Shots', hint: 'The shot list: coverage, frames, lenses, notes (1–9 jump, C adds the view)' },
+  { id: 'camera', label: 'Camera', hint: 'Pair the phone, record takes, the scene clock' },
 ];
-const TAB_KEY = 'previz:tab';
+const MODE_KEY = 'previz:mode';
 const DRAWER_KEY = 'previz:drawer';
-export const TOUR_KEY = 'previz:tour:v1';
+export const TOUR_KEY = 'previz:tour:v2';
 
 /** Hover hints for buttons the panels render without a title (by data-testid, then id). */
 const HINTS: Record<string, string> = {
@@ -43,15 +41,12 @@ const HINTS: Record<string, string> = {
 };
 
 export interface ShellParts {
-  /** The Edit tab exists (edit-panel.ts mounted); else a placeholder shows. */
-  edit: boolean;
+  tools: Tools;
 }
 
 export interface Shell {
-  show(tab: Tab): void;
-  readonly tab: Tab;
-  /** The Look panel is the visible tab. */
-  lookVisible(): boolean;
+  show(mode: Mode): void;
+  readonly mode: Mode;
   /** A short message over the viewport. */
   toast(text: string, ms?: number): void;
   /** Hooks the top bar's undo / redo buttons to the manipulation (mounted after the shell). */
@@ -61,53 +56,38 @@ export interface Shell {
 }
 
 export function mountShell(director: Director, parts: ShellParts): Shell {
+  const { tools } = parts;
   const right = document.getElementById('right')!;
-  const paneScene = document.getElementById('pane-scene')!;
-  const paneShoot = document.getElementById('pane-shoot')!;
-  const lookSection = document.getElementById('look-panel');
-  let editSection = document.getElementById('edit-panel');
-  if (!editSection || !parts.edit) {
-    // contract for WP G: mountEditPanel(el, director) fills an element like this one
-    editSection = h(
-      'section',
-      { class: 'card grow edit-panel', id: 'edit-panel', 'data-testid': 'edit-panel' },
-      h('h2', {}, 'Edit'),
-      h('div', { class: 'muted' }, 'Edit coming online'),
-      h('div', { class: 'muted small' }, 'Re-prompting ("make the bench red", "move Leo closer") lands here. Meanwhile, click anything in the view to move, recolour or hide it.'),
-    );
-    right.append(editSection);
-  }
+  const panes: Record<Mode, HTMLElement> = {
+    scene: document.getElementById('pane-scene')!,
+    shots: document.getElementById('pane-shots')!,
+    camera: document.getElementById('pane-camera')!,
+  };
 
-  // ---- tabs ------------------------------------------------------------------------------------
-  // the panels' own tab rows go; the shell's replaces them (same test ids)
-  for (const old of right.querySelectorAll('.right-tabs')) old.remove();
-  const nav = h('nav', { class: 'shell-tabs tabs', role: 'tablist', 'aria-label': 'Panels' });
-  const buttons = new Map<Tab, HTMLButtonElement>();
-  for (const t of TABS) {
-    const b = h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': t.id, 'data-testid': `tab-${t.id}`, title: t.hint, onclick: () => show(t.id) }, t.label);
+  // ---- modes -----------------------------------------------------------------------------------
+  const nav = h('nav', { class: 'shell-tabs tabs', role: 'tablist', 'aria-label': 'Modes' });
+  const buttons = new Map<Mode, HTMLButtonElement>();
+  for (const t of MODES) {
+    const b = h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': t.id, 'data-testid': `tab-${t.id}`, title: `${t.hint} (Tab)`, onclick: () => show(t.id) }, t.label);
     buttons.set(t.id, b);
     nav.append(b);
   }
   right.prepend(nav);
-  const sections: Record<Tab, HTMLElement | null> = { scene: paneScene, look: lookSection, edit: editSection, shoot: paneShoot };
-  let current: Tab = 'shoot';
-  function show(tab: Tab) {
-    current = tab;
-    storageSet(TAB_KEY, tab);
-    for (const t of TABS) {
-      const s = sections[t.id];
-      if (s) s.hidden = t.id !== tab;
+  let current: Mode = 'scene';
+  function show(mode: Mode) {
+    current = mode;
+    storageSet(MODE_KEY, mode);
+    for (const t of MODES) {
+      panes[t.id].hidden = t.id !== mode;
       const b = buttons.get(t.id)!;
-      b.classList.toggle('on', t.id === tab);
-      b.setAttribute('aria-selected', String(t.id === tab));
+      b.classList.toggle('on', t.id === mode);
+      b.setAttribute('aria-selected', String(t.id === mode));
     }
     right.scrollTop = 0;
   }
-  // any other child the panels left behind (e.g. a stray card) belongs to no tab
-  for (const c of [...right.children] as HTMLElement[]) if (c !== nav && !Object.values(sections).includes(c)) c.hidden = true;
-  const legacy = storageGet<string>('previz:rightTab');
-  const saved = storageGet<Tab>(TAB_KEY) ?? (storageGet<boolean>('previz:edit-tab') ? 'edit' : legacy === 'look' ? 'look' : null);
-  show(saved && TABS.some((t) => t.id === saved) ? saved : 'shoot');
+  // older layouts' tab names: the Shoot tab is the Camera mode now; Look / Edit live in Tools
+  const saved = storageGet<string>(MODE_KEY) ?? (storageGet<string>('previz:tab') === 'shoot' ? 'camera' : null);
+  show(MODES.some((t) => t.id === saved) ? (saved as Mode) : 'scene');
 
   // ---- drawer ----------------------------------------------------------------------------------
   const drawerBtn = document.getElementById('drawer-toggle') as HTMLButtonElement;
@@ -127,26 +107,33 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   const lookBadge = document.getElementById('top-look') as HTMLButtonElement;
   const undoBtn = document.getElementById('top-undo') as HTMLButtonElement;
   const redoBtn = document.getElementById('top-redo') as HTMLButtonElement;
-  // undo / redo / the cheatsheet sit in an overflow menu (their shortcuts work without it)
-  const moreBtn = document.getElementById('top-more') as HTMLButtonElement;
-  const menu = document.getElementById('top-menu')!;
-  const setMenu = (open: boolean) => {
-    menu.hidden = !open;
-    moreBtn.setAttribute('aria-expanded', String(open));
-    moreBtn.classList.toggle('on', open);
+  // popover menus (Export, ⋯): one open at a time, closed by a click elsewhere or Escape
+  const menus: { btn: HTMLButtonElement; menu: HTMLElement }[] = [
+    { btn: document.getElementById('top-more') as HTMLButtonElement, menu: document.getElementById('top-menu')! },
+    { btn: document.getElementById('top-export') as HTMLButtonElement, menu: document.getElementById('export-menu')! },
+  ];
+  const setMenu = (m: (typeof menus)[number] | null) => {
+    for (const x of menus) {
+      const open = x === m;
+      x.menu.hidden = !open;
+      x.btn.setAttribute('aria-expanded', String(open));
+      x.btn.classList.toggle('on', open);
+    }
   };
-  moreBtn.addEventListener('click', () => setMenu(menu.hidden));
-  menu.addEventListener('click', (e) => {
-    if ((e.target as HTMLElement).closest('button')) setMenu(false);
-  });
+  for (const m of menus) {
+    m.btn.addEventListener('click', () => setMenu(m.menu.hidden ? m : null));
+    m.menu.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('button, a')) setMenu(null);
+    });
+  }
   document.addEventListener('pointerdown', (e) => {
-    if (!menu.hidden && !(e.target as HTMLElement | null)?.closest('.top-more')) setMenu(false);
+    if (!(e.target as HTMLElement | null)?.closest('.top-pop')) setMenu(null);
   });
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !menu.hidden) setMenu(false);
+    if (e.key === 'Escape') setMenu(null);
   });
   playBtn.addEventListener('click', () => director.togglePlay());
-  lookBadge.addEventListener('click', () => show('look'));
+  lookBadge.addEventListener('click', () => tools.open('grade'));
   let undoApi: Parameters<Shell['setUndo']>[0] | null = null;
   undoBtn.addEventListener('click', () => undoApi?.undo());
   redoBtn.addEventListener('click', () => undoApi?.redo());
@@ -190,6 +177,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
     }
     if (c === 'undo' || c === 'scene') renderUndo();
   });
+  tools.onChange(() => renderUndo());
   renderClock();
   renderLook();
 
@@ -227,12 +215,25 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
       if (sheet.isConnected) closeSheet();
       else openSheet();
     } else if (e.key === '[') setDrawer(document.body.classList.contains('drawer-closed'));
+    else if (e.code === 'KeyT') {
+      e.preventDefault();
+      tools.toggle();
+    } else if (e.key === 'Tab') {
+      // Tab steps through the modes (Shift+Tab back); the Tools drawer gives way
+      e.preventDefault();
+      const i = MODES.findIndex((m) => m.id === current);
+      const next = MODES[(i + (e.shiftKey ? MODES.length - 1 : 1)) % MODES.length]!.id;
+      tools.close();
+      if (document.activeElement instanceof HTMLElement && right.contains(document.activeElement)) document.activeElement.blur();
+      show(next);
+    }
   });
 
   // ---- tour --------------------------------------------------------------------------------------
   const tourParam = new URLSearchParams(location.search).get('tour');
   const startTour = (force = false) => {
     if (!force && storageGet<string>(TOUR_KEY)) return;
+    tools.close();
     runTour(show, () => storageSet(TOUR_KEY, 'done'));
   };
   // automation (Playwright, the look checks) never sees it unless ?tour=1 asks; ?tour=force replays
@@ -273,10 +274,9 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
 
   return {
     show,
-    get tab() {
+    get mode() {
       return current;
     },
-    lookVisible: () => !!lookSection && !lookSection.hidden,
     toast,
     setUndo: (u) => {
       undoApi = u;
@@ -290,42 +290,45 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
 
 const KEYS: [string, [string, string][]][] = [
   [
-    'Fly & view',
+    'Work',
+    [
+      ['Tab · Shift+Tab', 'next mode · previous (Scene, Shots, Camera)'],
+      ['1 – 9', 'go to shot 1A … 1I (the phone follows)'],
+      ['C', 'add the view as a shot (frame grabbed)'],
+      ['F', 'grab the selected shot’s frame again'],
+      ['Space', 'play / pause the scene clock'],
+      ['R', 'record a take'],
+      ['V', 'view through the phone'],
+      ['T', 'tools: grade, re-prompt, objects, developer'],
+      ['[', 'script drawer'],
+      ['?', 'this sheet'],
+    ],
+  ],
+  [
+    'Fly & look',
     [
       ['W A S D · Q / E', 'fly · down / up (Shift: faster)'],
       ['drag empty space · right-drag', 'look around'],
       ['double-click', 'mouselook (Esc leaves)'],
-      ['wheel', 'zoom (field of view)'],
-      ['V', 'view through the phone'],
-      ['G', 'ground grid'],
-      ['[', 'projects drawer'],
+      ['wheel', 'zoom (changes the lens)'],
+      ['Alt + click', 'focus on what is under the cursor'],
+      ['moving the view', 'leaves the selected shot (its frame guide goes)'],
     ],
   ],
   [
-    'Select & move',
+    'Marks & objects',
     [
-      ['click', 'select an actor, prop, light or camera'],
+      ['click', 'select an actor, prop, light or shot'],
       ['drag', 'move it on the floor (actors stop at walls)'],
       ['Shift + drag', 'raise / lower'],
       ['yellow ring', 'turn (Shift: 15° steps)'],
       ['orange knob', 'scale a prop · a light’s radius'],
-      ['green point', 'a camera’s focus distance (depth of field on)'],
+      ['green point', 'a shot’s focus distance (depth of field on)'],
       ['← ↑ → ↓', 'nudge 5 cm (Shift: 50 cm)'],
-      ['⌫ / Delete', 'delete a prop, light or camera'],
-      ['click the world', 'select a region of splats: recolour, hide, move'],
+      ['⌫ / Delete', 'delete a prop, light or shot'],
+      ['click the set', 'select a region of it: recolour, hide, move'],
       ['⌘Z · ⇧⌘Z', 'undo · redo'],
-      ['Esc', 'deselect'],
-    ],
-  ],
-  [
-    'Shoot',
-    [
-      ['Space', 'play / pause the scene clock'],
-      ['C', 'drop a camera at the view'],
-      ['1 – 9', 'jump to a camera'],
-      ['R', 'record a take'],
-      ['Alt + click', 'focus on what is under the cursor'],
-      ['?', 'this sheet'],
+      ['Esc', 'deselect · close Tools'],
     ],
   ],
 ];
@@ -348,7 +351,7 @@ function buildCheatsheet(onTour: () => void): HTMLElement {
       { class: 'sheet', role: 'dialog', 'aria-label': 'Keyboard and mouse' },
       h('div', { class: 'sheet-head' }, h('h2', {}, 'Keyboard & mouse'), h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'small', title: 'Show the three-step tour again', 'data-testid': 'replay-tour', onclick: onTour }, 'Replay the tour'), close),
       h('div', { class: 'sheet-cols' }, ...cols),
-      h('div', { class: 'muted small' }, 'Every change in the view syncs to the paired phone. The Look tab has its own undo while it is open; ⌘Z undoes whichever changed last.'),
+      h('div', { class: 'muted small' }, 'Every change in the view syncs to the paired phone. Tools › Grade has its own undo while it is open; ⌘Z undoes whichever changed last.'),
     ),
   );
   return backdrop;
@@ -360,30 +363,30 @@ interface Step {
   title: string;
   text: string;
   target: () => HTMLElement | null;
-  tab?: Tab;
+  mode?: Mode;
 }
 
 const STEPS: Step[] = [
   {
     title: 'Fly',
-    text: 'W A S D to fly, Q / E down / up, Shift for speed. Drag empty space (or right-drag) to look around, wheel to zoom. Click an actor, prop or light to move it.',
+    text: 'W A S D to fly, Q / E down / up, Shift for speed. Drag empty space (or right-drag) to look around, wheel to zoom. Drag an actor to move their mark.',
     target: () => document.getElementById('stage'),
   },
   {
-    title: 'Drop a camera',
-    text: 'Found a shot? Press C or Drop: a camera lands at your view. Drag its frustum in the view to adjust it; the phone attaches to the active camera.',
-    target: () => document.getElementById('cam-drop'),
-    tab: 'shoot',
+    title: 'Add a shot',
+    text: 'Found a frame? Press C or Add shot: the view becomes the next shot with a frame grab. 1–9 jump between shots; the phone attaches to the one you pick.',
+    target: () => document.getElementById('shots-add'),
+    mode: 'shots',
   },
   {
     title: 'Pair the phone',
-    text: 'Scan this QR with your phone (same Wi-Fi) and tap Start. It becomes the handheld camera, and its view shows up in the corner of yours.',
+    text: 'Scan this QR with your phone (same Wi-Fi) and tap Start. It becomes the handheld camera on the selected shot; record takes here.',
     target: () => document.getElementById('ph-qr'),
-    tab: 'shoot',
+    mode: 'camera',
   },
 ];
 
-function runTour(show: (t: Tab) => void, done: () => void) {
+function runTour(show: (m: Mode) => void, done: () => void) {
   document.querySelector('.coach')?.remove();
   document.querySelector('.coach-ring')?.remove();
   let i = 0;
@@ -431,7 +434,7 @@ function runTour(show: (t: Tab) => void, done: () => void) {
   }
   function render() {
     const step = STEPS[i]!;
-    if (step.tab) show(step.tab);
+    if (step.mode) show(step.mode);
     const last = i === STEPS.length - 1;
     card.replaceChildren(
       h('div', { class: 'coach-step muted small' }, `${i + 1} / ${STEPS.length}`),

@@ -1,4 +1,4 @@
-// Edit tab (right panel): scoped re-prompting (docs/PLAN-v2.md §2).
+// Tools › Re-prompt (tools.ts): scoped re-prompting (docs/PLAN-v2.md §2).
 //
 //   prompt box (Enter) → POST reprompt → the plan's summary + a scope chip
 //     look / transform / prop / region (with a 3D target) — already applied and saved by the server
@@ -109,7 +109,7 @@ export interface EditPanel {
 }
 
 /**
- * Mounts the Edit tab. The shell (shell.ts) calls `mountEditPanel(el, director)` with the tab's
+ * Mounts the Re-prompt panel. main.ts calls `mountEditPanel(el, director)` with Tools › Re-prompt's
  * section and owns the tab row; `mountEditPanel(director)` (no shell) appends its own section to
  * #right.
  */
@@ -147,7 +147,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
     spellcheck: 'false',
   });
   const sendBtn = h('button', { type: 'button', class: 'primary', 'data-testid': 'edit-send' }, 'Send');
-  const selectBtn = h('button', { type: 'button', class: 'small', title: 'Click the world to select a region (Shift+drag: box)', 'data-testid': 'edit-select' }, 'Select');
+  const selectBtn = h('button', { type: 'button', class: 'small', title: 'Click the set to select a region (Shift+drag: box)', 'data-testid': 'edit-select' }, 'Select');
   const selInfo = h('span', { class: 'muted small edit-selinfo' });
   const growBtn = h('button', { type: 'button', class: 'icon', title: 'Grow selection', 'aria-label': 'Grow selection' }, icon('plus'));
   const shrinkBtn = h('button', { type: 'button', class: 'icon', title: 'Shrink selection', 'aria-label': 'Shrink selection' }, icon('minus'));
@@ -157,7 +157,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
   const historyBox = h('div', { class: 'edit-history', 'data-testid': 'edit-history' });
   const undoBtn = h('button', { type: 'button', class: 'small', 'data-testid': 'edit-undo' }, 'Undo last');
   section.append(
-    h('h2', {}, 'Edit', h('span', { class: 'spacer' }), selectBtn),
+    h('h2', {}, 'Prompt', h('span', { class: 'spacer' }), selectBtn),
     h('div', { class: 'edit-input' }, input, sendBtn),
     h('div', { class: 'row edit-selrow' }, selInfo, h('span', { class: 'spacer' }), shrinkBtn, growBtn, clearBtn),
     result,
@@ -464,7 +464,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
       e.stopPropagation();
       const region = sphereFromClick(splat, director.mainCamera(), ndcOf(e));
       if (!region) {
-        flash('No splat under the cursor');
+        flash('Nothing under the cursor');
         return;
       }
       placeRegion(region, 'click');
@@ -548,7 +548,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
     selInfo.textContent = s
       ? `${pending?.region ? 'Target' : 'Selection'}: ${s.shape} ${s.shape === 'sphere' ? `r ${s.size[0].toFixed(2)} m` : `${s.size.map((v) => (v * 2).toFixed(2)).join('×')} m`}`
       : selecting
-        ? 'Click the world (Shift+drag for a box)'
+        ? 'Click the set (Shift+drag for a box)'
         : 'Nothing selected';
     for (const b of [growBtn, shrinkBtn, clearBtn]) b.disabled = !s;
   };

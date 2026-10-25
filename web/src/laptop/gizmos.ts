@@ -1,4 +1,4 @@
-// Director-only overlays: camera frustums for dropped cameras and the live phone. They live on
+// Director-only overlays: camera frustums for the shots and the live phone. They live on
 // GIZMO_LAYER, which the director camera sees and the phone/PiP cameras do not.
 import * as THREE from 'three';
 import type { DropCamera } from '@shared/protocol';
@@ -118,7 +118,7 @@ export class FrustumGizmo {
   }
 }
 
-/** One frustum + name label per dropped camera; the active one is highlighted. */
+/** One frustum + label per shot (director.cameras); the one the phone is on is highlighted. */
 export class CameraMarkers {
   readonly group = new THREE.Group();
   private gizmos: FrustumGizmo[] = [];
@@ -136,7 +136,9 @@ export class CameraMarkers {
       for (const g of this.gizmos) g.dispose();
       this.gizmos = cameras.map((c) => {
         const color = c.id === activeId ? '#ffd23f' : '#9aa4b1';
-        const g = new FrustumGizmo(color, 0.35, { label: c.name });
+        // a shot is marked by its number on the set ("1B"), as on a floor plan
+        const label = /^\d+[A-Z]+ · /.test(c.name) ? c.name.split(' · ')[0]! : c.name;
+        const g = new FrustumGizmo(color, 0.35, { label });
         g.setFov(c.fovDeg, 16 / 9);
         this.group.add(g.object);
         return g;

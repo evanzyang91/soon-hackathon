@@ -17,7 +17,6 @@ import {
   buildSceneState,
   cycleCamera,
   initialPhoneLink,
-  nextCameraName,
   nextLineId,
   phoneAnchor,
   phoneCameraPose,
@@ -32,7 +31,7 @@ import {
 } from './messages';
 import { TakeRecorder } from './recorder';
 import { RelayLink, type LinkStatus } from './relay-link';
-import { storageGet, storageSet } from './storage';
+import { storageSet } from './storage';
 
 export type Change =
   | 'scene'
@@ -51,6 +50,18 @@ export type Change =
   /** The direct-manipulation undo stack changed. */
   | 'undo';
 
+/** A recorded take, kept for this session (the WebM also downloads when the take stops). */
+export interface Take {
+  n: number;
+  /** "Take 2 · 1B · Over Leo's shoulder": the shot the phone was on when it started. */
+  name: string;
+  blob: Blob;
+  /** Object URL of `blob` (lives as long as the page). */
+  url: string;
+  seconds: number;
+  file: string;
+}
+
 /** Phone framing when its pose does not carry `aspect` (landscape 16:9). */
 export const PHONE_ASPECT = 16 / 9;
 const HEARTBEAT_MS = 250;
@@ -59,9 +70,6 @@ const LIVE_CAMERA_MS = 50;
 
 const v3 = (p: Vec3) => new THREE.Vector3(p[0], p[1], p[2]);
 const q4 = (q: Quat) => new THREE.Quaternion(q[0], q[1], q[2], q[3]);
-const toVec3 = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
-const toQuat = (q: THREE.Quaternion): Quat => [q.x, q.y, q.z, q.w];
-const uid = () => Math.random().toString(36).slice(2, 10);
 /** The server's start camera (server/pipeline/project.ts START_CAMERA): nobody chose it. */
 const isDefaultStart = (c: { position: Vec3; quaternion: Quat }) =>
   [0, 1.6, 0].every((v, i) => Math.abs(c.position[i]! - v) < 1e-6) &&
@@ -73,7 +81,7 @@ export class Director {
   readonly view: ViewportRenderer;
   readonly camera = new THREE.PerspectiveCamera(60, 1, 0.05, 2000);
   readonly phoneCamera = new THREE.PerspectiveCamera(60, PHONE_ASPECT, 0.05, 2000);
-  /** Stand-in for the active drop camera when no phone is attached (PiP preview). */
+  /** Stand-in for the active shot when no phone is attached (PiP preview). */
   readonly shotCamera = new THREE.PerspectiveCamera(50, PHONE_ASPECT, 0.05, 2000);
   readonly listener = new THREE.AudioListener();
   readonly controls: FlyControls;
@@ -90,6 +98,10 @@ export class Director {
   manifestUrl: string | null = null;
   /** The open scene's manifest changed on disk but could not be applied live: offer a reload. */
   sceneStale = false;
+  /**
+   * The open scene's shot list as the phone sees it (shots-panel.ts keeps it in step with
+   * scene-<n>/shots.json: one DropCamera per shot, same ids); the phone attaches to the active one.
+   */
   cameras: DropCamera[] = [];
   activeCameraId: string | null = null;
   speakingLineId: string | null = null;
@@ -104,6 +116,8 @@ export class Director {
   pipRect: PipRect | null = null;
   pipLabel = '';
   takes = 0;
+  /** This session's takes, newest last (the Camera panel lists them). */
+  readonly takeList: Take[] = [];
   lastStillAt = 0;
   /** Adds fields to each SceneState before it is sent (look panel: editsRevision, live look). */
   decorateState: ((state: SceneState) => void) | null = null;
@@ -113,7 +127,7 @@ export class Director {
   selection: TargetRef | null = null;
   /**
    * The splat region the director clicked in the viewport (a sphere around the hit, resized by
-   * dragging its outline): the Edit tab can use it as the selection for its next prompt.
+   * dragging its outline): Re-prompt can use it as the selection for its next prompt.
    */
   pendingRegion: RegionSelection | null = null;
 
@@ -130,6 +144,8 @@ export class Director {
   private lastClockEmit = 0;
   private hadPhone = false;
   private readonly frameHooks = new Set<(t: number) => void>();
+  /** One-shot callbacks run right after the next main render, before the PiP draws over it. */
+  private mainRendered: (() => void)[] = [];
   private lastLiveCamera = 0;
   /** Collider grids for the suggested shots' line-of-sight checks, built once per scene. */
   private readonly shotGrids = new WeakMap<SceneRuntime, TriGrid>();
@@ -234,11 +250,9 @@ export class Director {
         if (this.castAim && this.runtime === rt)
           this.castAim.until = Math.max(this.castAim.until, performance.now() + 3000);
       });
-      const saved = storageGet<{ cameras: DropCamera[]; activeCameraId: string | null }>(
-        this.storageKey(),
-      );
-      this.cameras = saved?.cameras ?? [];
-      this.activeCameraId = saved?.activeCameraId ?? null;
+      // the Shots panel loads this scene's shot list and hands it over (setCameras)
+      this.cameras = [];
+      this.activeCameraId = null;
       this.loading = null;
       const url = new URL(location.href);
       url.searchParams.set('project', projectId);
@@ -307,48 +321,35 @@ export class Director {
     }
   }
 
-  private storageKey() {
-    return `previz:cams:${this.projectId}:${this.sceneIndex}`;
-  }
-
-  // ---- cameras ------------------------------------------------------------------------------
+  // ---- cameras (the shot list) -----------------------------------------------------------------
 
   private camerasChanged() {
-    if (this.projectId)
-      storageSet(this.storageKey(), { cameras: this.cameras, activeCameraId: this.activeCameraId });
     this.emit('cameras');
     this.broadcast();
   }
 
-  /** Drops a camera at the current main view (the phone's view when viewing from the phone). */
-  dropCamera(name?: string): DropCamera {
-    const src = this.mainCamera();
-    const cam: DropCamera = {
-      id: uid(),
-      name: name?.trim() || nextCameraName(this.cameras),
-      position: toVec3(src.position),
-      quaternion: toQuat(src.quaternion),
-      fovDeg: Math.round(src.fov * 10) / 10,
-    };
-    this.cameras = [...this.cameras, cam];
-    if (!this.activeCameraId) this.activeCameraId = cam.id;
+  /** The Shots panel's list as the phone's cameras (same ids); `activeId` = the shot the phone is on. */
+  setCameras(cameras: DropCamera[], activeId: string | null) {
+    const active = cameras.some((c) => c.id === activeId) ? activeId : null;
+    if (JSON.stringify([cameras, active]) === JSON.stringify([this.cameras, this.activeCameraId])) return;
+    this.cameras = structuredClone(cameras);
+    this.activeCameraId = active;
     this.camerasChanged();
-    return cam;
   }
 
   /**
-   * Suggested shots of the open scene from where its actors stand now (viewer/shots.ts): Wide
-   * master, Two-shot, Over X's shoulder on Y, a Close-up each. Framed for the narrower of this
-   * viewport and the phone's 16:9; camera spots behind a wall of the set are moved (collider).
-   * Empty without actors.
+   * Suggested coverage of the open scene from where its actors stand now (viewer/shots.ts): Wide
+   * master, Two-shot, Over X's shoulder on Y, a Close-up each. Framed for `aspect` (default: the
+   * narrower of this viewport and the phone's 16:9, what the start view needs); camera spots
+   * behind a wall of the set are moved (collider). Empty without actors.
    */
-  suggestedShots(): SuggestedShot[] {
+  suggestedShots(aspect?: number): SuggestedShot[] {
     const rt = this.runtime;
     if (!rt) return [];
     const { width, height } = this.view.size;
     const sc = rt.manifest.startCamera.position;
     return suggestShots(sceneShotActors(rt), (x, z) => rt.groundY(x, z), {
-      aspect: Math.min(PHONE_ASPECT, width > 0 && height > 0 ? width / height : PHONE_ASPECT),
+      aspect: aspect ?? Math.min(PHONE_ASPECT, width > 0 && height > 0 ? width / height : PHONE_ASPECT),
       audience: [sc[0], sc[2]],
       hit: this.colliderHit(rt),
     });
@@ -402,14 +403,6 @@ export class Director {
     aim.pose = this.cameraPose();
   }
 
-  addShotAsCamera(shot: SuggestedShot) {
-    const { position, quaternion, fovDeg } = shot;
-    const cam: DropCamera = { id: uid(), name: shot.name.slice(0, 40), position, quaternion, fovDeg };
-    this.cameras = [...this.cameras, cam];
-    if (!this.activeCameraId) this.activeCameraId = cam.id;
-    this.camerasChanged();
-  }
-
   removeCamera(id: string) {
     this.cameras = this.cameras.filter((c) => c.id !== id);
     if (this.activeCameraId === id) this.activeCameraId = this.cameras[0]?.id ?? null;
@@ -417,7 +410,7 @@ export class Director {
   }
 
   /**
-   * Changes a dropped camera. Live changes (a drag in the viewport) reach the phone at ≤ 20 Hz, so
+   * Changes a shot's camera (its frustum dragged in the viewport). Live changes (a drag in the viewport) reach the phone at ≤ 20 Hz, so
    * a phone attached to it follows; `persist` ends the change (saved, panels re-render).
    */
   updateCamera(id: string, patch: Partial<Omit<DropCamera, 'id'>>, persist: boolean) {
@@ -461,6 +454,14 @@ export class Director {
   onFrame(fn: (t: number) => void) {
     this.frameHooks.add(fn);
     return () => this.frameHooks.delete(fn);
+  }
+
+  /**
+   * Runs `fn` once, right after the next main render and before the PiP is drawn over it (a
+   * frame grab reads the canvas there; the canvas keeps its bytes until the task ends).
+   */
+  afterNextMainRender(fn: () => void) {
+    this.mainRendered.push(fn);
   }
 
   setActiveCamera(id: string | null) {
@@ -620,15 +621,27 @@ export class Director {
   }
 
   async stopRecording() {
+    const seconds = (performance.now() - this.recorder.startedAt) / 1000;
+    const on = this.cameras.find((c) => c.id === this.activeCameraId);
     const blob = await this.recorder.stop();
     this.emit('recording');
     if (!blob) return;
     this.takes++;
     const slug = this.runtime?.manifest.plan.slug ?? 'scene';
-    downloadBlob(blob, `previz-${slug}-take${this.takes}.webm`);
+    const file = `previz-${slug}-take${this.takes}.webm`;
+    this.takeList.push({
+      n: this.takes,
+      name: `Take ${this.takes}${on ? ` · ${on.name}` : ''}`,
+      blob,
+      url: URL.createObjectURL(blob),
+      seconds,
+      file,
+    });
+    downloadBlob(blob, file);
+    this.emit('recording');
   }
 
-  /** Renders one frame from the phone (or main) camera and downloads it as PNG. */
+  /** Renders one frame from the phone (or main) camera and downloads it as PNG ("Save frame"). */
   captureStill() {
     const cam = this.phone.lastPose ? this.phoneCamera : this.mainCamera();
     this.view.renderMain(cam);
@@ -636,7 +649,7 @@ export class Director {
     this.canvas.toBlob((b) => {
       if (!b) return;
       const slug = this.runtime?.manifest.plan.slug ?? 'scene';
-      downloadBlob(b, `previz-${slug}-still-${Date.now()}.png`);
+      downloadBlob(b, `previz-${slug}-frame-${Date.now()}.png`);
     }, 'image/png');
     this.lastStillAt = performance.now();
     this.emit('recording');
@@ -765,6 +778,13 @@ export class Director {
     const main = this.mainCamera();
     if (this.listener.parent !== main) main.add(this.listener);
     this.view.renderMain(main);
+    for (const fn of this.mainRendered.splice(0)) {
+      try {
+        fn();
+      } catch (err) {
+        console.warn('after-render hook failed', err);
+      }
+    }
 
     const pip = this.pipSource(t);
     if (pip && this.pipEnabled && !this.recorder.recording) {
@@ -851,7 +871,7 @@ export class Director {
 }
 
 /** Where the cast stands (cm) and whether the collider is in: a change re-frames the start view. */
-function castKey(rt: SceneRuntime): string {
+export function castKey(rt: SceneRuntime): string {
   const spots = [...rt.actors.values()].map(
     (a) =>
       `${a.characterId}:${[a.object.position.x, a.object.position.z, a.object.rotation.y].map((v) => v.toFixed(2)).join(',')}`,
