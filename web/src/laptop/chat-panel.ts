@@ -21,6 +21,7 @@ import { prepareImage, type ChatApi, type ChatResponse, type PreparedImage } fro
 import {
   ACTION_LABEL,
   STATUS_LABEL,
+  backgroundSummary,
   excerpt,
   findCharacter,
   fmtUsd,
@@ -779,6 +780,17 @@ export function mountChatPanel(
           h('span', { class: `plan-tod ${s.timeOfDay}` }, s.timeOfDay),
         ),
         h('div', { class: 'plan-desc', title: s.worldPrompt }, excerpt(s.worldPrompt, 160)),
+        s.dynamics.length
+          ? h(
+              'div',
+              {
+                class: 'plan-bg',
+                'data-testid': 'plan-background',
+                title: s.dynamics.map((d) => d.label).join('\n'),
+              },
+              `Background: ${backgroundSummary(s)}`,
+            )
+          : null,
         job && !p.draft ? projects.chips(p, job) : null,
       ),
     );

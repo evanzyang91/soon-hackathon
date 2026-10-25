@@ -13,7 +13,7 @@ type SceneJob = ProjectStatus['scenes'][number];
 /** What a world regeneration costs (shown on the confirm card). */
 export const REGEN_COST = '~5 min · 1,580 Marble credits';
 export const FALLBACK_REPLY =
-  'I can change characters, lines and scenes, take reference photos, and start generation.';
+  'I can change characters, lines, scenes and their background action, take reference photos, and start generation.';
 export const VOICE_IDS = [
   'nova',
   'shimmer',

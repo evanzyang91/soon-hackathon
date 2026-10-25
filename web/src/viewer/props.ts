@@ -10,6 +10,7 @@
 // Every prop stays under ~3k triangles: the phone draws them next to a splat world.
 import * as THREE from 'three';
 import type { DynamicElement } from '@shared/schema';
+import { airplane, creature, helicopter } from './props-more';
 
 export interface Prop {
   object: THREE.Group;
@@ -225,6 +226,10 @@ class MotionProbe {
     this.speed += (v - this.speed) * k;
   }
 }
+
+// The building blocks props-more.ts (airplane, helicopter, creature) shares with this file.
+export { Builder, MotionProbe, flatPolygon, gaitPose, leg, shade };
+export type { Gait, LegRig, V3 };
 
 // ---- shared rigs ---------------------------------------------------------------------------------
 
@@ -1438,10 +1443,10 @@ export const DEFAULT_COLOR: Record<DynamicElement['kind'], string> = {
 const BUILDERS: Record<DynamicElement['kind'], (color: string, label: string) => Prop> = {
   // kind 'model' draws DynamicElement.model (a glTF binary); until the props package lands it is the marker
   model: generic,
-  // airplane / helicopter / creature get their bodies from the dynamics package; markers until then
-  airplane: generic,
-  helicopter: generic,
-  creature: generic,
+  // label-driven bodies in props-more.ts
+  airplane,
+  helicopter,
+  creature,
   car,
   bus,
   truck,
