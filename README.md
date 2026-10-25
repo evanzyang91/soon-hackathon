@@ -33,7 +33,7 @@ laptop while the actors speak their lines.
         │                         ▲ PhonePose ≤ 30 Hz (relay stamps phoneId)
         ▼                         │ SceneState (scene, clock, cameras, speaking line), commands
  web/  (three.js + Spark)         │
-   /              laptop director: scene list + pipeline chips, fly, drop cameras, phone frustum
+   /              laptop director: project chat, scene list + pipeline bars, fly, drop cameras, phone frustum
                   gizmo + picture-in-picture of the phone view, dialogue playback, take recorder
    /phone.html    phone camera: sensors → pose, renders the same scene from the phone's pose
    viewer/        shared loader: SPZ world (Marble OpenCV → metric, floor at y = 0), collider,
@@ -74,10 +74,12 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
 ## Make a scene
 
 1. Open `https://localhost:5173/` and accept the self-signed certificate once.
-2. In the projects drawer (left, ☰ or `[` toggles it), paste a screenplay (or press **Sample**)
-   and press **Generate**. The project appears with one row per scene and a chip per stage
-   (parse, world, actors, tts, manifest). Hover a chip for the detail; a red (failed) or amber
-   (fallback) chip can be clicked to retry.
+2. In the project chat (it fills the viewport while no scene is open), paste a screenplay (or
+   press **Sample**) and press **Generate**. The project appears in the drawer (left; its button
+   or `[` toggles it) with one row per scene and a thin five-segment bar for its pipeline (parse,
+   world, actors, tts, manifest) that names the stage while it runs or after it failed. Hover a
+   segment for the detail; a red (failed) or amber (fallback) segment, or the "… failed · retry"
+   label, can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
 4. The **Scene** tab (right panel) lists the open project's scenes, the world (splat quality,
    measured scale, floor offset) and the cast: one row per character with its height (`1.80 m`,
@@ -93,12 +95,12 @@ and clothing. **High detail (~5 min per actor)** in the project panel (tooltip: 
 fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build
 stays until the new one lands.") in the Scene tab's cast calls `POST /api/projects/:id/actors/:characterId/rebuild
 {detail: 'high'}` (202). The server runs `worker/run_actor.py --detail high` in the background into
-`<project>/actors/<id>/high/`; the chip reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
+`<project>/actors/<id>/high/`; the cast row's status reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
 time. When the build lands, every scene manifest showing the character is rewritten to it
 (`detail: 'high'` on the ActorAsset), an existing `data/actors-library/<id>/` copy is refreshed
 (the previous one kept as `sequence.previous/`), and the open scene swaps that actor in place:
 camera, clock and the other actors stay, and a paired phone reloads the scene. A failure changes
-nothing but the chip (`high detail failed`, with the reason and **Retry high detail**); a retry
+nothing but that status (`high detail failed`, with the reason and **Retry high detail**); a retry
 or a server restart recovers the Modal call from its receipt instead of paying again. **use
 standard** switches back to the standard build, which is kept on disk (no GPU).
 
@@ -138,7 +140,7 @@ A photo attached in the project chat becomes `Character.referenceImage` (a perso
   back in for free) and `ProjectStore.rebuildActorFromPlan(id, characterId)` (the build moves
   into `actors/<id>/prev-<k>/`, the manifests show it until the new build lands; a height-only
   change just rescales the same person, no GPU). Both show progress on the world stage / the
-  cast's rebuild chip, are idempotent while running and resume after a restart.
+  cast's rebuild status, are idempotent while running and resume after a restart.
 
 The laptop shows the photo next to the character in the Scene tab's cast and next to the Marble
 thumbnail in the projects drawer. One live run on `fixtures/real-samples/reference-512.jpg` (a
@@ -326,13 +328,14 @@ the city street and the bus stop, warm interior for the kitchen, golden hour for
 
 ## Laptop layout and direct manipulation
 
-The director page has a slim projects drawer on the left (new project + every project and its
-scenes; ☰ or `[` collapses it), the viewport, and a right panel with four tabs: **Scene** (the
+The director page has a slim projects drawer on the left (the project chat above every project
+and its scenes; the top bar's drawer button or `[` collapses it), the viewport, and a right panel
+with four tabs: **Scene** (the
 project's scenes, world quality and scale, cast with High detail, and an outliner of the props,
 lights and cameras), **Look** (grade / lens / lights), **Edit** (re-prompting: describe a change in
 words) and **Shoot** (phone pairing, scene clock, takes, cameras, suggested shots, dialogue). The
-top bar shows the scene title with its scale badge, the look's name, Play / Pause with the clock,
-undo / redo and `?`, which opens a keyboard and mouse cheatsheet. A three-step tour (fly → drop a
+top bar shows the scene title with its scale badge, the look's name, the clock with Play / Pause,
+and a ⋯ menu with undo / redo and the keyboard and mouse cheatsheet (also `?`). A three-step tour (fly → drop a
 camera → pair the phone) shows once on first run; the cheatsheet can replay it. Every button has
 a hover hint.
 
@@ -340,6 +343,31 @@ Suggested shots (Wide master, Two-shot, Over X's shoulder on Y, a Close-up per a
 on the actors where they stand when the shot is used (`web/src/viewer/shots.ts`: after staging,
 drags and chat moves), not on the planner's blind marks (`plan.shots`, listed only for a scene
 without actors). A scene whose start camera is the server default opens on the Wide master.
+
+**Design.** The laptop and the phone share one small design system (the `:root` tokens of
+`web/src/laptop/style.css`, repeated at the top of `web/phone.html`). A near-black canvas
+(`--bg`) and two lighter surfaces (`--surface-1` for panels, `--surface-2` for inputs, menus and
+the current row); text at two levels (`--text`, `--muted`); hairlines (8 % white) only where a
+boundary is needed; one accent (`--accent`) for the single filled primary action of a panel and
+for active states (the tab underline, the chat's project, a speaking line). Status colours
+(`--ok`, `--warn`, `--bad`) are desaturated and only ever a 6 px dot or plain text. One radius
+(6 px), an 8-pt spacing scale (`--s1`…`--s6`), one type family (`-apple-system, system-ui,
+Inter`) at 13 px body, 12 px secondary, 11 px uppercase section labels (0.06 em tracking) and
+20 px for the one title, weights 400 / 500 / 600, tabular numerals for clocks and values; the
+screenplay box and plan diffs keep a monospace. Sections are a label and space, not boxes;
+buttons are ghosts (a hairline ring) except that one primary; tabs are text with an underline;
+the viewport's Grid / Collider / PiP / Reload are one low-contrast segmented control; a scene's
+pipeline is a five-segment bar; chat actions are a thin left rule and plain text. Icons are
+16 px inline SVG with 1.5 px strokes (`web/src/laptop/icons.ts`; `index.html` asks for one with
+`<span data-icon>`), no icon font or CDN. Empty, loading and error states are one muted, centred
+sentence.
+
+![Before / after: the chat docked next to an open scene](docs/images/ui-chat-docked-before-after.png)
+
+More before / after: [empty chat](docs/images/ui-chat-empty-before-after.png),
+[Scene](docs/images/ui-scene-before-after.png), [Look](docs/images/ui-look-before-after.png),
+[Edit](docs/images/ui-edit-before-after.png), [Shoot](docs/images/ui-shoot-before-after.png),
+[phone](docs/images/ui-phone-before-after.png).
 
 Everything in the viewport can be grabbed (`web/src/viewer/manipulate/`):
 
@@ -455,7 +483,7 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | click / drag an actor, prop, light or camera | select / move it (Shift+drag: up / down; yellow ring: turn; orange knob: scale / radius; green point: focus) |
 | ← ↑ → ↓ (Shift), ⌫ / Delete, Esc | nudge 5 cm (50 cm); delete a prop / light / camera; deselect |
 | click the world | select a region of splats: **Recolour**, **Hide**, **Move**, **Edit ›**, **Delete region** |
-| ⌘Z / ⇧⌘Z, top-bar ↶ ↷ | undo / redo a move, delete or region edit (or a look change when the Look tab changed last) |
+| ⌘Z / ⇧⌘Z, or the top bar's ⋯ menu | undo / redo a move, delete or region edit (or a look change when the Look tab changed last) |
 | `?`, `[` | keyboard and mouse cheatsheet; projects drawer |
 | wheel | zoom (field of view) |
 | Space | play / pause the scene clock (moving props, dialogue sync) |
