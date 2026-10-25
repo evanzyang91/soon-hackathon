@@ -84,13 +84,13 @@ with distance / time like the existing props, and has a bounding size that reads
 
 ## 5. Mock sets per scene type (`fixtures/mock-world/<set>/`)
 
-`server/pipeline/mock-world.ts` builds nine small deterministic SPZ sets (≤ 160 KB each, floor at
+`server/pipeline/mock-world.ts` builds ten small deterministic SPZ sets (≤ 160 KB each, floor at
 y = 0, Marble OpenCV frame, open floor in the foreground, a path for ground dynamics at z ≈ −10.5):
 `street` (today's), `forest` (clearing: grass, trunks, canopy, mist), `hall` (stone great hall:
 flagstones, columns, torch glow, dais), `cave` (rock, stalagmites, a glowing pool), `desert` (sand,
 mesas, big sky), `station` (deck plates, strip lights, bulkheads, viewport with stars), `shore`
 (sand, water to the horizon, cliffs), `village` (dirt road, timber fronts; western main street or
-medieval lane), `room` (cosy interior: boards, walls, a window, a table). `pickMockSet(plan, style)`
+medieval lane), `room` (cosy interior: boards, walls, a window, a table), `field` (open grass, a fence line, a treeline, big sky). `pickMockSet(plan, style)`
 chooses from heading + worldPrompt keywords + interior; the chosen set is recorded in
 `WorldAsset.caption` ("mock set: forest") and the world stage note. `cli make-mock-world [set|all]`.
 

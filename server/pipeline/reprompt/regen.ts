@@ -23,6 +23,7 @@ import { env } from '../../env.ts';
 import { EditsNotFound, type EditsStore } from '../edits.ts';
 import { exists, readJson, safeEndpoint, writeJsonAtomic } from '../fsutil.ts';
 import { ASSET_FILE, generateWorld, RECEIPT_FILE, type GenerateWorldOptions, type MarbleReceipt } from '../marble.ts';
+import type { MockSet } from '../mock-set.ts';
 import { mockSetDir } from '../mock-world.ts';
 import { IMAGE_EDIT_MODELS, openaiImageEdit, type ImageEdit } from '../openai-image.ts';
 import { compositeMasked, decodePng, EDIT_CANVAS, editMask, encodePng, isPng, resize, toRgb } from './png.ts';
@@ -88,6 +89,8 @@ export interface ProduceOptions {
    * `regen.prompt` as its text. Its sha256 joins the job key, so a new photo is a new job.
    */
   photo?: { file: string; isPano: boolean; source?: string };
+  /** MOCK / dry run: which procedural set stands in for the world (mock-set.ts pickMockSet). */
+  mockSet?: MockSet;
   deps?: {
     fetch?: typeof fetch;
     imageEdit?: ImageEdit;
@@ -181,6 +184,7 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
         outDir: worldDir,
         model: o.model,
         mock: o.mock,
+        mockSet: o.mockSet,
         dryRun,
         log: o.log,
         imagePrompt: { file: editedPath, isPano: true },
@@ -193,13 +197,14 @@ export async function produceRegenWorld(o: ProduceOptions): Promise<{ dir: strin
         outDir: worldDir,
         model: o.model,
         mock: o.mock,
+        mockSet: o.mockSet,
         dryRun,
         log: o.log,
         imagePrompt: { file: photo.file, isPano: photo.isPano, textPrompt: o.regen.prompt },
       });
       note = `regenerated from your photo${photo.isPano ? ' (360° panorama)' : ''}`;
     } else {
-      await gen({ prompt: o.regen.prompt, name: o.name, outDir: worldDir, model: o.model, mock: o.mock, dryRun, log: o.log });
+      await gen({ prompt: o.regen.prompt, name: o.name, outDir: worldDir, model: o.model, mock: o.mock, mockSet: o.mockSet, dryRun, log: o.log });
       note = 'regenerated from the new text prompt';
     }
     const asset = await readJson<WorldAsset>(join(worldDir, 'world-asset.json'));
