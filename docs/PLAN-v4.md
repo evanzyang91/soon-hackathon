@@ -84,3 +84,30 @@ T tools · [ drawer · ? help.
 | U4 shots server | `shots.json` store + routes, frame upload, `shotlist.csv`, MOCK green | `server/pipeline/shots.ts`, `routes.ts` registration, `shared/api.ts` helpers (lead-approved) |
 | U3 streamline | the three modes, Tools drawer, shot list panel with frames + lens + numbering + reorder, frame guide, Export (storyboard PNG / print PDF, CSV), vocabulary, keys, first-run copy, README "How a filmmaker uses it" | `web/src/laptop/**` (after U1 + U2 merge), `web/src/viewer/` overlays |
 | V verify | e2e: shot list persists + exports; before/after walkthrough screenshots of the whole spine | `tests/e2e/shots.spec.ts`, `docs/images/flow-*` |
+
+## Result
+
+**U3 (2026-10-25).** The laptop follows the spine. The right panel is **Scene · Shots · Camera**
+(Tab steps through them); **Tools** (`T`) is a drawer over it holding Grade (the Look panel),
+Re-prompt (the Edit panel), Objects and Developer (splat quality, grid, collider, reload, the
+world's scale / ground details, the API-key badge), unchanged inside. Scene shows the heading, a
+scene strip, the eighteen moods as swatches (the planner's choice marked, Scene's look first), the
+cast with height / pose / eye line / mark, the lines (play in place, Play scene, the shots covering
+each line), the background props with on / off and the location with "Change the location…" (the
+chat composer focused on the scene). Shots is the scene's `shots.json` (seeded once with coverage
+framed on the cast, Refresh coverage, rename / note / lens / lines in place, reorder by drag or
+up / down, duplicate, delete with ⌘Z, revision-checked saves that replay on 409) and the phone's
+camera list; selecting a shot (click, 1–9) flies there behind a 16:9 / 2.39 frame guide with a
+`1B · Two-shot · 35 mm` label, C adds the view as a shot and F re-grabs a frame (the guide's part
+of the next rendered frame, ≤ 960 px JPEG). Camera keeps pairing, record and the clock and lists
+the session's takes. Export makes the storyboard sheet (PNG at 2400 px, or a print page for PDF)
+and links the CSV. The UI speaks in lenses (mm), shots, frames, coverage and marks.
+Evidence: `docs/images/flow-1-script.png` … `flow-6-export.png`, `flow-tools.png` (GPU Chromium,
+1440×900, MOCK, the western fixture); `tests/e2e/shots.spec.ts`.
+
+Not done, or done differently: **walk-to** is not in the cast rows (the viewer has no way to send
+an actor along a path yet; it needs a blocking-path contract). Frames for the seeded coverage are
+grabbed by visiting each shot with the main view (when the Shots mode first shows them, from
+"Grab N frames", or before an export), not rendered off-screen, because a second view would need
+its own splat sort. A shot's own depth of field still lives in the laptop's browser storage, and a
+phone already on a shot keeps its own pinch lens when the shot's lens changes.
