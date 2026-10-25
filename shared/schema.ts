@@ -67,7 +67,31 @@ export const Blocking = z.object({
 });
 export type Blocking = z.infer<typeof Blocking>;
 
-export const DynamicElementKind = z.enum(['car', 'bus', 'bicycle', 'bird', 'pedestrian', 'generic']);
+/**
+ * Procedural moving props (web/src/viewer/props.ts builds each kind from primitives, coloured from
+ * the label). Modern traffic: car, bus, truck, motorcycle, bicycle, pedestrian. Any era: bird, dog,
+ * horse (ridden when the label says so), wagon (a horse-drawn cart or stagecoach), boat (on water).
+ * Fantasy / sci-fi: dragon (a large winged creature, flies), drone (a small hovering machine),
+ * spacecraft (a flying ship). generic = a plain marker for anything else.
+ */
+export const DynamicElementKind = z.enum([
+  'car',
+  'bus',
+  'truck',
+  'motorcycle',
+  'bicycle',
+  'pedestrian',
+  'bird',
+  'dog',
+  'horse',
+  'wagon',
+  'boat',
+  'dragon',
+  'drone',
+  'spacecraft',
+  'generic',
+]);
+export type DynamicElementKind = z.infer<typeof DynamicElementKind>;
 export const DynamicElement = z.object({
   id: z.string(),
   kind: DynamicElementKind,
@@ -91,6 +115,93 @@ export const SuggestedShot = z.object({
 });
 export type SuggestedShot = z.infer<typeof SuggestedShot>;
 
+// ---- Genre-aware look (docs/PLAN-v3.md) ----------------------------------------------------------
+
+/** LUT presets of the grade (shared/look.ts Look.lut; web/src/viewer/look/grade.ts implements). */
+export const LutPreset = z.enum([
+  'neutral',
+  'teal-orange',
+  'noir',
+  'kodak',
+  'bleach',
+  'cool-night',
+  'golden',
+  'sepia',
+  'verdant',
+  'cyber',
+  'ice',
+  'ember',
+]);
+export type LutPreset = z.infer<typeof LutPreset>;
+
+/**
+ * The full-look presets (grade + film + atmosphere; shared/look-presets.ts holds the values). The
+ * planner picks one per scene as the starting point of its look; the Look panel lists them.
+ */
+export const LookPresetName = z.enum([
+  'daylight-neutral',
+  'overcast',
+  'golden-hour',
+  'blue-hour',
+  'night-street',
+  'warm-interior',
+  'candlelit',
+  'moonlit',
+  'enchanted',
+  'cold-steel',
+  'neon-noir',
+  'horror',
+  'western-dust',
+  'film-noir',
+  'period-warm',
+  'storm',
+  'snowfall',
+  'dreamlike',
+]);
+export type LookPresetName = z.infer<typeof LookPresetName>;
+
+const unit = z.number().min(0).max(1);
+
+/**
+ * The planner's suggested look for a scene: a preset plus optional adjustments in Look units
+ * (shared/look.ts). The manifest stage turns it into the scene's initial edits.json look
+ * (server/pipeline/look-seed.ts) when the scene has no look yet; the director's edits always win.
+ */
+export const LookSeed = z.object({
+  preset: LookPresetName,
+  /** Mood words for the look's name and the phone HUD: "cold, eerie, damp stone". ≤ 60 chars. */
+  mood: z.string().max(60),
+  exposure: z.number().min(-3).max(3).optional(), // stops
+  contrast: z.number().min(0.5).max(2).optional(),
+  saturation: z.number().min(0).max(2).optional(),
+  temperature: z.number().min(-1).max(1).optional(), // − cool … + warm
+  tint: z.number().min(-1).max(1).optional(), // − green … + magenta
+  lut: LutPreset.optional(),
+  lutStrength: unit.optional(),
+  vignette: unit.optional(),
+  grain: unit.optional(),
+  bloom: unit.optional(),
+  fog: z.object({ color: z.string(), density: unit }).optional(),
+  skyTint: z.object({ color: z.string(), strength: unit }).optional(),
+});
+export type LookSeed = z.infer<typeof LookSeed>;
+
+/**
+ * The screenplay's visual style, read once by the planner and kept consistent across every scene's
+ * world prompt and every character's reference image. Free text, a few words each.
+ */
+export const VisualStyle = z.object({
+  /** "high fantasy", "hard science fiction", "folk horror", "western", "1920s period drama", "contemporary drama". */
+  genre: z.string().max(80),
+  /** Setting words every prompt keeps: "medieval Europe-inspired kingdom", "2140s orbital station", "present-day Chicago". */
+  era: z.string().max(120),
+  /** How every world should be rendered: "photoreal cinematic film still, soft natural light, muted earth tones". */
+  worldStyle: z.string().max(200),
+  /** Palette and mood in a few words, shown in the UI: "desaturated greens, cold steel, candle warmth". */
+  palette: z.string().max(120),
+});
+export type VisualStyle = z.infer<typeof VisualStyle>;
+
 export const ScenePlan = z.object({
   index: z.number().int().nonnegative(),
   slug: z.string(), // "int-kitchen-night"
@@ -107,6 +218,11 @@ export const ScenePlan = z.object({
   worldReference: z.object({ file: z.string(), isPano: z.boolean().default(false) }).optional(),
   timeOfDay: z.enum(['dawn', 'day', 'dusk', 'night']).default('day'),
   interior: z.boolean(),
+  /**
+   * The planner's suggested look for this scene (preset + adjustments). Absent on plans made before
+   * looks were planned: the manifest stage then derives one from heading, time of day and interior.
+   */
+  look: LookSeed.optional(),
   characterIds: z.array(z.string()),
   dialogue: z.array(DialogueLine),
   blocking: z.array(Blocking),
@@ -117,6 +233,8 @@ export type ScenePlan = z.infer<typeof ScenePlan>;
 
 export const ScreenplayPlan = z.object({
   title: z.string(),
+  /** Genre, era, render style and palette shared by every scene; absent on older plans. */
+  style: VisualStyle.optional(),
   characters: z.array(Character),
   scenes: z.array(ScenePlan).min(1),
 });

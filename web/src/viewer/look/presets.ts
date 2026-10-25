@@ -13,6 +13,11 @@ export const LUT_LABELS: Record<Lut, string> = {
   bleach: 'Bleach bypass',
   'cool-night': 'Cool night',
   golden: 'Golden hour',
+  sepia: 'Sepia print',
+  verdant: 'Verdant',
+  cyber: 'Cyber neon',
+  ice: 'Ice',
+  ember: 'Ember',
 };
 
 /** Grade / film / atmosphere fields a full-look preset sets (everything except lights and lens). */
