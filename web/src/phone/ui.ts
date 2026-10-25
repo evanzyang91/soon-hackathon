@@ -160,13 +160,17 @@ export function bindUi() {
     list.scrollTop = scroll;
   };
 
-  /** Anchored to the camera button: to its left (the landscape column), else above it. */
+  /**
+   * Anchored to the camera button: left of the column of controls it is in (landscape), else above
+   * the row (portrait), clear of the shutter's ring.
+   */
   const place = () => {
     const r = camBtn.getBoundingClientRect();
+    const col = (camBtn.parentElement ?? camBtn).getBoundingClientRect();
     const W = window.innerWidth;
     const H = window.innerHeight;
-    const m = 8;
-    menuEl.style.maxHeight = `${H - 2 * m}px`;
+    const m = 14;
+    menuEl.style.maxHeight = `${H - 16}px`;
     menuEl.style.left = '0px';
     menuEl.style.top = '0px';
     const w = menuEl.offsetWidth;
@@ -174,12 +178,12 @@ export function bindUi() {
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
     let left: number;
     let top: number;
-    if (r.left - m - w >= m) {
-      left = r.left - m - w;
-      top = clamp(r.bottom - h, m, H - m - h);
+    if (col.left - m - w >= 8) {
+      left = col.left - m - w;
+      top = clamp(r.bottom - h, 8, H - 8 - h);
     } else {
-      left = clamp(r.left + r.width / 2 - w / 2, m, W - m - w);
-      top = Math.max(m, r.top - m - h);
+      left = clamp(r.left + r.width / 2 - w / 2, 8, W - 8 - w);
+      top = Math.max(8, col.top - m - h);
     }
     menuEl.style.left = `${Math.round(left)}px`;
     menuEl.style.top = `${Math.round(top)}px`;
