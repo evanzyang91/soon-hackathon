@@ -2,7 +2,7 @@
 // keeps its procedural kind and may gain a real model from a local index of open-licence Objaverse
 // objects, attached as `DynamicElement.model` (the viewer draws it, or falls back to the body).
 //
-//   index     fixtures/models/index.json.gz (scripts/build-model-index.ts): ~50k Objaverse objects
+//   index     fixtures/models/index.json.gz (scripts/build-model-index.ts): ~43k Objaverse objects
 //             under CC0 / CC-BY / CC-BY-SA, ≤ 150k faces, glb ≤ 15 MB, with a thumbnail, kept for
 //             the noun families of model-vocab.ts and the LVIS categories. Loaded once, in memory.
 //   find      findModel(label, kind): the family the label names (the first one, its head noun:

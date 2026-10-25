@@ -514,6 +514,73 @@ map, so print and fine detail blur. Thin parts (chair legs, railings) can break 
 description. A job that is running when the server restarts reads back as failed (Retry starts it
 again). Re-prompt's region tools edit the splat world, not a model prop.
 
+### Found models: a real model for the background action
+
+While a scene is generated, every piece of background action keeps its procedural kind and may also
+get a real model found in an open-licence library. "A huge T. rex lumbers past" gets an animated,
+rigged T. rex 8 m tall. "A UFO hovers over the street" gets a saucer and "A red sports car drives
+by" a sports car. The element carries it as `DynamicElement.model`: the glb, whether it is
+animated, the clip names per intent when the file names them (idle / move / fast), its licence and
+attribution line, the height it is scaled to and where it came from. The viewer draws the model
+and falls back to the kind's procedural body when there is none or it does not load. Nothing is
+prompted: the label is enough.
+
+- **Source and licences.** Objaverse 1.0 (`allenai/objaverse` on Hugging Face, no key): Sketchfab
+  objects with their licences. The index keeps only CC0, CC-BY and CC-BY-SA, never NC or ND. CC-BY
+  asks for credit, so each found model has an attribution line ("T-rex" by ktkrisz10
+  (sketchfab.com/3d-models/…), CC BY 4.0) in `model.attribution` and in its `model.json`, together
+  with the author, the source URL and the licence id.
+- **The index** (`fixtures/models/index.json.gz`, 3.0 MB, 42,597 objects, built 2026-10-25):
+  glb ≤ 15 MB, ≤ 150k faces, with a thumbnail. Per noun family it keeps the best 80 objects and
+  the best 80 animated ones, plus every curated LVIS object. The families, their synonyms
+  (t-rex / tyrannosaurus / trex; ufo / flying saucer / alien ship; chopper / helicopter; sedan /
+  auto / car …), LVIS categories and height priors are in `server/pipeline/model-vocab.ts`. They
+  cover dinosaurs, common and wild animals, monsters, people, road vehicles, aircraft, boats and
+  street props. To rebuild it: `pnpm tsx scripts/build-model-index.ts [--cache data/objaverse-cache]`.
+  The first run downloads the metadata (160 shards, ~580 MB, about 15 s on a fast line) into the
+  cache; then the build takes about 15 s.
+- **Choosing** (`server/pipeline/models.ts`, local, about 1 ms): the label names the family (the
+  first thing it names, at its head noun: "a giant panda" is a bear, "a police helicopter" a
+  helicopter); otherwise the element's kind does. Candidates score on name, tags and LVIS category.
+  The label's other words count ("red", "police"), and so do the clips, likes and detail
+  (8k-100k faces). Toys, packs, parts, skulls, text, cartoon characters and very large files cost
+  points. Creature-like elements (creature, dog, horse, bird, dragon, pedestrian; animals, monsters,
+  people) only take a model with clips and a skeleton or a gait clip. Without one the procedural
+  body stays. Vehicles, aircraft, boats and props accept static models. The height is the family's
+  prior (a T. rex 4 m, a car 1.5 m, an airliner 12 m, a UFO 3 m) times the label's size words
+  (huge 2×, big 1.3×, small 0.5×, as for the procedural bodies).
+- **Without adding latency.** The lookups start when the scene's world stage is scheduled and run
+  alongside world, actors and voices. The manifest step joins them with a budget of 20 s from
+  their start. Whatever arrived is attached; a late or failed lookup means no model, in one log
+  line per scene (`[scene 0] found models: 4 of 4 attached (waited 0.9 s) — …`). A chat change to
+  the background ("add a helicopter hovering over the street") rewrites the manifest through the
+  same step, so a new element gets its own 20 s. Downloads come from Hugging Face into the shared
+  library `data/models-library/<uid>/` (`model.glb` + `model.json`, `MODELS_LIBRARY_DIR`). Each is
+  capped at 15 MB while streaming and at 15 s, at most two run at once, and each uid is fetched
+  once. A late download still lands in the library, so the next manifest gets it without network.
+  The server serves `/models/<uid>/model.glb` and `model.json` and nothing else under `/models/`.
+- **Measured** (2026-10-25, `cli models --bench`, 20 labels from a cold library): index load
+  170 ms once, lookup p50 1.2 ms / p95 1.8 ms, download p50 0.48 s / p95 0.67 s (0.3-8.4 MB), 20 of
+  20 labels found. 9 of the 10 creature labels found a rigged first choice; the dog's first choice
+  had no skeleton, and the attach step took the second, which has walking and idle clips. In MOCK
+  with `FOUND_MODELS=1`, the T. rex / UFO / sports car / airliner screenplay had its manifest 1.6 s
+  after the POST with all four attached; the step waited 0.9 s for the downloads.
+- **Switches.** `FOUND_MODELS=0` turns it off. MOCK skips it unless `FOUND_MODELS=1`, so the
+  offline e2e stays offline.
+
+```bash
+pnpm tsx server/pipeline/cli.ts models "A huge T. rex lumbers past." [--kind creature] [--fetch]
+#   family t-rex (needs clips), height 8 m; top 5 with score, licence, clips, faces, size, uid
+#   --fetch downloads the best into the library and prints the wall time
+pnpm tsx server/pipeline/cli.ts models --bench [--no-fetch]   # the 20 labels, p50 / p95, hit rates
+```
+
+Limits: names and tags on Sketchfab are often wrong, so a match can still be a bad model; the
+scores and the clip check catch most of them. Clip names are often meaningless ("CubeAction",
+"Take 001"), and the viewer then chooses the clip. The bounding-box height scales oddly for a
+model on a plinth, or with a long tail or a mast. Only the 80 + 80 best per family are in the
+index, and there is no Sketchfab or Poly Pizza search when the index has nothing.
+
 ## Laptop layout and direct manipulation
 
 The director page has the script drawer on the left (the project chat above every project and its
@@ -1177,7 +1244,8 @@ server/           HTTPS entry, relay, env, pipeline/ (stages, libraries, CLI)
 web/src/laptop/   director UI;  web/src/phone/  phone camera;  web/src/viewer/  shared 3D loader
 worker/           Modal LHM avatar worker (Python)
 ios/              ARKit camera app (prototype): Xcode project, PrevizCore Swift package
-fixtures/         sample screenplays (genres/), mock sets (mock-world/<set>/), real-provider samples
+fixtures/         sample screenplays (genres/), mock sets (mock-world/<set>/), real-provider samples,
+                  the found-model index (models/index.json.gz, scripts/build-model-index.ts)
 tests/            Playwright e2e (tests/e2e)
 docs/             PLAN.md and screenshots
 ```
