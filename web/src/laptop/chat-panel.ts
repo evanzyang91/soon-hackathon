@@ -36,6 +36,7 @@ import {
 } from './chat-model';
 import type { Director } from './director';
 import { byId, h } from './dom';
+import { icon } from './icons';
 import { displayName, sceneReady, type ProjectsPanel } from './projects-panel';
 import { SAMPLE_SCREENPLAY, SAMPLE_TITLE } from './sample';
 import { storageGet, storageSet } from './storage';
@@ -959,7 +960,7 @@ export function mountChatPanel(
       'div',
       { class: 'msg assistant error-msg', 'data-testid': 'chat-error', role: 'alert' },
       h('div', { class: 'msg-text' }, text),
-      h('button', { type: 'button', class: 'icon', title: 'Dismiss', onclick: onClose }, '×'),
+      h('button', { type: 'button', class: 'icon', title: 'Dismiss', onclick: onClose }, icon('close')),
     );
 
   /** The thread as shown: the server's messages, or the local first exchange when it has none. */
@@ -1161,7 +1162,7 @@ export function mountChatPanel(
                   },
                 },
                 label ? `For ${label}` : 'For: no target',
-                h('span', { class: 'caret' }, '▾'),
+                icon('chevron-down', 'caret'),
               ),
       ),
       h(
@@ -1172,7 +1173,7 @@ export function mountChatPanel(
           title: 'Remove this photo',
           onclick: () => removeDraft(d),
         },
-        '×',
+        icon('close'),
       ),
       menuFor === d.key ? targetMenu(d) : null,
     );
