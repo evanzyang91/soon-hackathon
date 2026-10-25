@@ -44,7 +44,11 @@
 // through the scoped re-prompt regen machinery).
 //
 // Per scene, world / actors / tts run concurrently (Marble jobs capped at 3 across the server);
-// manifest follows. A failed stage is recorded with a note; the manifest is still written when the
+// manifest follows. Found models (models.ts) are looked up for the scene's background action as
+// soon as its world stage is scheduled and joined in the manifest step (20 s budget from their
+// start): each element that got one carries it as `model` in the manifest's plan.dynamics
+// (plan.json keeps the plan as planned). FOUND_MODELS=0 / MOCK skip it (FOUND_MODELS=1 forces it).
+// A failed stage is recorded with a note; the manifest is still written when the
 // world succeeded. Asset URLs inside manifests are relative to the project root
 // (/projects/<id>/), matching shared/api.ts.
 import { randomBytes } from 'node:crypto';
@@ -101,6 +105,7 @@ import {
 } from './staging.ts';
 import { synthesizeLine } from './tts.ts';
 import { copyLibraryWorld, findLibraryWorld } from './world-library.ts';
+import { FoundModels } from './models.ts';
 import type { AmendResult } from './chat/apply.ts';
 import { planCardMessage } from './chat/plan-card.ts';
 import { planDiff } from './chat/plan-diff.ts';
@@ -192,6 +197,15 @@ export interface StoreOptions {
    * disables. Default: env ACTORS_LIBRARY_DIR or data/actors-library.
    */
   actorsLibraryDir?: string | null;
+  /**
+   * Look up found models for background action (models.ts). Default env FOUND_MODELS: '1' on,
+   * '0' off, unset = on unless the store is MOCK.
+   */
+  foundModels?: boolean;
+  /** Where found models are downloaded (default env MODELS_LIBRARY_DIR or data/models-library). */
+  modelsLibraryDir?: string;
+  /** Per-scene budget for the found-model lookups, ms (default 20 s). */
+  foundModelsBudgetMs?: number;
   /** Scale-calibrate new Marble worlds after download (default env CALIBRATE, on). */
   calibrate?: boolean;
   /** Include the Claude-vision half when the Anthropic key is set (default env CALIBRATE_VISION). */
@@ -316,6 +330,8 @@ export class ProjectStore {
   private readonly worldSem: Semaphore;
   private readonly actorSem: Semaphore;
   private readonly ttsSem: Semaphore;
+  /** Found-model lookups per background-action label (models.ts), shared by every project. */
+  private readonly found: FoundModels;
 
   private readonly statuses = new Map<string, ProjectStatus>();
   private readonly plans = new Map<string, ScreenplayPlan>();
@@ -356,6 +372,11 @@ export class ProjectStore {
     this.worldSem = new Semaphore(o.maxWorldJobs ?? 3);
     this.actorSem = new Semaphore(o.maxActorJobs ?? 2);
     this.ttsSem = new Semaphore(o.maxTtsJobs ?? 4);
+    this.found = new FoundModels({
+      enabled: o.foundModels ?? (env.foundModels === 'auto' ? !o.mock : env.foundModels === 'on'),
+      libraryDir: o.modelsLibraryDir ?? env.modelsLibraryDir,
+      ...(o.foundModelsBudgetMs ? { budgetMs: o.foundModelsBudgetMs } : {}),
+    });
     this.chat = new ChatStore(
       (id) => this.dir(id),
       (id, revision) => this.mirrorChatRevision(id, revision),
@@ -1053,6 +1074,14 @@ export class ProjectStore {
   }
 
   private scheduleStage(id: string, sceneIndex: number, stage: SceneStage): void {
+    // the scene's found models are looked up alongside its world (joined in the manifest step)
+    if (stage === 'world' && this.found.enabled)
+      void this.plan(id)
+        .then((plan) => {
+          const scene = plan?.scenes[sceneIndex];
+          if (scene) this.found.start(scene.dynamics);
+        })
+        .catch(() => undefined);
     this.enqueue(`${id}:${sceneIndex}:${stage}`, async () => {
       await this.runSceneStage(id, sceneIndex, stage);
       this.enqueue(`${id}:${sceneIndex}:manifest`, () => this.maybeManifest(id, sceneIndex));
@@ -1921,12 +1950,19 @@ export class ProjectStore {
         characters: plan.characters,
       });
       const lookSeed = lookSeedFor(scene, styleForPlan(plan));
+      // found models that arrived within the scene's budget (late or failed: the procedural body)
+      const found = await this.found.attach(scene.dynamics);
+      if (found.summary) await this.log(id, `[scene ${idx}] ${found.summary}`);
       const manifest = SceneManifest.parse({
         version: 1,
         projectId: id,
         // the manifest's plan always carries a look (planned or derived) so the laptop's
         // "Scene's look" exists for plans made before looks were planned
-        plan: { ...(staged ? { ...scene, blocking: staged } : scene), look: scene.look ?? lookSeed },
+        plan: {
+          ...(staged ? { ...scene, blocking: staged } : scene),
+          dynamics: found.dynamics,
+          look: scene.look ?? lookSeed,
+        },
         characters: plan.characters.filter((c) => ids.has(c.id)),
         world: worldAsset,
         actors: actorAssets,

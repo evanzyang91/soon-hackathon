@@ -34,6 +34,17 @@ export const env = {
   /** Pre-built LHM avatars reused by live projects (server/pipeline/actor-library.ts). */
   actorsLibraryDir:
     process.env.ACTORS_LIBRARY_DIR ?? new URL('../data/actors-library/', import.meta.url).pathname,
+  /**
+   * Found models for background action (server/pipeline/models.ts): FOUND_MODELS=0 off, =1 on
+   * (MOCK too: it downloads from Hugging Face), unset = on for live projects only.
+   */
+  foundModels: (process.env.FOUND_MODELS === '0' ? 'off' : flag(process.env.FOUND_MODELS) ? 'on' : 'auto') as
+    | 'on'
+    | 'off'
+    | 'auto',
+  /** Downloaded open-licence models (data/models-library/<uid>/model.glb + model.json), served at /models/. */
+  modelsLibraryDir:
+    process.env.MODELS_LIBRARY_DIR ?? new URL('../data/models-library/', import.meta.url).pathname,
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */
