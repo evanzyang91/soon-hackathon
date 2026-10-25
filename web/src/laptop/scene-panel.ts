@@ -162,21 +162,26 @@ export function mountScenePanel(director: Director) {
 
   const renderShots = () => {
     shots.replaceChildren();
-    const list = director.runtime?.manifest.plan.shots ?? [];
+    // framed on the actors where they stand (viewer/shots.ts); the plan's shots, aimed at its
+    // blind marks, only when the scene has no actors
+    const live = director.suggestedShots();
+    const list = live.length ? live : (director.runtime?.manifest.plan.shots ?? []);
     if (!list.length) {
       shots.append(h('div', { class: 'muted' }, 'No suggested shots.'));
       return;
     }
     for (const s of list) {
+      // framed again on use: an actor may have moved since the list was drawn
+      const now = () => (live.length && director.suggestedShots().find((x) => x.name === s.name)) || s;
       shots.append(
         h(
           'div',
-          { class: 'shot-row' },
-          h('button', { class: 'link', title: 'Fly to this suggested shot', onclick: () => director.flyTo(s) }, s.name),
+          { class: 'shot-row', 'data-testid': 'shot-row', 'data-shot': s.name },
+          h('button', { class: 'link', 'data-testid': 'shot-fly', title: 'Fly to this suggested shot', onclick: () => director.flyTo(now()) }, s.name),
           h('span', { class: 'muted small' }, `${Math.round(s.fovDeg)}°`),
           h(
             'button',
-            { class: 'icon', title: 'Add as camera', onclick: () => director.addShotAsCamera(s) },
+            { class: 'icon', 'data-testid': 'shot-add', title: 'Add as camera', onclick: () => director.addShotAsCamera(now()) },
             '+',
           ),
         ),
