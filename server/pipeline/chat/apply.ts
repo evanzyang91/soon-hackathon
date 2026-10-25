@@ -8,6 +8,11 @@
 //     worldPrompt/timeOfDay/interior                      regenerate-world (needs-confirm, ~5 min ·
 //                                                           1,580 credits)
 //     blocking / heading / name                           scene manifest rewritten (retry 'manifest')
+//     look.* (scene)                                      edits.json re-graded at once when the scene
+//                                                           has one (look-seed.ts writeSceneLook, as
+//                                                           cli look --write); else the manifest
+//                                                           stage seeds the amended look
+//     style.*                                             plan only (free)
 //   character-reference   applied (referenceImage)      applied + rebuild-actor
 //   world-reference       applied (worldReference)      applied + regenerate-world (needs-confirm)
 //   replan                running → done (re-parse)     needs-confirm, with what it keeps and what not
@@ -17,7 +22,10 @@
 // amended plan when it runs. Every action is logged to the project's log.txt.
 import type { Attachment, ChatAction, ChatMessage } from '../../../shared/chat.ts';
 import type { ProjectStatus, ScreenplayPlan } from '../../../shared/schema.ts';
+import { editsStoreFor } from '../edits.ts';
 import { parseFountain } from '../fountain.ts';
+import { exists } from '../fsutil.ts';
+import { lookSeedFor, styleForPlan, writeSceneLook } from '../look-seed.ts';
 import type { StageName } from '../project.ts';
 import { REGEN } from '../reprompt/draft.ts';
 import type { Proposal } from './draft.ts';
@@ -147,6 +155,8 @@ export async function applyProposals(
   const revoice = new Map<number, Set<string>>();
   const regen = new Set<number>();
   const manifest = new Set<number>();
+  // scenes re-graded by this message (several look fields of one scene: one rewrite, final plan)
+  const regraded = new Map<number, string>();
   const voiceLines = (n: number, lineIds: string[]) => {
     const set = revoice.get(n) ?? new Set<string>();
     for (const l of lineIds) set.add(l);
@@ -205,6 +215,10 @@ export async function applyProposals(
           const started = stageOf(st, n, 'world') !== 'pending';
           if (started) regen.add(n);
           effectText = started ? 'needs a new world' : 'used when the world is generated';
+        } else if (effect === 'look' && p.type === 'plan-patch') {
+          const n = (p.target as { index: number }).index;
+          if (!regraded.has(n)) regraded.set(n, await regrade(host, id, plan, n, p.summary));
+          effectText = regraded.get(n);
         } else if (effect === 'manifest' && p.type === 'plan-patch') {
           const t = p.target;
           const ns =
@@ -405,6 +419,33 @@ export async function applyProposals(
     };
   }
   return { actions, ...(after ? { after } : {}) };
+}
+
+/**
+ * A scene look patch on a scene that already has its look (edits.json): the grade follows the plan
+ * now, through the same path as `cli look --write`; without one the manifest stage seeds it.
+ */
+async function regrade(
+  host: ChatHost,
+  id: string,
+  plan: ScreenplayPlan,
+  n: number,
+  summary: string,
+): Promise<string> {
+  const edits = editsStoreFor(host);
+  try {
+    if (!(await exists(edits.path(id, n)))) return 'used when the scene opens';
+    const saved = await writeSceneLook(
+      edits,
+      id,
+      n,
+      lookSeedFor(plan.scenes[n]!, styleForPlan(plan)),
+      `chat: ${summary}`,
+    );
+    return `re-grades the scene: ${saved.look.name}`;
+  } catch (e) {
+    return `the scene's grade was not rewritten (${errMsg(e)})`;
+  }
 }
 
 /** Re-plans, then records the outcome on the action and appends the new plan card. */

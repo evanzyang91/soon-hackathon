@@ -111,11 +111,11 @@ describe('mock chat planner', () => {
     expect(a.value).not.toMatch(/kitchen/i);
     const b = plan('Can we do a diner instead of the kitchen?').actions[0]!;
     expect(b).toMatchObject({ target: 'scene:1', field: 'worldPrompt' });
-    expect(b.value).toMatch(/interior of a diner/);
+    expect(b.value).toMatch(/interior of a diner/i);
     // the heading's place ("ROOFTOP") is swapped where the prompt names it; the light stays
     const c = plan('scene 3 should be a rainy rooftop garden').actions[0]!;
     expect(c).toMatchObject({ target: 'scene:2', field: 'worldPrompt' });
-    expect(c.value).toMatch(/exterior rainy rooftop garden, .*dusk light/);
+    expect(c.value).toMatch(/exterior rainy rooftop garden, .*dusk light/i);
   });
 
   it("voices: a named voice id, or 'swap' picks the next free one", () => {
@@ -164,6 +164,27 @@ describe('mock chat planner', () => {
     ).toMatchObject({ target: 'character:theo', attachmentId: 'ffffffffffffffff' });
     const unknown = plan('', { photos: [photo('0000000000000000')] });
     expect(unknown).toEqual({ reply: MOCK_ASK_PHOTO, actions: [] });
+  });
+
+  it('genre / style … western → the four style fields; scene N look <preset> → look.preset', () => {
+    const western = plan('make the whole film look like a western');
+    expect(western.actions.map((a) => [a.target, a.field])).toEqual([
+      ['style', 'genre'],
+      ['style', 'era'],
+      ['style', 'worldStyle'],
+      ['style', 'palette'],
+    ]);
+    expect(western.actions[0]!.value).toBe('western');
+    expect(western.reply).toMatch(/style is now western, 1880s American frontier/);
+    expect(plan('change the genre to sci-fi').actions[0]!.value).toBe('science fiction');
+    const look = plan('scene 2 look candlelit, and scene 3 look: golden hour please');
+    expect(look.actions).toEqual([
+      expect.objectContaining({ target: 'scene:1', field: 'look.preset', value: 'candlelit' }),
+      expect.objectContaining({ target: 'scene:2', field: 'look.preset', value: 'golden-hour' }),
+    ]);
+    expect(plan('scene 2 look sparkly').reply).toMatch(/^Looks are daylight-neutral, /);
+    // the world rule ("scene N is <place>") does not see a look
+    expect(plan('scene 2 look moonlit').actions.map((a) => a.field)).toEqual(['look.preset']);
   });
 
   it('generate on a draft; a generated project says so; anything else gets the help line', () => {

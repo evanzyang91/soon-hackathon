@@ -12,11 +12,13 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { api } from '../../../shared/api.ts';
 import { Attachment, ProjectChat, type ChatAction } from '../../../shared/chat.ts';
+import { LOOK_PRESETS } from '../../../shared/look-presets.ts';
+import { SceneEdits } from '../../../shared/look.ts';
 import { ProjectStatus, SceneManifest, ScreenplayPlan } from '../../../shared/schema.ts';
 import { ProjectStore } from '../project.ts';
 import { encodePng } from '../reprompt/png.ts';
 import { createPipelineHandler } from '../routes.ts';
-import type { ChatDraft } from './draft.ts';
+import { emptyDraftAction, type ChatDraft } from './draft.ts';
 import type { ChatResponse } from '../../../shared/chat.ts';
 
 const FIXTURE = readFileSync(
@@ -114,7 +116,10 @@ describe('project chat on a MOCK project', () => {
     ]);
     expect(chat.messages[0]!.text).toBe(FIXTURE);
     expect(chat.messages[1]!.text).toMatch(
-      /^Planned 3 scenes and 2 characters: Theo and Maya\. 1 EXT\. CITY STREET - NIGHT \(4 lines\)/,
+      /^Planned 3 scenes and 2 characters: Theo and Maya\. 1 EXT\. CITY STREET - NIGHT \(4 lines, Night street\)/,
+    );
+    expect(chat.messages[1]!.text).toMatch(
+      /\nStyle: contemporary drama · present day · natural tones/,
     );
     expect(st.chatRevision).toBe(chat.revision);
   });
@@ -243,6 +248,75 @@ describe('project chat on a MOCK project', () => {
     expect((await manifest(id, 0)).plan.dialogue.find((d) => d.id === 's1-l4')!.text).toBe(
       'I let it go.',
     );
+  });
+
+  it('generated: a scene look patch re-grades edits.json at once; a style patch is free', async () => {
+    const editsOf = async (n: number) =>
+      SceneEdits.parse(
+        JSON.parse(await readFile(join(dataDir, id, `scene-${n}`, 'edits.json'), 'utf8')),
+      );
+    const seeded = await editsOf(1);
+    expect(seeded.revision).toBe(1);
+    expect(seeded.look.name).toMatch(/^Warm interior/);
+    const moon = await say(id, 'scene 2 look moonlit');
+    expect(moon.answer.actions).toEqual([
+      expect.objectContaining({
+        type: 'plan-patch',
+        target: 'scene:1',
+        field: 'look.preset',
+        before: 'warm-interior',
+        after: 'moonlit',
+        status: 'applied',
+        effect: expect.stringMatching(/^re-grades the scene: Moonlit/),
+      }),
+    ]);
+    const graded = await editsOf(1);
+    expect(graded.revision).toBe(2);
+    expect(graded.look.temperature).toBe(LOOK_PRESETS.moonlit.temperature);
+    expect(graded.history.at(-1)!.prompt).toBe('chat: Scene 2 looks Moonlit');
+    expect((await planOf(id)).scenes[1]!.look!.preset).toBe('moonlit');
+    // "colder and foggier" as the Claude planner writes it: two absolute values, one rewrite
+    claudeDraft = {
+      reply: 'Scene 2 is colder and foggier.',
+      actions: [
+        {
+          ...emptyDraftAction('plan-patch', 'Scene 2 colder'),
+          target: 'scene:1',
+          field: 'look.temperature',
+          value: '-0.8',
+        },
+        {
+          ...emptyDraftAction('plan-patch', 'Scene 2 foggier'),
+          target: 'scene:1',
+          field: 'look.fog.density',
+          value: '0.4',
+        },
+      ],
+    };
+    try {
+      const colder = await say(id, 'scene 2 colder and foggier');
+      expect(types(colder.answer.actions)).toEqual(['plan-patch:applied', 'plan-patch:applied']);
+    } finally {
+      claudeDraft = undefined;
+    }
+    const cold = await editsOf(1);
+    expect(cold.revision).toBe(3);
+    expect(cold.look).toMatchObject({
+      temperature: -0.8,
+      fog: { density: 0.4, color: LOOK_PRESETS.moonlit.fog.color },
+    });
+    // the whole film's style: the plan only, no world, no regrade
+    const style = await say(id, 'make the style a western');
+    expect(types(style.answer.actions)).toEqual(Array(4).fill('plan-patch:applied'));
+    expect(style.answer.actions!.every((a) => !('effect' in a) || a.effect === undefined)).toBe(
+      true,
+    );
+    expect((await planOf(id)).style).toMatchObject({
+      genre: 'western',
+      era: '1880s American frontier',
+    });
+    expect((await editsOf(1)).revision).toBe(3);
+    expect((await statusOf(id)).scenes.every((j) => j.stages.world.status === 'done')).toBe(true);
   });
 
   it('generated: a new place needs a confirmed world; a new look rebuilds the actor', async () => {
