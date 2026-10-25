@@ -1,6 +1,40 @@
-/* Laptop director. One neutral palette and one accent, one radius, one type scale, an 8-pt
-   spacing grid. Every colour below is a token from :root (soft variants are mixed from them);
-   the phone page (web/phone.html) uses the same tokens. */
+/* Previz Stage design system (laptop director; web/phone.html repeats the tokens).
+
+   Rules: one neutral palette and one accent; every colour is a token below (soft variants are
+   color-mix()ed from them). One radius (--radius), an 8-pt spacing scale (--s1 … --s6), one type
+   family at four sizes (--fs 13 body, --fs-sm 12 secondary, --fs-xs 11 labels, --fs-lg 20 the one
+   title), weights 400 / 500 / 600, tabular numerals for anything that counts. Space separates
+   sections, not boxes; a hairline only where a boundary is needed; status colours only as a 6 px
+   dot or plain text; the accent only for a panel's one primary action and for active states.
+
+   Components (build new UI from these; markup → look):
+     Type      h2 or .label — 11 px uppercase section label · .muted · .small · .num (tabular)
+               · .title (20 px) · kbd (a shortcut, muted) · .empty — the empty / loading / error
+               state: one muted, centred sentence (.empty.error for a failure)
+     Icons     icon('name') from icons.ts, or <span data-icon="name"> in index.html (mountIcons):
+               16 px, 1.5 px strokes, currentColor
+     Buttons   <button> is a ghost (hairline ring) · .primary — the one filled action of a panel ·
+               .small (24 px) · .icon (icon only, no ring, muted) · .on (active toggle) · .danger
+               · .link (text that acts, ellipsis) · .rec (recording)
+     Fields    input / textarea / select on --surface-2, accent ring on focus · range: 2 px track
+               · checkbox / radio take the accent
+     Sections  .card (or .section) — a label and content, no box; .card.grow fills the panel
+     Tabs      .tabs > button.tab[.on] — text with a 2 px accent underline (the right panel)
+     Segmented .seg > button[.on] (+ .seg-sep, button.seg-icon) — one quiet control;
+               .seg.overlay floats over the viewport (Grid / Collider / PiP / Reload)
+     Rows      .list-row[.current|.selected|.active] — a 28 px row, hover tint, the current one on
+               --surface-2; .thumb — a 16:9 frame (scene / shot thumbnails)
+     Tags      .tag — quiet uppercase label in a hairline ring (a scope, a lens) · .badge / .chip —
+               plain small text; .live / .warn / .bad / .running / .done / .failed add the dot
+     Status    .dot[.ok|.warn|.bad|.run] — the 6 px dot · .stages > .stage-bar > .stage-seg
+               [.done|.running|.failed|.fallback] + .stage-label — a five-segment progress bar
+               that names a stage only while it runs or after it failed
+     Ruled     .ruled[.warn|.run|.bad] — a block with a thin left rule and plain text (the chat's
+               action cards, the Edit tab's confirm card, errors)
+     Overlays  .menu > button (+ kbd, .menu-sep) — a popover menu · .sheet-backdrop > .sheet — a
+               dialog · .toast — a one-line message over the viewport · .vp-label — a small label
+               on the viewport (the PiP's name) · .coach / .coach-ring — the tour
+   Every surface over the 3D view uses --scrim + an 8 px backdrop blur. */
 :root {
   /* surfaces: the canvas, the panels, raised things (inputs, hover, menus) */
   --bg: #0c0d0f;
@@ -106,7 +140,18 @@ body.drawer-closed #left {
 .row.wrap {
   flex-wrap: wrap;
 }
-h2 {
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+/* a section label */
+h2,
+.label {
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -405,12 +450,51 @@ input[type='range']::-moz-range-thumb {
 }
 .badge.warn::before,
 .chip.done.fallback::before,
+.dot.warn,
 .dot.wait {
   background: var(--warn);
 }
 .badge.bad::before,
-.chip.failed::before {
+.chip.failed::before,
+.dot.bad {
   background: var(--bad);
+}
+.dot.run {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+/* a quiet uppercase tag in a hairline ring (the Edit tab's scope; a lens) */
+.tag,
+.chip[class*='scope-'] {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+/* a block with a thin left rule and plain text */
+.ruled {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: 2px 0 2px var(--s3);
+  box-shadow: inset 2px 0 0 var(--track);
+}
+.ruled.warn {
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+.ruled.run {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.ruled.bad {
+  box-shadow: inset 2px 0 0 var(--bad);
 }
 .chip.running::before {
   background: var(--accent);
@@ -597,13 +681,15 @@ button.badge:hover:not(:disabled) {
   border-left: 1px solid var(--hairline);
 }
 /* a section: a label and its content, no box */
-.card {
+.card,
+.section {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
   min-width: 0;
 }
-.card.grow {
+.card.grow,
+.section.grow {
   flex: 1 0 auto;
 }
 
@@ -612,8 +698,6 @@ button.badge:hover:not(:disabled) {
   position: sticky;
   top: 0;
   z-index: 5;
-  display: flex;
-  gap: var(--s5);
   flex: none;
   height: 40px;
   margin: 0 calc(-1 * var(--s4));
@@ -621,7 +705,12 @@ button.badge:hover:not(:disabled) {
   background: var(--surface-1);
   border-bottom: 1px solid var(--hairline);
 }
-.shell-tabs .tab {
+/* tabs: text with an accent underline */
+.tabs {
+  display: flex;
+  gap: var(--s5);
+}
+.tabs > .tab {
   position: relative;
   height: 40px;
   padding: 0;
@@ -630,16 +719,16 @@ button.badge:hover:not(:disabled) {
   box-shadow: none;
   border-radius: 0;
 }
-.shell-tabs .tab:hover:not(:disabled) {
+.tabs > .tab:hover:not(:disabled) {
   color: var(--text);
   background: none;
 }
-.shell-tabs .tab.on {
+.tabs > .tab.on {
   color: var(--text);
   background: none;
   box-shadow: none;
 }
-.shell-tabs .tab.on::after {
+.tabs > .tab.on::after {
   content: '';
   position: absolute;
   left: 0;
@@ -893,13 +982,17 @@ button.badge:hover:not(:disabled) {
 #hud-top > * {
   pointer-events: auto;
 }
-/* Grid / Collider / PiP / Reload: one low-contrast segmented control */
+/* segmented control: one quiet group; .overlay floats over the viewport (Grid / Collider / PiP /
+   Reload) */
 .seg {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 2px;
   border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.seg.overlay {
   background: var(--scrim);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -961,6 +1054,8 @@ button.badge:hover:not(:disabled) {
   box-shadow: var(--shadow);
   pointer-events: none;
 }
+/* a small label on the viewport (the PiP's name) */
+.vp-label,
 #pip-label {
   position: absolute;
   top: var(--s1);
@@ -1014,6 +1109,8 @@ button.badge:hover:not(:disabled) {
   background: var(--bad);
   animation: pulse 1.2s ease-in-out infinite;
 }
+/* a one-line message over the viewport */
+.toast,
 #hud-toast {
   position: absolute;
   left: 50%;
@@ -1093,8 +1190,11 @@ button.badge:hover:not(:disabled) {
   flex-direction: column;
   gap: 2px;
 }
+/* list rows (the generic .list-row; cameras, shots and the Scene tab's objects are instances) */
+.list-row,
 .cam-row,
-.shot-row {
+.shot-row,
+.st-object {
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -1102,11 +1202,26 @@ button.badge:hover:not(:disabled) {
   padding: 0 var(--s2);
   border-radius: var(--radius);
 }
+.list-row:hover,
 .cam-row:hover,
-.shot-row:hover {
+.shot-row:hover,
+.st-object:hover {
   background: var(--hover);
 }
-.cam-row.active {
+.list-row.current,
+.list-row.selected,
+.list-row.active,
+.cam-row.active,
+.st-object.selected {
+  background: var(--surface-2);
+}
+.thumb {
+  display: block;
+  flex: none;
+  width: 64px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius);
   background: var(--surface-2);
 }
 .cam-row.active button.link {
@@ -1224,20 +1339,6 @@ button.st-scene:disabled {
 }
 .st-group:first-child {
   margin-top: 0;
-}
-.st-object {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  min-height: var(--ctl);
-  padding: 0 var(--s2);
-  border-radius: var(--radius);
-}
-.st-object:hover {
-  background: var(--hover);
-}
-.st-object.selected {
-  background: var(--surface-2);
 }
 #st-objects {
   display: flex;

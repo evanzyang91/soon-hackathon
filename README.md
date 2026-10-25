@@ -360,7 +360,9 @@ the viewport's Grid / Collider / PiP / Reload are one low-contrast segmented con
 pipeline is a five-segment bar; chat actions are a thin left rule and plain text. Icons are
 16 px inline SVG with 1.5 px strokes (`web/src/laptop/icons.ts`; `index.html` asks for one with
 `<span data-icon>`), no icon font or CDN. Empty, loading and error states are one muted, centred
-sentence.
+sentence. The catalogue new UI is built from (section labels, ghost / primary / icon buttons,
+fields, text tabs, the segmented control, list rows and 16:9 thumbs, tags, status dots, the
+segmented progress bar, ruled blocks, menus, dialogs, toasts, viewport labels) heads `style.css`.
 
 ![Before / after: the chat docked next to an open scene](docs/images/ui-chat-docked-before-after.png)
 
