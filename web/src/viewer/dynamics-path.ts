@@ -23,6 +23,12 @@ export interface PathSample {
   /** Metres travelled since the start of the current cycle. */
   distance: number;
   phase: 'moving' | 'paused' | 'done';
+  /**
+   * Seconds since the current phase began (a found model cross-fades its clips over it): the time
+   * into this lap while moving, into the pause while paused; a closed loop or a path without a
+   * pause never restarts, so it counts from 0.
+   */
+  since: number;
 }
 
 const CLOSE_EPS = 0.01;
@@ -70,9 +76,9 @@ export class PathSampler {
 
   sample(t: number): PathSample {
     const time = Math.max(0, Number.isFinite(t) ? t : 0);
-    if (this.parked) return { position: [...this.start], heading: this.lastHeading, distance: 0, phase: 'done' };
+    if (this.parked) return { position: [...this.start], heading: this.lastHeading, distance: 0, phase: 'done', since: time };
     if (this.length < 1e-6 || this.travelSeconds <= 0) {
-      return { position: this.point(0), heading: this.lastHeading, distance: 0, phase: 'done' };
+      return { position: this.point(0), heading: this.lastHeading, distance: 0, phase: 'done', since: time };
     }
     let local: number;
     if (this.opts.loop && this.cycleSeconds > 0) local = time % this.cycleSeconds;
@@ -86,14 +92,17 @@ export class PathSampler {
         heading: this.headingAt(this.closed ? 0 : 1),
         distance: this.length,
         phase: done ? 'done' : 'paused',
+        since: (done ? time : local) - this.travelSeconds,
       };
     }
     const u = local / this.travelSeconds;
+    const restarts = this.opts.loop && !this.closed && this.cycleSeconds > this.travelSeconds;
     return {
       position: this.point(u),
       heading: this.headingAt(u),
       distance: u * this.length,
       phase: 'moving',
+      since: restarts ? local : time,
     };
   }
 

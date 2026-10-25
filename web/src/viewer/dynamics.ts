@@ -2,8 +2,21 @@
 import * as THREE from 'three';
 import type { DynamicElement, Vec3 } from '@shared/schema';
 import { PathSampler, type PathSample } from './dynamics-path';
+import type { FoundInfo } from './found-model';
 import { createElementProp } from './model-prop';
 import type { Prop } from './props';
+
+/** What an element's found model is doing (debug hook / e2e): absent without `element.model`. */
+export function foundState(
+  element: DynamicElement,
+  object: THREE.Object3D,
+): { model?: string; body?: string; clip?: string; loadMs?: number; reason?: string; rate?: number; parts?: string; facing?: string } {
+  if (!element.model) return {};
+  if (element.kind === 'model') return { model: String(object.userData.modelStatus ?? 'marker') };
+  const f = object.userData.found as FoundInfo | undefined;
+  if (!f) return {};
+  return { model: f.status, body: f.body, clip: f.clip, loadMs: f.loadMs, reason: f.reason, rate: f.rate, parts: f.parts, facing: f.facing };
+}
 
 export interface DynamicInstance {
   element: DynamicElement;
@@ -16,8 +29,8 @@ export interface DynamicsRuntime {
   group: THREE.Group;
   items: DynamicInstance[];
   update(sceneTime: number): void;
-  /** Current world position of each element (for debugging / e2e). */
-  positions(): { id: string; position: Vec3; phase: PathSample['phase'] }[];
+  /** Current world position of each element (for debugging / e2e), and its found model's state. */
+  positions(): ({ id: string; kind: string; position: Vec3; phase: PathSample['phase'] } & ReturnType<typeof foundState>)[];
   dispose(): void;
 }
 
@@ -51,7 +64,7 @@ export function createDynamics(elements: DynamicElement[], resolve?: (file: stri
       const s = item.sampler.sample(sceneTime);
       item.object.position.set(...s.position);
       item.object.rotation.y = s.heading;
-      props[i]!.animate(s.distance, sceneTime);
+      props[i]!.animate(s.distance, sceneTime, { phase: s.phase, since: s.since, speed: item.element.speed });
       item.last = s;
     });
   };
@@ -64,8 +77,10 @@ export function createDynamics(elements: DynamicElement[], resolve?: (file: stri
     positions: () =>
       items.map((i) => ({
         id: i.element.id,
+        kind: i.element.kind,
         position: [i.object.position.x, i.object.position.y, i.object.position.z],
         phase: i.last?.phase ?? 'moving',
+        ...foundState(i.element, i.object),
       })),
     dispose() {
       for (const p of props) p.dispose();

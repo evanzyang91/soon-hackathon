@@ -22,6 +22,7 @@ import * as THREE from 'three';
 import { SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, type SplatMesh } from '@sparkjsdev/spark';
 import type { SceneEdits } from '@shared/look';
 import type { DynamicElement } from '@shared/schema';
+import { foundState } from '../dynamics';
 import { PathSampler } from '../dynamics-path';
 import { markY, onGround } from '../ground';
 import { createElementProp, projectFileResolver } from '../model-prop';
@@ -136,13 +137,13 @@ export class SceneEditsRuntime {
     for (const a of this.added) {
       // a parked prop still lives on the clock: rotors spin, a standing animal breathes, a model plays its clip
       if (!a.sampler) {
-        a.prop.animate(0, time);
+        a.prop.animate(0, time, { phase: 'done', since: time, speed: 0 });
         continue;
       }
       const s = a.sampler.sample(time);
       a.prop.object.position.set(...s.position);
       a.prop.object.rotation.y = s.heading;
-      a.prop.animate(s.distance, time);
+      a.prop.animate(s.distance, time, { phase: s.phase, since: s.since, speed: a.element.speed });
     }
     this.followMovingProps();
   }
@@ -170,14 +171,14 @@ export class SceneEditsRuntime {
   }
 
   /** The props prop-add edits put in the scene (debug hook / e2e): where each stands now. */
-  addedProps(): { id: string; kind: string; position: number[]; phase: string; visible: boolean; model?: string }[] {
+  addedProps(): ({ id: string; kind: string; position: number[]; phase: string; visible: boolean } & ReturnType<typeof foundState>)[] {
     return this.added.map((a) => ({
       id: a.element.id,
       kind: a.element.kind,
       position: a.prop.object.position.toArray(),
       phase: a.sampler ? 'moving' : 'parked',
       visible: a.prop.object.visible,
-      ...(a.element.kind === 'model' ? { model: String(a.prop.object.userData.modelStatus ?? 'marker') } : {}),
+      ...(a.element.kind === 'model' && !a.element.model ? { model: 'marker' } : foundState(a.element, a.prop.object)),
     }));
   }
 

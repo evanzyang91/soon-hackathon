@@ -30,6 +30,7 @@ import { icon } from './icons';
 import type { LookPanel } from './look-panel';
 import type { Manipulation } from './manipulate';
 import { displayName, sceneReady, type ProjectsPanel } from './projects-panel';
+import { foundModelLine, loadFoundChoices, whileLoading } from './found-models';
 import { mountPropAdder } from './props-add';
 import { characterPhoto, projectPlan } from './references';
 import type { ShotsPanel } from './shots-panel';
@@ -304,7 +305,11 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
           h('span', { class: 'muted small' }, el.kind),
         ),
       );
+      // a found model: its source and licence, Use primitive / Turn around (found-models.ts)
+      const found = on ? foundModelLine(director, el, renderBackground) : null;
+      if (found) background.append(found);
     }
+    whileLoading(director, props, renderBackground);
     background.append(...adder.nodes());
   };
 
@@ -360,6 +365,8 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
   const renderCastSoon = soon(renderCast);
 
   director.on((c) => {
+    // the director's found-model choices for this scene (Use primitive, Turn around)
+    if (c === 'scene') loadFoundChoices(director);
     if (c === 'scene' || c === 'loading') {
       watchLook();
       renderHeading();

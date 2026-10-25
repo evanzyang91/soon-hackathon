@@ -437,7 +437,7 @@ class LoadedScene implements SceneRuntime {
     // the scene's prop edits (moves, hides) let go of the old bodies and find the new ones by id
     for (const item of this.dynamics.items) this.sceneEdits?.release(item.object);
     this.dynamics.dispose();
-    this.dynamics = createDynamics(elements);
+    this.dynamics = createDynamics(elements, projectFileResolver(this.manifestUrl));
     this.scene.add(this.dynamics.group);
     this.dynamics.update(this.time);
     this.manifest.plan.dynamics = elements;
