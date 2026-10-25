@@ -15,10 +15,12 @@ import { displayName } from './projects-panel';
 
 export interface ManipulationOptions {
   toast(text: string): void;
-  /** The Look tab is showing (its own ⌘Z is live then). */
+  /** Tools › Grade is showing (the Look panel's own ⌘Z is live then). */
   lookVisible(): boolean;
-  /** Switch the right panel to a tab (Edit › hands a region over). */
-  showTab(tab: 'edit'): void;
+  /** Opens Tools › Re-prompt (a region's Edit › hands it over). */
+  openReprompt(): void;
+  /** The toolbar's "Go to shot" on a shot's frustum (the Shots panel selects it). */
+  goToShot(id: string): void;
 }
 
 export interface Manipulation {
@@ -90,16 +92,16 @@ export function mountManipulation(director: Director, look: LookPanel, opts: Man
     removeCamera: (id) => director.removeCamera(id),
     restoreCamera: (cam, index, active) => director.restoreCamera(cam, index, active),
     setActiveCamera: (id) => director.setActiveCamera(id),
-    lookThrough: (cam) => director.flyTo(cam),
+    lookThrough: (cam) => opts.goToShot(cam.id),
     selectionChanged: (ref) => director.select(ref),
     regionChanged: (sel) => director.setPendingRegion(sel),
     sendRegionToEdit: (sel) => {
       director.setPendingRegion(sel);
-      opts.showTab('edit');
-      // WP G's Edit tab takes a selection for its next prompt (window hook until it reads
+      opts.openReprompt();
+      // Re-prompt (edit-panel.ts) takes a selection for its next prompt (window hook until it reads
       // director.pendingRegion itself)
       (window as unknown as { __previzEdits?: EditsHook }).__previzEdits?.setSelection?.(structuredClone(sel));
-      opts.toast('Region handed to the Edit tab: describe the change');
+      opts.toast('Region handed to Re-prompt: describe the change');
     },
     toast: opts.toast,
   };
@@ -107,7 +109,7 @@ export function mountManipulation(director: Director, look: LookPanel, opts: Man
   director.controls.claimLeft = (e) => manipulator.claims(e);
   director.onFrame(() => manipulator.frame());
   director.on((c) => {
-    // the Scene tab's outliner selects through the director
+    // the Scene mode's cast and Tools › Objects select through the director
     if (c === 'selection' && JSON.stringify(director.selection) !== JSON.stringify(manipulator.selected))
       manipulator.select(director.selection);
     if (c === 'scene') watch(director.runtime);

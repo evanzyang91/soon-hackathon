@@ -586,7 +586,7 @@ export class Manipulator {
     const info = targetInfo(ctx, hit.ref);
     if (!info) return;
     if ((info.ref.type === 'actor' || info.ref.type === 'prop') && !this.transformsReady()) {
-      this.host.toast('Placing the actors on the collider… try again in a moment');
+      this.host.toast('Placing the actors on the set… try again in a moment');
       this.press = null;
       return;
     }
@@ -875,7 +875,7 @@ export class Manipulator {
     const b = before.cam;
     const a = { ...b, ...structuredClone(patch) };
     this.host.undo.push({
-      label: label ?? `Camera ${b.name}`,
+      label: label ?? `Shot ${b.name}`,
       undo: () => this.host.updateCamera(id, b, true),
       redo: () => this.host.updateCamera(id, a, true),
     });
@@ -1043,8 +1043,8 @@ export class Manipulator {
       const cam = structuredClone(info.camera);
       const active = this.host.activeCameraId() === cam.id;
       this.host.removeCamera(cam.id);
-      this.host.undo.push({ label: `Delete camera ${cam.name}`, undo: () => this.host.restoreCamera(cam, index, active), redo: () => this.host.removeCamera(cam.id) });
-      this.host.toast(`Deleted camera ${cam.name} (⌘Z brings it back)`);
+      this.host.undo.push({ label: `Delete shot ${cam.name}`, undo: () => this.host.restoreCamera(cam, index, active), redo: () => this.host.removeCamera(cam.id) });
+      this.host.toast(`Deleted shot ${cam.name} (⌘Z brings it back)`);
     }
   }
 
@@ -1191,12 +1191,12 @@ export class Manipulator {
       return {
         kind: 'region',
         title: `${edit ? edit.label : 'Region'} · ${size}`,
-        hint: r.moving ? 'drag inside to move the splats · outline resizes' : 'drag the outline to resize',
+        hint: r.moving ? 'drag inside to move this part of the set · outline resizes' : 'drag the outline to resize',
         items: [
-          { kind: 'color', value: edit?.color?.value ?? '#d94a3a', title: 'Recolour the splats in this region (keeps their shading)', testid: 'region-recolour', onInput: (hex) => this.recolour(hex, false), onChange: (hex) => this.recolour(hex, true) },
-          { label: hidden ? 'Show' : 'Hide', title: hidden ? 'Show the splats again' : 'Hide the splats in this region', testid: 'region-hide', on: hidden, onClick: () => this.toggleHide() },
-          { label: 'Move', title: 'Toggle: drag inside the region to move its splats (Shift: up / down)', testid: 'region-move', on: r.moving, onClick: () => (r.moving = !r.moving) },
-          { label: 'Edit ›', title: 'Use this region as the selection for a prompt in the Edit tab', testid: 'region-to-edit', onClick: () => this.host.sendRegionToEdit(r.sel) },
+          { kind: 'color', value: edit?.color?.value ?? '#d94a3a', title: 'Recolour this part of the set (keeps its shading)', testid: 'region-recolour', onInput: (hex) => this.recolour(hex, false), onChange: (hex) => this.recolour(hex, true) },
+          { label: hidden ? 'Show' : 'Hide', title: hidden ? 'Show this part of the set again' : 'Hide this part of the set', testid: 'region-hide', on: hidden, onClick: () => this.toggleHide() },
+          { label: 'Move', title: 'Toggle: drag inside the region to move this part of the set (Shift: up / down)', testid: 'region-move', on: r.moving, onClick: () => (r.moving = !r.moving) },
+          { label: 'Edit ›', title: 'Use this region as the selection for a prompt in Tools › Re-prompt', testid: 'region-to-edit', onClick: () => this.host.sendRegionToEdit(r.sel) },
           'sep',
           { label: 'Delete region', title: 'Remove this region and its edit (⌫)', testid: 'region-delete', danger: true, onClick: () => this.deleteRegion() },
           close,
@@ -1224,11 +1224,11 @@ export class Manipulator {
       case 'camera': {
         const cam = info.camera!;
         const lens = this.host.cameraLens(cam.id);
-        hint = `drag to move · Shift raises · ring pans${lens?.dof.enabled ? ` · green point = focus ${lens.dof.focusDistance.toFixed(2)} m${lens.own ? (this.host.setCameraLens ? ' (this camera’s own lens)' : ' (own lens: Look tab)') : ''}` : ''}`;
+        hint = `drag to move · Shift raises · ring pans${lens?.dof.enabled ? ` · green point = focus ${lens.dof.focusDistance.toFixed(2)} m${lens.own ? (this.host.setCameraLens ? ' (this shot’s own lens)' : ' (own lens: Tools › Grade)') : ''}` : ''}`;
         items.push(
-          { label: info.active ? 'Active' : 'Make active', title: 'The phone attaches to the active camera', testid: 'manip-activate', on: info.active, disabled: info.active, onClick: () => this.host.setActiveCamera(cam.id) },
-          { label: 'Look through', title: 'Fly the director view to this camera', testid: 'manip-look-through', onClick: () => this.host.lookThrough(cam) },
-          { label: 'Delete', title: 'Delete this camera (⌫; ⌘Z brings it back)', testid: 'manip-delete', danger: true, onClick: () => this.deleteSelected() },
+          { label: info.active ? 'On the phone' : 'Phone here', title: 'The phone attaches to this shot', testid: 'manip-activate', on: info.active, disabled: info.active, onClick: () => this.host.setActiveCamera(cam.id) },
+          { label: 'Go to shot', title: 'Fly the view to this shot (selects it in the Shots panel)', testid: 'manip-look-through', onClick: () => this.host.lookThrough(cam) },
+          { label: 'Delete', title: 'Delete this shot (⌫; ⌘Z brings it back)', testid: 'manip-delete', danger: true, onClick: () => this.deleteSelected() },
         );
         break;
       }

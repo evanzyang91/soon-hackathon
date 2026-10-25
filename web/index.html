@@ -15,15 +15,17 @@
         class="top-icon"
         data-testid="drawer-toggle"
         aria-expanded="true"
-        aria-label="Projects drawer"
-        title="Show / hide the projects drawer: the project chat, every project and its scenes ( [ )"
+        aria-label="Script drawer"
+        title="Show / hide the script drawer: the project chat, every project and its scenes ( [ )"
       >
         <span data-icon="sidebar"></span>
       </button>
-      <span class="brand"><span data-icon="brand"></span>Previz Stage</span>
-      <span id="health" class="badge" title="Which API keys the server has">…</span>
-      <span class="top-sep"></span>
-      <span id="hud-title"></span>
+      <span class="brand" title="Previz Stage"><span data-icon="brand"></span><span class="brand-name">Previz Stage</span></span>
+      <nav id="crumbs" class="crumbs" aria-label="Open scene" hidden>
+        <span id="hud-project" class="crumb muted"></span>
+        <span id="hud-scene-no" class="crumb muted num"></span>
+        <span id="hud-title" class="crumb"></span>
+      </nav>
       <span id="hud-badges"></span>
       <button
         id="top-look"
@@ -31,10 +33,10 @@
         class="badge look"
         data-testid="look-badge"
         hidden
-        title="The scene's look (grade, lens, lights): open the Look tab"
+        title="The scene's look: fine-tune it in Tools › Grade"
       ></button>
       <span class="spacer"></span>
-      <span id="top-clock" class="top-clock" title="Scene clock (moving props, dialogue sync)">0:00.0</span>
+      <span id="top-clock" class="top-clock" title="Scene clock (background action, dialogue sync)">0:00.0</span>
       <button
         id="top-play"
         type="button"
@@ -45,7 +47,44 @@
       >
         <span data-icon="play"></span>
       </button>
-      <div class="top-more">
+      <span class="top-sep"></span>
+      <div class="top-pop">
+        <button
+          id="top-export"
+          type="button"
+          class="top-btn"
+          data-testid="export"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          title="Share the scene: storyboard sheet, shot list"
+        >
+          <span data-icon="export"></span>Export
+        </button>
+        <div id="export-menu" class="menu" role="menu" hidden>
+          <button id="export-png" type="button" role="menuitem" data-testid="export-storyboard" title="The scene's frames, numbers, lenses and lines on one sheet (PNG)">
+            <span data-icon="frame"></span>Storyboard (PNG)
+          </button>
+          <button id="export-print" type="button" role="menuitem" data-testid="export-print" title="The storyboard as a print-ready page (Print → Save as PDF)">
+            <span data-icon="export"></span>Storyboard (print / PDF)
+          </button>
+          <div class="menu-sep" role="separator"></div>
+          <a id="export-csv" role="menuitem" data-testid="export-csv" class="menu-link" title="Every scene's shots as a spreadsheet (CSV)">
+            <span data-icon="download"></span>Shot list (CSV)
+          </a>
+        </div>
+      </div>
+      <button
+        id="top-tools"
+        type="button"
+        class="top-btn"
+        data-testid="tools"
+        aria-expanded="false"
+        aria-controls="tools"
+        title="Tools: grade, re-prompt, objects, developer (T)"
+      >
+        <span data-icon="tools"></span>Tools
+      </button>
+      <div class="top-pop top-more">
         <button
           id="top-more"
           type="button"
@@ -79,7 +118,7 @@
       </div>
     </header>
 
-    <aside id="left" class="panel drawer" aria-label="Projects">
+    <aside id="left" class="panel drawer" aria-label="Script">
       <!-- the project chat (chat-panel.ts) docks above this list while a scene is open -->
       <section id="pp-card" class="card grow projects-card">
         <h2>Projects</h2>
@@ -92,21 +131,14 @@
       <div id="hud-top">
         <span class="spacer"></span>
         <div class="seg overlay" role="group" aria-label="View">
-          <button id="hud-grid" type="button" title="Ground grid at y = 0 (G)">Grid</button>
-          <button id="hud-collider" type="button" title="Collider mesh (what keeps dragged actors out of walls)">
-            Collider
-          </button>
-          <button id="hud-pip" type="button" class="on" title="Picture-in-picture of the phone / active camera">
-            PiP
-          </button>
+          <button id="hud-guide-169" type="button" data-testid="guide-16x9" title="Frame guide 16:9 (HD, the phone's frame)">16:9</button>
+          <button id="hud-guide-239" type="button" data-testid="guide-2.39" title="Frame guide 2.39:1 (scope)">2.39</button>
           <span class="seg-sep"></span>
-          <button id="hud-reload" type="button" class="seg-icon" aria-label="Reload" title="Reload the scene">
-            <span data-icon="reload"></span>
-          </button>
+          <button id="hud-pip" type="button" class="on" title="Picture-in-picture of the phone / the shot it is on">PiP</button>
         </div>
       </div>
       <div id="hud-empty" class="hud-center">
-        <p>Open a scene from the projects drawer, or start a new project in the chat.</p>
+        <p>Open a scene from the script drawer, or start a new project in the chat.</p>
       </div>
       <div id="hud-loading" class="hud-center small" hidden></div>
       <div id="pip-frame" hidden><span id="pip-label"></span></div>
@@ -115,39 +147,55 @@
       <div id="hud-toast" hidden data-testid="toast" role="status"></div>
     </main>
 
-    <aside id="right" class="panel">
+    <aside id="right" class="panel" aria-label="Modes">
+      <!-- shell.ts puts the mode tabs (Scene · Shots · Camera) on top -->
       <div id="pane-scene" class="pane" data-pane="scene">
-        <section class="card">
-          <h2>Scene</h2>
-          <div id="st-scenes"></div>
+        <section class="card scene-head">
+          <div id="st-heading"></div>
+          <div id="st-scenes" class="scene-strip"></div>
         </section>
         <section class="card">
-          <h2>World</h2>
-          <div class="row">
-            <label for="hud-quality" class="small muted">Splats</label>
-            <select id="hud-quality" title="Splat resolution of the world (more = sharper, slower)">
-              <option value="k100">100k</option>
-              <option value="k500" selected>500k</option>
-              <option value="full">full</option>
-            </select>
-            <span class="spacer"></span>
-            <span id="st-world-kind" class="small muted"></span>
-          </div>
-          <div id="st-world" class="small"></div>
+          <h2>Mood</h2>
+          <div id="st-mood" class="mood-row" data-testid="mood"></div>
         </section>
         <section class="card">
           <h2>Cast</h2>
           <div id="st-cast" class="actors" data-testid="actors"></div>
         </section>
+        <section class="card">
+          <h2>
+            Lines
+            <span class="spacer"></span>
+            <button
+              id="sc-playall"
+              type="button"
+              class="small"
+              data-testid="play-all"
+              title="Play every line in order with the background action (also starts the scene clock)"
+            >
+              <span data-icon="play"></span>Play scene
+            </button>
+            <button id="sc-stop" type="button" class="small" title="Stop the dialogue">Stop</button>
+          </h2>
+          <div id="line-list"></div>
+        </section>
+        <section class="card">
+          <h2>Background</h2>
+          <div id="st-background" data-testid="background"></div>
+        </section>
         <section class="card grow">
-          <h2>Objects</h2>
-          <div id="st-objects"></div>
+          <h2>Location</h2>
+          <div id="st-location"></div>
         </section>
       </div>
 
-      <div id="pane-shoot" class="pane" data-pane="shoot">
+      <div id="pane-shots" class="pane" data-pane="shots">
+        <!-- shots-panel.ts -->
+      </div>
+
+      <div id="pane-camera" class="pane" data-pane="camera">
         <section class="card">
-          <h2>Phone camera</h2>
+          <h2>Phone</h2>
           <div class="pair">
             <img id="ph-qr" width="176" height="176" alt="" data-testid="pair-qr" />
             <div class="pair-side">
@@ -159,21 +207,42 @@
                   id="ph-recenter"
                   type="button"
                   data-testid="recenter"
-                  title="The phone's current heading becomes the attached camera's heading"
+                  title="The phone's current heading becomes its shot's heading"
                 >
-                  Re-center phone
+                  Re-center
                 </button>
                 <button
                   id="ph-view"
                   type="button"
                   data-testid="view-from-phone"
-                  title="View through the phone (V); the PiP then shows the director view"
+                  title="View through the phone (V); the PiP then shows your view"
                 >
                   View: director
                 </button>
-                <button id="ph-new" type="button" title="New room code (re-pair the phone)">New room</button>
+                <button id="ph-new" type="button" class="icon" aria-label="New room" title="New room code (pair the phone again)">
+                  <span data-icon="reload"></span>
+                </button>
               </div>
             </div>
+          </div>
+          <div id="ph-shot" class="small muted" data-testid="phone-shot"></div>
+        </section>
+
+        <section class="card">
+          <h2>Take</h2>
+          <div class="row">
+            <button
+              id="hud-record"
+              type="button"
+              class="primary"
+              data-testid="record"
+              title="Record the view plus the dialogue as a take (R)"
+            >
+              Record take
+            </button>
+            <button id="hud-still" type="button" data-testid="save-frame" title="Save a frame (PNG) from the phone camera">
+              Save frame
+            </button>
           </div>
         </section>
 
@@ -188,61 +257,64 @@
           </div>
         </section>
 
-        <section class="card">
-          <h2>Take</h2>
-          <div class="row">
-            <button
-              id="hud-record"
-              type="button"
-              data-testid="record"
-              title="Record the view plus the dialogue audio as WebM (R)"
-            >
-              Record take
-            </button>
-            <button id="hud-still" type="button" title="Save a still (PNG) from the phone camera">Still</button>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Cameras</h2>
-          <div class="row">
-            <input id="cam-name" placeholder="Name (optional)" title="Name for the next camera" />
-            <button
-              id="cam-drop"
-              type="button"
-              class="primary"
-              data-testid="drop-camera"
-              title="Drop a camera at the current view (C)"
-            >
-              Drop
-            </button>
-          </div>
-          <div id="cam-list"></div>
-        </section>
-
-        <section class="card">
-          <h2>Suggested shots</h2>
-          <div id="shot-list"></div>
-        </section>
-
         <section class="card grow">
-          <h2>
-            Dialogue
-            <span class="spacer"></span>
-            <button
-              id="sc-playall"
-              type="button"
-              class="small"
-              data-testid="play-all"
-              title="Play every line in order (also starts the scene clock)"
-            >
-              Play scene
-            </button>
-            <button id="sc-stop" type="button" class="small" title="Stop the dialogue">Stop</button>
-          </h2>
-          <div id="line-list"></div>
+          <h2>Takes</h2>
+          <div id="take-list" data-testid="takes"></div>
         </section>
       </div>
+    </aside>
+
+    <aside id="tools" class="panel tools-drawer" aria-label="Tools" data-testid="tools-drawer" hidden>
+      <div class="tools-head">
+        <span class="title-sm">Tools</span>
+        <span class="spacer"></span>
+        <button id="tools-close" type="button" class="icon" aria-label="Close" title="Close (T or Esc)">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <details class="tool" data-tool="grade" id="tool-grade">
+        <summary>Grade <span class="muted small">grade · film · atmosphere · lens · lights</span></summary>
+        <div id="tool-grade-body" class="tool-body"></div>
+      </details>
+      <details class="tool" data-tool="reprompt" id="tool-reprompt">
+        <summary>Re-prompt <span class="muted small">change the set in words</span></summary>
+        <div class="tool-body">
+          <section id="edit-panel" class="card grow edit-panel" data-testid="edit-panel"></section>
+        </div>
+      </details>
+      <details class="tool" data-tool="objects" id="tool-objects">
+        <summary>Objects <span class="muted small">props · lights · shots</span></summary>
+        <div class="tool-body"><div id="st-objects"></div></div>
+      </details>
+      <details class="tool" data-tool="developer" id="tool-developer">
+        <summary>Developer <span class="muted small">splats · collider · keys</span></summary>
+        <div class="tool-body dev">
+          <div class="row">
+            <span class="small muted">Server</span>
+            <span id="health" class="badge" title="Which API keys the server has">…</span>
+            <span class="spacer"></span>
+            <span id="st-world-kind" class="small muted"></span>
+          </div>
+          <div class="row">
+            <label for="hud-quality" class="small muted">Splats</label>
+            <select id="hud-quality" title="Splat resolution of the world (more = sharper, slower)">
+              <option value="k100">100k</option>
+              <option value="k500" selected>500k</option>
+              <option value="full">full</option>
+            </select>
+          </div>
+          <div class="seg" role="group" aria-label="Debug views">
+            <button id="hud-grid" type="button" title="Ground grid at y = 0 (G)">Grid</button>
+            <button id="hud-collider" type="button" title="Collider mesh (what keeps dragged actors out of walls)">Collider</button>
+            <span class="seg-sep"></span>
+            <button id="hud-reload" type="button" class="seg-icon" aria-label="Reload" title="Reload the scene">
+              <span data-icon="reload"></span>
+            </button>
+          </div>
+          <div id="st-world" class="small"></div>
+          <div id="st-dev" class="small muted"></div>
+        </div>
+      </details>
     </aside>
 
     <script type="module" src="/src/laptop/main.ts"></script>

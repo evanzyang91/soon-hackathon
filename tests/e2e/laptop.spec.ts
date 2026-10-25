@@ -1,5 +1,5 @@
 // (b) Laptop director: Generate → the first ready scene opens by itself and renders the splat
-// world; dynamics move on Play; a dropped camera and a clicked dialogue line give a caption and
+// world; dynamics move on Play; an added shot and a clicked dialogue line give a caption and
 // real WebAudio playback. Also records the headless frame rate (software GL) as an annotation.
 import { expect, test, type Page } from '@playwright/test';
 import { FIXTURE, laptopState, pixelStats, watchPage } from './helpers.ts';
@@ -7,6 +7,9 @@ import { FIXTURE, laptopState, pixelStats, watchPage } from './helpers.ts';
 test('generate → auto-opened scene renders, dynamics move, a line plays with a caption', async ({
   page,
 }) => {
+  // every click waits for two animation frames, about a second each in SwiftShader, and the
+  // Scene / Shots / Camera modes add a few
+  test.setTimeout(120_000);
   const problems = watchPage(page, 'laptop');
   await page.goto('/');
   await expect(page.locator('#health')).toHaveText('MOCK');
@@ -41,7 +44,8 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   for (const id of ['theo', 'maya'])
     for (const p of [atStart.actors[id]!.eye, atStart.actors[id]!.feet])
       expect(Math.max(Math.abs(p[0]!), Math.abs(p[1]!))).toBeLessThan(1);
-  // suggested shots are framed on the actors where they stand (viewer/shots.ts)
+  // the Shots mode's list is seeded with the coverage framed on the actors where they stand
+  // (viewer/shots.ts)
   await expect(page.getByTestId('shot-row')).toHaveCount(5);
   expect(
     await page.getByTestId('shot-row').evaluateAll((rows) => rows.map((r) => (r as HTMLElement).dataset.shot)),
@@ -62,7 +66,8 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   expect(px.nonBlack).toBeGreaterThan(0.6);
   expect(px.distinct).toBeGreaterThan(40);
 
-  // dynamics move once the scene clock runs
+  // dynamics move once the scene clock runs (Camera mode)
+  await page.getByTestId('tab-camera').click();
   await page.getByTestId('play').click();
   const before = (await laptopState(page)).dynamics;
   expect(before.length).toBeGreaterThan(0);
@@ -76,12 +81,15 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
     .toBeGreaterThan(0.5);
   expect((await laptopState(page)).playing).toBe(true);
 
-  // drop a camera (this click is also the user gesture that unlocks audio)
-  await page.getByTestId('drop-camera').click();
-  await expect(page.getByTestId('camera-row')).toHaveCount(1);
-  expect((await laptopState(page)).cameras).toBe(1);
+  // add the view as a shot (this click is also the user gesture that unlocks audio): one more
+  // shot, and one more camera for the phone
+  await page.getByTestId('tab-shots').click();
+  await page.getByTestId('add-shot').click();
+  await expect(page.getByTestId('shot-row')).toHaveCount(6);
+  expect((await laptopState(page)).cameras).toBe(6);
 
-  // click the first line: caption shows it, the speaking actor's voice actually plays
+  // click the first line (Scene mode): caption shows it, the speaking actor's voice actually plays
+  await page.getByTestId('tab-scene').click();
   await page.getByTestId('line').first().click();
   await expect(page.getByTestId('caption')).toBeVisible();
   await expect(page.getByTestId('caption')).toContainText('You missed the last bus too?');
@@ -97,7 +105,9 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
   // Chromium's audio thread is starved under SwiftShader load and sometimes renders silence.
   test.info().annotations.push({ type: 'voice peak level', description: voice.peak.toFixed(3) });
 
-  // a close-up flies to the actor's face (eyes mid-frame); "+" keeps it as a drop camera
+  // a close-up flies to the actor's face (eyes mid-frame) and puts the phone on it; Duplicate
+  // keeps a copy of it as the director's own shot
+  await page.getByTestId('tab-shots').click();
   const close = page.locator('[data-testid=shot-row][data-shot="Close-up Maya"]');
   await close.getByTestId('shot-fly').click();
   await expect
@@ -106,9 +116,10 @@ test('generate → auto-opened scene renders, dynamics move, a line plays with a
       return Math.max(Math.abs(eye[0]!), Math.abs(eye[1]!));
     }, { timeout: 20_000 })
     .toBeLessThan(0.15);
-  await close.getByTestId('shot-add').click();
-  await expect(page.getByTestId('camera-row')).toHaveCount(2);
-  await expect(page.getByTestId('camera-row').last()).toContainText('Close-up Maya');
+  expect((await laptopState(page)).activeCameraId).toBe(await close.getAttribute('data-id'));
+  await close.getByTestId('shot-duplicate').click();
+  await expect(page.getByTestId('shot-row')).toHaveCount(7);
+  await expect(page.locator('[data-testid=shot-row][data-shot="Close-up Maya (alt)"]')).toHaveAttribute('data-source', 'director');
 
   expect(problems).toEqual([]);
 });

@@ -1,4 +1,4 @@
-/* Edit tab (edit-panel.ts): scoped re-prompting. Tokens and controls come from style.css. */
+/* Tools › Re-prompt (edit-panel.ts): scoped re-prompting. Tokens and controls come from style.css. */
 .edit-panel {
   gap: var(--s3);
 }
