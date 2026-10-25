@@ -98,7 +98,7 @@ chooses from heading + worldPrompt keywords + interior; the chosen set is record
 
 - `tests/e2e/genres.spec.ts`: the fantasy fixture through the MOCK pipeline: `plan.style.genre`
   contains "fantasy", every scene has `plan.look`, scene 0's world caption names the forest set,
-  edits.json revision 1 with the seeded name, the laptop opens scene 1 with the HUD showing the
+  edits.json revision 1 with the seeded name, the laptop opens scene 0 with the HUD showing the
   look name and a graded (non-neutral) frame; the existing specs still pass.
 - Evidence (`docs/images/genre-*`): per genre, the laptop viewer in MOCK before (street set, neutral)
   and after (genre set, seeded look); the four real worlds with their seeded looks before/after; the

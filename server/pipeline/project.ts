@@ -1920,10 +1920,13 @@ export class ProjectStore {
         scene,
         characters: plan.characters,
       });
+      const lookSeed = lookSeedFor(scene, styleForPlan(plan));
       const manifest = SceneManifest.parse({
         version: 1,
         projectId: id,
-        plan: staged ? { ...scene, blocking: staged } : scene,
+        // the manifest's plan always carries a look (planned or derived) so the laptop's
+        // "Scene's look" exists for plans made before looks were planned
+        plan: { ...(staged ? { ...scene, blocking: staged } : scene), look: scene.look ?? lookSeed },
         characters: plan.characters.filter((c) => ids.has(c.id)),
         world: worldAsset,
         actors: actorAssets,
@@ -1932,7 +1935,7 @@ export class ProjectStore {
       });
       await writeJsonAtomic(join(sceneDir, 'manifest.json'), manifest);
       // the scene opens graded with the plan's look; an existing edits.json (the director's) stays
-      const seeded = await seedSceneLook(editsStoreFor(this), id, idx, lookSeedFor(scene, styleForPlan(plan))).catch(
+      const seeded = await seedSceneLook(editsStoreFor(this), id, idx, lookSeed).catch(
         (e) => void this.log(id, `[scene ${idx}] look not seeded: ${errMsg(e)}`),
       );
       if (seeded) await this.log(id, `[scene ${idx}] look seeded: ${seeded.look.name}`);
