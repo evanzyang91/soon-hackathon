@@ -6,9 +6,13 @@
 //   move/closer/bigger/smaller + actor or prop name → transform
 //   warmer/cooler/darker/brighter/night/day/contrast/… → look patch
 //   sky/weather/season/snow/…        → world-regen (pano-inpaint when the panorama exists)
-//   add/remove + prop kind           → prop
+//   add/remove + prop kind           → prop (any kind dynamics.ts names: "add a dinosaur walking by",
+//                                      "add an airplane flying low overhead", "add a helicopter
+//                                      hovering over the street"; moving ones get its standard path
+//                                      near the actors, a hover / a standing animal is parked there)
 //   vague ("the thing on the left")  → clarify
 import type { DynamicElement, Quat, Vec3 } from '../../../shared/schema.ts';
+import { DYNAMIC_WORDS, dynamicPath, kindForWords, MOTION_RE, sceneCentre } from '../dynamics.ts';
 import type { ActorInfo, PropInfo, SceneContext } from './context.ts';
 import { emptyDraft, type Draft, type LookNumeric, type Point, type Selection } from './draft.ts';
 
@@ -34,13 +38,8 @@ export const COLOR_WORDS: Record<string, string> = {
   brown: '#7a5232',
 };
 
-const PROP_KINDS: [RegExp, DynamicElement['kind']][] = [
-  [/\b(car|sedan|taxi|cab|van|truck)s?\b/, 'car'],
-  [/\bbus(es)?\b/, 'bus'],
-  [/\b(bicycle|bike|cyclist)s?\b/, 'bicycle'],
-  [/\b(bird|pigeon|seagull|crow)s?\b/, 'bird'],
-  [/\b(pedestrian|jogger|passer-?by|walker)s?\b/, 'pedestrian'],
-];
+/** Hover / stand words: the prop is parked where it is (at its height), not driven along a path. */
+const PARKED_RE = /\b(hover\w*|hangs?|parked|park it|standing|stands|sits|sitting|grazing|grazes|waiting|leaning|lying)\b/;
 
 const NUMBER_WORDS: Record<string, number> = {
   a: 1,
@@ -98,12 +97,19 @@ function mentionedActors(p: string, scene: SceneContext): ActorInfo[] {
 }
 
 function mentionedProp(p: string, scene: SceneContext): PropInfo | undefined {
-  for (const [re, kind] of PROP_KINDS) if (re.test(p)) return scene.props.find((x) => x.kind === kind);
+  const kind = kindForWords(p);
+  if (kind) {
+    // "remove the dinosaur" among several creatures: the one whose label names it
+    const word = DYNAMIC_WORDS.find((w) => w.kind === kind)!.re.exec(p)?.[0] ?? kind;
+    const one = /[^sui]s$/.test(word) ? word.slice(0, -1) : word;
+    const ofKind = scene.props.filter((x) => x.kind === kind);
+    return ofKind.find((x) => x.label.toLowerCase().includes(one)) ?? ofKind[0];
+  }
   return scene.props.find((x) => p.includes(x.id.toLowerCase()));
 }
 
 function propKind(p: string): DynamicElement['kind'] | undefined {
-  return PROP_KINDS.find(([re]) => re.test(p))?.[1];
+  return kindForWords(p);
 }
 
 function colorIn(p: string): string | undefined {
@@ -245,31 +251,31 @@ export function mockDraft(prompt: string, scene: SceneContext, o: { selection?: 
 
   // add / remove props
   if (kind && ADD.test(p)) {
-    const moving = /\b(drives?|driving|rides?|riding|passes|passing|goes by|going by|flies|flying|flying by|walks? (by|past)|across)\b/.test(p);
+    const parked = PARKED_RE.test(p);
+    // an airplane flies unless it is parked; a helicopter hovers unless it moves
+    const moving = !parked && (MOTION_RE.test(p) || /\bacross\b/.test(p) || kind === 'airplane');
+    const centre = sceneCentre(scene.actors);
+    // the director's words are the label: the viewer builds the body from them ("a dinosaur …")
+    const label =
+      prompt
+        .trim()
+        .replace(/[.!]+$/, '')
+        .replace(/^(?:please\s+)?(?:can you\s+)?(?:add|put|place|park|bring in|spawn|drop in)\s+/i, '')
+        .slice(0, 80) || kind;
     const start: Vec3 = [scene.actors[0] ? scene.actors[0].position[0] + 1.8 : 1.5, 0, (scene.actors[0]?.position[2] ?? -3) - 0.8];
-    const path = moving
-      ? [P([-25, kind === 'bird' ? 8 : 0, -11]), P([25, kind === 'bird' ? 8 : 0, -11])]
-      : [P(start), P([start[0] + axes.right[0], 0, start[2] + axes.right[1]])];
+    // aircraft and animals hover / stand where their standard path puts them; the rest by the actors
+    const placed = !moving && (kind === 'helicopter' || kind === 'airplane' || (kind === 'creature' && parked));
+    const std = dynamicPath(kind, p, { centre });
+    const path = moving || placed ? std.path.map(P) : [P(start), P([start[0] + axes.right[0], 0, start[2] + axes.right[1]])];
     d.scope = 'prop';
-    const colourWord = colour ? `${colour} ` : '';
-    const rest = /\b(leaning|parked|standing|sitting|by|next to|against|on)\b.*$/.exec(p)?.[0] ?? '';
-    d.props.push({
-      action: 'add',
-      elementId: '',
-      kind,
-      label: `${colourWord}${kind}${rest ? ` ${rest}` : ''}`.trim(),
-      path,
-      moving,
-      speed: 0,
-      scale: 1,
-    });
-    d.summary = `Add a ${colourWord}${kind}${moving ? ' passing through' : ''}${o.selection?.point ? ' where you clicked' : ''} (a procedural prop). Nothing else changes.`;
+    d.props.push({ action: 'add', elementId: '', kind, label, path, moving, speed: moving ? std.speed : 0, scale: 1 });
+    d.summary = `Add ${/^(a|an|the|some|two|three)\b/i.test(label) ? '' : 'a '}${label}${o.selection?.point ? ' where you clicked' : ''} (a procedural prop). Nothing else changes.`;
     return d;
   }
   if (prop && REMOVE.test(p) && !actors.length) {
     d.scope = 'prop';
     d.props.push({ action: 'remove', elementId: prop.id, kind: prop.kind as DynamicElement['kind'], label: prop.label, path: [], moving: false, speed: 0, scale: 1 });
-    d.summary = `Remove the ${prop.label}. Nothing else changes.`;
+    d.summary = `Remove “${prop.label.replace(/[.!]+$/, '')}”. Nothing else changes.`;
     return d;
   }
 
