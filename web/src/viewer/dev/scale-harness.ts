@@ -1,14 +1,19 @@
 // Offscreen scale renders: a Marble world with the viewer's transform (× a calibration factor),
 // 1.70 m reference mannequins and an optional measuring pole, drawn from a given camera. Driven
 // by server/pipeline/calibrate-render.ts through window.__scale (Playwright, GPU Chromium).
+// A shot with a `look` is graded the way the laptop grades it: the scene's SceneLook (splat
+// atmosphere + lights, mesh fog) and the LookPost pass the ViewportRenderer uses.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SplatMesh } from '@sparkjsdev/spark';
+import { defaultLook } from '@shared/look';
 import { createSpark } from '../spark';
 import { worldTransform } from '../transform';
 import { buildMannequin, MANNEQUIN_HEIGHT_M, restHeight } from '../actors/mannequin';
 import { textSprite } from '../actors/common';
-import type { ScaleHarness, ScaleMark, ScalePanel, ScaleShot, ScaleWorld } from './scale-shot';
+import { LookPost } from '../look/post';
+import { SceneLook } from '../look/scene-look';
+import type { ComposeOptions, ScaleHarness, ScaleMark, ScalePanel, ScaleShot, ScaleWorld } from './scale-shot';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(1);
@@ -22,13 +27,17 @@ sun.position.set(3, 6, 4);
 scene.add(sun);
 const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.05, 500);
 camera.rotation.order = 'YXZ';
-scene.add(createSpark(renderer));
+const spark = createSpark(renderer);
+scene.add(spark);
 const worldRoot = new THREE.Group();
 scene.add(worldRoot);
 const props = new THREE.Group();
 scene.add(props);
 let frame: ScaleWorld | null = null;
 let collider: THREE.Object3D | null = null;
+/** Created once the background is final (MeshAtmosphere fogs the background it finds). */
+let sceneLook: SceneLook | null = null;
+let post: LookPost | null = null;
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
@@ -133,6 +142,7 @@ const harness: ScaleHarness = {
       collider = gltf.scene;
       worldRoot.add(collider);
     }
+    sceneLook ??= new SceneLook(scene, spark);
     return { splats: mesh.numSplats };
   },
 
@@ -175,17 +185,30 @@ const harness: ScaleHarness = {
       g.rotation.y = f.yaw ?? Math.atan2(shot.camera.position[0] - f.x, shot.camera.position[2] - f.z);
       props.add(g);
     }
+    // the look (or none: neutral uniforms switch an installed splat modifier off again)
+    const look = sceneLook;
+    if (look) {
+      look.forcePost = false;
+      look.setLook(shot.look ?? defaultLook());
+    }
+    const draw = () => {
+      look?.update();
+      const settings = shot.look ? look?.prepare(camera, null) : null;
+      if (!settings) return renderer.render(scene, camera);
+      const rect = { x: 0, y: 0, width: shot.width, height: shot.height };
+      (post ??= new LookPost(renderer)).render(settings, rect, () => renderer.render(scene, camera));
+    };
     // Spark sorts splats asynchronously: render until the order has settled
     for (let i = 0; i < 45; i++) {
-      renderer.render(scene, camera);
+      draw();
       await nextFrame();
     }
-    renderer.render(scene, camera);
+    draw();
     const out = shot.marks?.length ? drawMarks(shot.marks, shot.width, shot.height) : renderer.domElement;
     return shot.format === 'jpeg' ? out.toDataURL('image/jpeg', 0.9) : out.toDataURL('image/png');
   },
 
-  async compose(panels: ScalePanel[], footer: string[]) {
+  async compose(panels: ScalePanel[], footer: string[], opts: ComposeOptions = {}) {
     const imgs = await Promise.all(
       panels.map(
         (p) =>
@@ -197,9 +220,19 @@ const harness: ScaleHarness = {
           }),
       ),
     );
-    const w = imgs.reduce((s, im) => s + im.width, 0) + 12 * (imgs.length - 1);
-    const h = Math.max(...imgs.map((im) => im.height));
-    const head = 78;
+    const cols = Math.max(1, opts.columns ?? imgs.length);
+    const rows: HTMLImageElement[][] = [];
+    for (let i = 0; i < imgs.length; i += cols) rows.push(imgs.slice(i, i + cols));
+    const gap = 12;
+    // one row keeps the original sizes; a grid of small panels scales its type to the panels
+    const k = opts.columns ? Math.min(1, Math.max(0.55, Math.min(...imgs.map((im) => im.width)) / 900)) : 1;
+    const titleFont = `600 ${Math.round(28 * k)}px system-ui, sans-serif`;
+    const subFont = `400 ${Math.round(20 * k)}px system-ui, sans-serif`;
+    const head = Math.round(78 * k);
+    const top = opts.heading ? 52 : 0;
+    const w = Math.max(...rows.map((r) => r.reduce((s, im) => s + im.width, 0) + gap * (r.length - 1)));
+    const rowH = rows.map((r) => head + Math.max(...r.map((im) => im.height)));
+    const h = rowH.reduce((s, x) => s + x, 0) + gap * (rows.length - 1);
     const lineH = 26;
     const c = document.createElement('canvas');
     const ctx = c.getContext('2d')!;
@@ -219,26 +252,36 @@ const harness: ScaleHarness = {
     }
     const foot = lines.length ? lines.length * lineH + 24 : 0;
     c.width = w;
-    c.height = head + h + foot;
+    c.height = top + h + foot;
     ctx.fillStyle = '#121418';
     ctx.fillRect(0, 0, c.width, c.height);
-    let x = 0;
-    imgs.forEach((im, i) => {
-      const p = panels[i]!;
-      ctx.drawImage(im, x, head);
+    if (opts.heading) {
       ctx.fillStyle = '#f2f2f2';
-      ctx.font = '600 28px system-ui, sans-serif';
-      ctx.fillText(p.title, x + 16, 36);
-      if (p.subtitle) {
-        ctx.fillStyle = '#b8c0cc';
-        ctx.font = '400 20px system-ui, sans-serif';
-        ctx.fillText(p.subtitle, x + 16, 64);
+      ctx.font = '600 30px system-ui, sans-serif';
+      ctx.fillText(opts.heading, 16, 36);
+    }
+    let y = top;
+    let i = 0;
+    rows.forEach((r, ri) => {
+      let x = 0;
+      for (const im of r) {
+        const p = panels[i++]!;
+        ctx.drawImage(im, x, y + head);
+        ctx.fillStyle = '#f2f2f2';
+        ctx.font = titleFont;
+        ctx.fillText(p.title, x + 16 * k, y + 36 * k);
+        if (p.subtitle) {
+          ctx.fillStyle = '#b8c0cc';
+          ctx.font = subFont;
+          ctx.fillText(p.subtitle, x + 16 * k, y + 64 * k);
+        }
+        x += im.width + gap;
       }
-      x += im.width + 12;
+      y += rowH[ri]! + gap;
     });
     ctx.fillStyle = '#d8dde4';
     ctx.font = '400 19px ui-monospace, Menlo, monospace';
-    lines.forEach((l, i) => ctx.fillText(l, 16, head + h + 30 + i * lineH));
+    lines.forEach((l, j) => ctx.fillText(l, 16, top + h + 30 + j * lineH));
     return c.toDataURL('image/png');
   },
 };
