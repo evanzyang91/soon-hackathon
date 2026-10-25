@@ -1,6 +1,7 @@
 // Entry: one HTTPS server for static web (Vite middleware in dev, dist/ in prod), /api, and /ws.
 // WP B owns server/https.ts + server/relay.ts; WP C owns server/pipeline/routes.ts. This file
 // only wires them together — keep it thin.
+import { createReadStream } from 'node:fs';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -41,6 +42,29 @@ async function serveFile(root: string, urlPath: string, res: import('node:http')
       'accept-ranges': 'bytes',
     });
     res.end(await readFile(file));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// /models/<uid>/model.glb | model.json: the found-model library (server/pipeline/models.ts). Only
+// those two names under a 32-hex id, so nothing outside MODELS_LIBRARY_DIR is reachable; a uid's
+// files never change once written, so browsers may keep them.
+const MODEL_PATH = /^\/models\/([0-9a-f]{32})\/(model\.glb|model\.json)$/;
+async function serveModel(urlPath: string, res: import('node:http').ServerResponse) {
+  const m = MODEL_PATH.exec(urlPath);
+  if (!m) return false;
+  const file = join(env.modelsLibraryDir, m[1]!, m[2]!);
+  try {
+    const s = await stat(file);
+    if (!s.isFile()) return false;
+    res.writeHead(200, {
+      'content-type': m[2] === 'model.glb' ? 'model/gltf-binary' : 'application/json',
+      'content-length': s.size,
+      'cache-control': 'public, max-age=604800, immutable',
+    });
+    createReadStream(file).on('error', () => res.destroy()).pipe(res);
     return true;
   } catch {
     return false;
@@ -90,6 +114,11 @@ async function main() {
       }
       if (p.startsWith('/projects/')) {
         if (await serveFile(env.dataDir, p.slice('/projects/'.length), res)) return;
+        res.writeHead(404);
+        return res.end('not found');
+      }
+      if (p.startsWith('/models/')) {
+        if (await serveModel(p, res)) return;
         res.writeHead(404);
         return res.end('not found');
       }

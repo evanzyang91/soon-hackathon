@@ -71,13 +71,14 @@ export const DYNAMIC_WORDS: { kind: Kind; re: RegExp }[] = [
   },
   {
     kind: 'creature',
-    re: /\b(dinosaurs?|dinos?|t-?rex(es)?|tyrannosaur\w*|raptors?|velociraptors?|triceratops|stegosaur\w*|brachiosaur\w*|brontosaur\w*|diplodoc\w*|sauropods?|pterodactyls?|mammoths?|elephants?|giraffes?|rhinos?|rhinoceros(es)?|hippos?|bears?(?!\s+(?:down|with|witness|the brunt|in mind|no\b))|grizzl(?:y|ies)|wol(?:f|ves)|wolf pack|werewol(?:f|ves)|coyotes?|foxes|fox|deer|stags?|moose|elks?|reindeer|antelopes?|gazelles?|lions?|lioness(es)?|tigers?|leopards?|panthers?|jaguars?|cheetahs?|cougars?|cows?|cattle|bulls?|oxen|ox|bison|buffalo(es)?|yaks?|camels?|llamas?|alpacas?|zebras?|sheep|lambs?|goats?|pigs?|boars?|hogs?|cats?|kittens?|rabbits?|hares?|kangaroos?|ostrich(es)?|emus?|gorillas?|apes?|monkeys?|crocodiles?|alligators?|monsters?(?!\s+trucks?)|beasts?|creatures?|giants?(?=\s+(?:lumbers?|strides?|stomps?|walks?|wades?|crosses|passes|plods?|marches|appears?|rises?|looms?|steps?|sits?|stands?|sleeps?|roars?)|[.,;!?]|$)|trolls?|ogres?|yetis?|bigfoot|sasquatch|cyclops|minotaurs?|golems?|kaijus?|godzilla|behemoths?|wargs?)\b/i,
+    re: /\b(dinosaurs?|dinos?|t(?:-|\. ?| )?rex(es)?|tyrannosaur\w*|raptors?|velociraptors?|triceratops|stegosaur\w*|brachiosaur\w*|brontosaur\w*|diplodoc\w*|sauropods?|pterodactyls?|mammoths?|elephants?|giraffes?|rhinos?|rhinoceros(es)?|hippos?|bears?(?!\s+(?:down|with|witness|the brunt|in mind|no\b))|grizzl(?:y|ies)|wol(?:f|ves)|wolf pack|werewol(?:f|ves)|coyotes?|foxes|fox|deer|stags?|moose|elks?|reindeer|antelopes?|gazelles?|lions?|lioness(es)?|tigers?|leopards?|panthers?|jaguars?|cheetahs?|cougars?|cows?|cattle|bulls?|oxen|ox|bison|buffalo(es)?|yaks?|camels?|llamas?|alpacas?|zebras?|sheep|lambs?|goats?|pigs?|boars?|hogs?|cats?|kittens?|rabbits?|hares?|kangaroos?|ostrich(es)?|emus?|gorillas?|apes?|monkeys?|crocodiles?|alligators?|monsters?(?!\s+trucks?)|beasts?|creatures?|giants?(?=\s+(?:lumbers?|strides?|stomps?|walks?|wades?|crosses|passes|plods?|marches|appears?|rises?|looms?|steps?|sits?|stands?|sleeps?|roars?)|[.,;!?]|$)|trolls?|ogres?|yetis?|bigfoot|sasquatch|cyclops|minotaurs?|golems?|kaijus?|godzilla|behemoths?|wargs?)\b/i,
   },
 ];
 
+// a lone capital with a full stop is an initial, not a sentence end ("A huge T. rex lumbers past.")
 const sentences = (paragraphs: string[]) =>
   paragraphs
-    .flatMap((p) => p.split(/(?<=[.!?])\s+/))
+    .flatMap((p) => p.split(/(?<=[.!?])(?<!\b[A-Z]\.)\s+/))
     .map((s) => s.trim())
     .filter(Boolean);
 
@@ -125,7 +126,7 @@ export const DEFAULT_SPEED: Record<Kind, number> = {
 
 /** Big creatures walk further out and slower in the stride (the viewer builds them ≥ 3 m). */
 const BIG_CREATURE =
-  /\b(dinosaurs?|dinos?|t-?rex|tyrannosaur\w*|triceratops|stegosaur\w*|brachiosaur\w*|brontosaur\w*|diplodoc\w*|sauropods?|mammoths?|elephants?|giraffes?|giants?|trolls?|ogres?|cyclops|kaijus?|godzilla|behemoths?|huge|giant|massive|enormous|colossal|gigantic)\b/i;
+  /\b(dinosaurs?|dinos?|t(?:-|\. ?| )?rex|tyrannosaur\w*|triceratops|stegosaur\w*|brachiosaur\w*|brontosaur\w*|diplodoc\w*|sauropods?|mammoths?|elephants?|giraffes?|giants?|trolls?|ogres?|cyclops|kaijus?|godzilla|behemoths?|huge|giant|massive|enormous|colossal|gigantic)\b/i;
 const RUN_RE =
   /\b(run\w*|ran|charg\w*|gallop\w*|sprint\w*|bound\w*|chas\w*|stampede\w*|races?|racing|flee\w*|fled|dash\w*|bolts?)\b/i;
 const LOW_RE = /\b(low|skims?|skimming|buzz\w*|treetop|rooftop)\b/i;
