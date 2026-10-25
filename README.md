@@ -830,3 +830,13 @@ fixtures/         sample screenplays (genres/), mock sets (mock-world/<set>/), r
 tests/            Playwright e2e (tests/e2e)
 docs/             PLAN.md and screenshots
 ```
+
+Shot list storage (`server/pipeline/shots.ts`, contract `shared/shots.ts`): each scene's coverage
+is `scene-<n>/shots.json`, read and written like `edits.json` (`GET / PUT
+/api/projects/:id/scenes/:n/shots`, defaults while absent, a stale `revision` gets 409 with the
+current list). `PUT …/shots/:shotId/frame` takes a raw `image/jpeg` (≤ 600 KB, sniffed as JPEG)
+and stores it at `scene-<n>/shots/<shotId>.jpg`, served from `/projects/<id>/…`; it sets the
+shot's `frame` + `frameAt` and bumps the revision. Shot ids must be path-safe and unique.
+`GET /api/projects/:id/shotlist.csv` downloads every scene's shots (scene, number, name, lens_mm,
+height_m, note, lines, frame_url; UTF-8 with a BOM so Excel opens it, formula-like text prefixed
+with `'`).
