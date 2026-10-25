@@ -83,7 +83,19 @@ export const PhoneCommand = z.object({
     'play-scene',
     /** Phone → laptop: play the next dialogue line (after the one last played). */
     'next-line',
+    /** Phone → laptop: attach to the shot `cameraId` (null = free handheld, no shot). */
+    'select-camera',
+    /**
+     * Phone → laptop: add the phone's current view as a shot (the laptop knows the view: the
+     * attached shot's pose plus the phone's offset) and select it; `name` optional. The new shot
+     * reaches the phone in the next SceneState.cameras like any other.
+     */
+    'add-shot',
   ]),
+  /** select-camera: the DropCamera id, or null for free handheld. */
+  cameraId: z.string().nullable().optional(),
+  /** add-shot: the name to give it (default "Shot <number>"). */
+  name: z.string().max(60).optional(),
 });
 export type PhoneCommand = z.infer<typeof PhoneCommand>;
 

@@ -79,12 +79,16 @@ export function installDebugHook(director: Director) {
       heard.clear();
     }
     // 'clock' fires from the frame loop (≥ every 100 ms), right after the actors updated
-    if (c === 'clock') {
-      const v = voice();
-      peak = Math.max(peak, v.level);
-      for (const id of v.playing) heard.add(id);
-    }
+    if (c === 'clock') sample();
   });
+  const sample = () => {
+    const v = voice();
+    peak = Math.max(peak, v.level);
+    for (const id of v.playing) heard.add(id);
+  };
+  // Frames starve under software GL (headless SwiftShader at a high load average), and a short
+  // line can play out between two of them; a timer keeps sampling while rAF is throttled.
+  setInterval(sample, 50);
   const state = (): PrevizDebugState => {
     const rt = director.runtime;
     const g = director.phoneGizmo.object;
