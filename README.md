@@ -58,13 +58,13 @@ pnpm dev                        # https://localhost:5173 (PORT=…) — the phon
 | Variable | Used for | Without it |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | screenplay → scene plan (Claude) | offline rule-based parser |
-| `WLT_API_KEY` | Marble worlds | mock world (a small procedural stage) |
+| `WLT_API_KEY` | Marble worlds | mock world (a small procedural set that fits the scene heading, see `fixtures/mock-world/README.md`) |
 | `OPENAI_API_KEY` | actor reference images, TTS | mannequin actors, beep audio |
 | `ELEVENLABS_API_KEY` | preferred TTS when set | OpenAI TTS |
 | `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | LHM avatars on a Modal L4 | mannequin actors |
 | `MOCK=1` | everything offline from `fixtures/` (what the tests use) | live mode |
 | `MARBLE_MODEL` | `marble-1.1` (default), `marble-1.0-draft`, `marble-1.1-plus` | |
-| `MARBLE_DRY_RUN=1` | log the exact Marble request instead of sending it; mock world | |
+| `MARBLE_DRY_RUN=1` | log the exact Marble request instead of sending it; mock world (the set that fits the heading) | |
 | `WORLD_LIBRARY_DIR` / `ACTORS_LIBRARY_DIR` | reuse folders (default `data/marble`, `data/actors-library`) | |
 | `DATA_DIR`, `PORT` | project store (default `data/projects`), port (5173) | |
 
@@ -685,7 +685,7 @@ server/           HTTPS entry, relay, env, pipeline/ (stages, libraries, CLI)
 web/src/laptop/   director UI;  web/src/phone/  phone camera;  web/src/viewer/  shared 3D loader
 worker/           Modal LHM avatar worker (Python)
 ios/              ARKit camera app (prototype): Xcode project, PrevizCore Swift package
-fixtures/         sample screenplay, mock world, real-provider samples
+fixtures/         sample screenplays (genres/), mock sets (mock-world/<set>/), real-provider samples
 tests/            Playwright e2e (tests/e2e)
 docs/             PLAN.md and screenshots
 ```
