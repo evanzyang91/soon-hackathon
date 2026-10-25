@@ -382,8 +382,10 @@ async function initView() {
   try {
     const { PhoneView } = await import('./view.ts');
     view = new PhoneView(ui.glCanvas, ui.vfCanvas, QUALITY, { voice: VOICE });
-    // the director's look: show its name briefly when it changes
-    view.look.onName = (name) => ui.toast(`Look: ${name}`, 1800);
+    // the director's look: show its name briefly when it changes; a planner-seeded name runs to
+    // 80 characters ("Candlelit · cold, eerie, damp stone"), so long names stay up long enough to
+    // read (the toast wraps at 80 % of the screen width)
+    view.look.onName = (name) => ui.toast(`Look: ${name}`, Math.min(4000, 1800 + 30 * Math.max(0, name.length - 20)));
     governor.onChange = (level, reason) => {
       debug.renderLevel = level;
       const lvl = LEVELS[level]!;
