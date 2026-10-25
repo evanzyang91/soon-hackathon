@@ -118,11 +118,25 @@ async function readStdin(): Promise<string> {
 }
 
 const mode = process.argv[2];
-if (mode === 'check') {
+if (mode === 'capture') {
+  // RoomCapture (server/pipeline/room-world.ts) as the app uploads it: one JSON per line
+  const { RoomCapture } = await import('../../server/pipeline/room-world.ts');
+  const out = (await readStdin())
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((l) => {
+      const input = JSON.parse(l) as unknown;
+      const r = RoomCapture.safeParse(input);
+      return r.success
+        ? { ok: true, dropped: keysDropped(input, r.data) }
+        : { ok: false, error: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') };
+    });
+  process.stdout.write(JSON.stringify(out));
+} else if (mode === 'check') {
   process.stdout.write(JSON.stringify(check(JSON.parse(await readStdin()) as CheckRequest)));
 } else if (mode === 'samples') {
   process.stdout.write(JSON.stringify(samples()));
 } else {
-  console.error('usage: protocol-harness.ts check|samples');
+  console.error('usage: protocol-harness.ts check|samples|capture');
   process.exit(2);
 }

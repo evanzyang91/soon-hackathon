@@ -13,12 +13,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { ActorAsset, Character } from '@shared/schema';
+import type { Performance } from '@shared/beats';
 import { createSpeech, resolveUrl, textSprite, type Speech } from './common';
 import { headYawToward } from '../gaze';
 import { buildMannequin, MANNEQUIN_HEIGHT_M, restHeight, type Pose } from './mannequin';
 import { loadSequence, loadSplatBody } from './splat-actor';
 import { loadSkinnedBody } from './skinned-actor';
-import type { RigPointer } from './rig';
+import type { Clip, RigPointer } from './rig';
 import { tintFor } from '@shared/tint';
 
 export interface ActorHandle {
@@ -34,6 +35,14 @@ export interface ActorHandle {
    * heads; a baked splat sequence cannot.
    */
   lookAt?(target: THREE.Vector3 | null): void;
+  /**
+   * Beats: put the actor where the timeline says (shared/beats.ts performanceAt) at this scene
+   * time. Position and pose follow at once (the clock can be scrubbed); the body turns toward the
+   * yaw at a natural rate unless it is walking (it faces where it walks).
+   */
+  perform?(p: Performance): void;
+  /** The scene's generated gesture clips (rigged splat actors play them during beats). */
+  addGestures?(clips: Clip[]): void;
   update(dt: number, sceneTime: number): void;
   dispose(): void;
 }
@@ -51,12 +60,26 @@ interface Body {
   offset?: THREE.Vector3;
   /** Head yaw toward the look target, relative to the body (null = none). */
   look?(yaw: number | null): void;
+  /** Distance-locked walk cycle while beats move the actor (rigged splat actors). */
+  travel?(walking: boolean, walked: number): void;
+  /** A beat's gesture clip, `time` seconds in (rigged splat actors). */
+  gesture?(name: string | null, time: number): void;
+  addGestures?(clips: Clip[]): void;
   /** small numbers for tests/HUD, mirrored into object.userData.debug every update */
   debug?(): Record<string, number>;
   dispose(): void;
 }
 
 export const PROCEDURAL_GLB = 'procedural:mannequin';
+
+/** How fast an actor turns to a beat's new facing (rad/s): about half a turn in a second. */
+export const TURN_RATE = 3.5;
+
+/** `from` turned toward `to` by at most `step` radians, the short way round. */
+export function turnToward(from: number, to: number, step: number): number {
+  const d = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return Math.abs(d) <= step ? to : from + Math.sign(d) * step;
+}
 
 /**
  * How far a seated actor's body (and head) sits below standing height. The mannequin poses its
@@ -191,6 +214,9 @@ async function makeBody(asset: ActorAsset, baseUrl: string, tint: string, height
             },
             drop: (p) => (p === 'sitting' ? (sk.canSit ? SKINNED_SIT_DROP_M * k : poseDrop(p, heightM)) : 0),
             look: (yaw) => sk.look(yaw),
+            travel: (walking, walked) => sk.travel(walking, walked),
+            gesture: (name, time) => sk.gesture(name, time),
+            addGestures: (clips) => sk.addGestures(clips),
             offset: sk.offset,
             debug: () => sk.debug(),
             dispose: () => sk.dispose(),
@@ -277,6 +303,10 @@ export async function createActor(
 
   let t = 0;
   let speakingLine: string | null = null;
+  let pose: Performance['pose'] | null = null;
+  /** Yaw the beats want; update() turns toward it (null: no beats, rotation is the caller's). */
+  let wantYaw: number | null = null;
+  let walkingNow = false;
   let lookTarget: THREE.Vector3 | null = null;
   const handle: ActorHandle = {
     object,
@@ -302,16 +332,33 @@ export async function createActor(
     stopSpeaking() {
       speech.stop();
     },
-    setPose(pose) {
-      body.setPose(pose);
-      headY = body.headY - (body.drop ? body.drop(pose) : poseDrop(pose, heightM));
+    setPose(next) {
+      pose = next;
+      body.setPose(next);
+      headY = body.headY - (body.drop ? body.drop(next) : poseDrop(next, heightM));
       place();
+    },
+    perform(p) {
+      object.position.x = p.x;
+      object.position.z = p.z;
+      walkingNow = p.pose === 'walking';
+      // a rigged body walks with its own distance-locked cycle; others animate the walking pose
+      const bodyPose = body.travel && walkingNow ? 'standing' : p.pose;
+      if (bodyPose !== pose) handle.setPose(bodyPose);
+      body.travel?.(walkingNow, p.walked);
+      body.gesture?.(p.gesture?.clip ?? null, p.gesture?.time ?? 0);
+      if (wantYaw === null || walkingNow) object.rotation.y = p.yaw;
+      wantYaw = p.yaw;
+    },
+    addGestures(clips) {
+      body.addGestures?.(clips);
     },
     lookAt(target) {
       lookTarget = target ? (lookTarget ?? new THREE.Vector3()).copy(target) : null;
     },
     update(dt, sceneTime) {
       t += dt;
+      if (wantYaw !== null && !walkingNow) object.rotation.y = turnToward(object.rotation.y, wantYaw, TURN_RATE * dt);
       // actors are children of the scene root: position / rotation.y are world values
       bodyAt.copy(object.position);
       if (body.offset) bodyAt.add(bodyOffset.copy(body.offset).applyAxisAngle(THREE.Object3D.DEFAULT_UP, object.rotation.y));

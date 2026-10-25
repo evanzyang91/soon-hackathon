@@ -59,6 +59,11 @@ export function bindUi() {
       hud.hidden = false;
       $('room').textContent = room;
     },
+    /** Real-wall warning from the room scan (pose=external); '' hides it. */
+    setWall(kind: 'clear' | 'near' | 'outside', text: string) {
+      document.body.dataset.wall = kind;
+      $('wall').textContent = text;
+    },
     setConn(s: ConnState) {
       const el = $('conn');
       el.dataset.state = s;

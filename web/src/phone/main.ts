@@ -8,7 +8,8 @@
 // screen, sensors, walk controls or relay. The app owns the relay socket and pushes its pose and
 // the relay's messages through window.__previzPose / __previzMessage; the page only renders.
 import { Euler, Quaternion } from 'three';
-import type { PhonePose, SceneState, ServerMessage } from '@shared/protocol';
+import type { PhonePose, RoomScan, SceneState, ServerMessage } from '@shared/protocol';
+import { wallProximity } from '@shared/room';
 import { SceneManifest, type Quat, type Vec3 } from '@shared/schema';
 import { parseExternalPose, type ExternalPose } from './external.ts';
 import { clampFov, DEFAULT_FOV, focalLabel, pinchFov } from './fov.ts';
@@ -82,6 +83,8 @@ let stick: TouchStick | null = null;
 let heightSlider: TouchStick | null = null;
 let keys: KeyboardWalk | null = null;
 /** ?pose=external: the latest native pose, and its orientation as a three.js quaternion. */
+/** The real room the native app scanned (offset frame), for the wall warning. */
+let roomScan: RoomScan | null = null;
 let ext: ExternalPose = {
   q: [0, 0, 0, 1],
   nudge: [0, 0, 0],
@@ -106,6 +109,8 @@ const debug = {
   poseSource: (EXTERNAL ? 'external' : 'browser') as 'external' | 'browser',
   /** Native poses applied through window.__previzPose. */
   externalPoses: 0,
+  /** Real-wall state from the room scan: clear / near / outside (null without a scan). */
+  wall: null as null | 'clear' | 'near' | 'outside',
   peers: { laptop: false, phones: 0 },
   posesSent: 0,
   lastPose: null as PhonePose | null,
@@ -506,6 +511,9 @@ function onMessage(msg: ServerMessage) {
       break;
     case 'pose':
       break; // phones do not receive poses
+    case 'room':
+      roomScan = msg; // only the native app forwards these (its own scan)
+      break;
   }
 }
 
@@ -702,6 +710,7 @@ function frame(now: number) {
     if (debug.audioPlaying) debug.audioPeak = Math.max(debug.audioPeak, v.level);
   }
   ui.setWalkReadout(walkReadout(walker.offset));
+  if (EXTERNAL && roomScan && debug.externalPoses > 0) updateWall(roomScan, ext.offset);
 }
 
 /** "1.2 m · ↑0.4 m" away from the attached camera; '' while standing on it. */
@@ -711,6 +720,21 @@ function walkReadout(o: Vec3): string {
   if (flat >= 0.05) parts.push(`↔ ${flat.toFixed(1)} m`);
   if (Math.abs(o[1]) >= 0.05) parts.push(`${o[1] > 0 ? '↑' : '↓'} ${Math.abs(o[1]).toFixed(1)} m`);
   return parts.length ? `${parts.join(' · ')} from ${anchor.name}` : '';
+}
+
+/** Warn before the person filming walks into a real wall (pose offset vs the scanned outline). */
+function updateWall(room: RoomScan, offset: Vec3) {
+  const w = wallProximity([offset[0], offset[2]], room.outline);
+  if (w.kind === 'clear' && debug.wall === 'clear') return; // the distance only shows near walls
+  debug.wall = w.kind;
+  ui.setWall(
+    w.kind,
+    w.kind === 'near'
+      ? `Wall ${w.meters.toFixed(1)} m`
+      : w.kind === 'outside'
+        ? `Outside the scanned room (${w.meters.toFixed(1)} m)`
+        : 'Room scanned',
+  );
 }
 
 function withParam(key: string, value: string) {

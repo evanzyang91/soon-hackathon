@@ -27,6 +27,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type Anthropic from '@anthropic-ai/sdk';
+import { shiftBlocking } from '../../shared/beats.ts';
 import { sampleGround, validateGroundField } from '../../shared/ground.ts';
 import { SceneManifest, WorldAsset, type Blocking, type Character, type ScenePlan, type Vec3 } from '../../shared/schema.ts';
 import type { ScaleFigure, ScaleMark } from '../../web/src/viewer/dev/scale-shot.ts';
@@ -422,8 +423,12 @@ export function stagedBlocking(
   const factor = calibrationFactor(o.asset);
   if (!report || report.status !== 'staged' || !stagingCurrent(report, { worldId: o.asset.worldId, scene: o.scene, characters: o.characters, factor })) return undefined;
   const k = factor / (report.factor > 0 ? report.factor : 1);
-  if (Math.abs(k - 1) < 1e-9) return report.blocking;
-  return report.blocking.map((b) => ({ ...b, position: [round3(b.position[0] * k), b.position[1], round3(b.position[2] * k)] as Vec3 }));
+  const marks = Math.abs(k - 1) < 1e-9 ? report.blocking : report.blocking.map((b) => ({ ...b, position: [round3(b.position[0] * k), b.position[1], round3(b.position[2] * k)] as Vec3 }));
+  // staging moves where each actor starts; the planner's beats (shared/beats.ts) move with the mark
+  return marks.map((b) => {
+    const planned = o.scene.blocking.find((x) => x.characterId === b.characterId);
+    return planned?.beats?.length ? { ...b, beats: shiftBlocking(planned, b.position).beats } : b;
+  });
 }
 
 /**

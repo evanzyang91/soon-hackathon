@@ -95,6 +95,17 @@
       var frames = try poses.map { try Wire.encode($0) }
       frames.append(try Wire.encode(Hello(room: "ABCD")))
       frames += try CommandName.allCases.map { try Wire.encode(PhoneCommand($0)) }
+      // a room scan as the app builds it: footprint → offset frame
+      var tracker = PoseTracker(anchorYaw: 0.4)
+      _ = tracker.update(
+        CameraSample(transform: transform(ry(0.3), [0.5, 1.3, -1]), quality: .normal, timestamp: 0),
+        orientation: .landscapeRight)
+      let floor = DetectedPlane(
+        kind: .floor, boundary: [[-2, 0, -3], [2, 0, -3], [2.5, 0, 1], [-2, 0, 1.5], [0, 0, 0]])
+      let ceiling = DetectedPlane(kind: .ceiling, boundary: [[0, 2.5, 0], [1, 2.5, 0], [1, 2.5, 1]])
+      if let room = RoomFootprint.from([floor, ceiling]) {
+        frames.append(try Wire.encode(room.message(source: .lidar, toScene: tracker.toScene)))
+      }
       // negative control: the harness must really validate
       let bogus = #"{"type":"pose","source":"unity","t":1,"q":[0,0,0,1],"nudge":[0,0,0],"fovDeg":50}"#
       frames.append(bogus)

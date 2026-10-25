@@ -4,8 +4,16 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
-import { SceneManifest, type ActorAsset, type Character, type DialogueLine } from '@shared/schema';
+import {
+  SceneManifest,
+  type ActorAsset,
+  type Blocking,
+  type Character,
+  type DialogueLine,
+} from '@shared/schema';
 import type { GroundField } from '@shared/ground';
+import { fixMarks, performanceAt, shiftBlocking, WALK_SPEED } from '@shared/beats';
+import { parseLibrary, validateLibrary, type Clip } from './actors/rig';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
@@ -172,6 +180,16 @@ class LoadedScene implements SceneRuntime {
   readonly scene = new THREE.Scene();
   readonly worldRoot = new THREE.Group();
   readonly actors = new Map<string, ActorHandle>();
+  /**
+   * Actors whose blocking has beats: the timeline places them every frame. Their starting mark
+   * can be moved by placement correction (`userData.placementMark`) or a scene edit
+   * (`userData.editMark`); the whole choreography moves with it.
+   */
+  readonly performers = new Map<string, Blocking>();
+  /** Seconds of each generated gesture clip (manifest `motion`), so beats play them once. */
+  readonly gestureSeconds = new Map<string, number>();
+  /** The generated gesture clips themselves (a hot-swapped actor gets them too). */
+  gestureClips: Clip[] = [];
   readonly grid: THREE.GridHelper;
   readonly spark: SparkRenderer;
   splat: SplatMesh | null = null;
@@ -214,9 +232,10 @@ class LoadedScene implements SceneRuntime {
 
     const t = worldTransform(world);
     this.worldRoot.name = 'world';
-    this.worldRoot.rotation.x = t.rotationX;
+    this.worldRoot.rotation.order = 'YXZ'; // room alignment turns the flipped world about +Y
+    this.worldRoot.rotation.set(t.rotationX, t.rotationY, 0);
     this.worldRoot.scale.setScalar(t.scale);
-    this.worldRoot.position.y = t.positionY;
+    this.worldRoot.position.set(t.positionX, t.positionY, t.positionZ);
     this.scene.add(this.worldRoot);
 
     this.grid = new THREE.GridHelper(30, 30, 0x8ab4d8, 0x56606b);
@@ -286,6 +305,7 @@ class LoadedScene implements SceneRuntime {
     if (this.disposed) return;
     if (this.playing) this.time += dt;
     this.dynamics.update(this.time);
+    this.perform();
     this.aimHeads();
     for (const a of this.actors.values()) {
       a.update(dt, this.time);
@@ -298,6 +318,25 @@ class LoadedScene implements SceneRuntime {
     }
     this.sceneEdits?.update(this.time);
     this.look.update();
+  }
+
+  /** Beats: where each performing actor is at the scene time (shared/beats.ts). */
+  private perform() {
+    for (const [id, b] of this.performers) {
+      const actor = this.actors.get(id);
+      if (!actor?.perform) continue;
+      const u = actor.object.userData as {
+        editMark?: { position?: [number, number, number]; yaw?: number };
+        placementMark?: { position: [number, number, number]; yaw?: number };
+      };
+      const mark = u.editMark?.position ?? u.placementMark?.position;
+      const yaw = u.editMark?.yaw ?? u.placementMark?.yaw;
+      const blocking = mark || yaw !== undefined ? shiftBlocking(b, mark ?? b.position, yaw) : b;
+      const p = performanceAt(blocking, this.time, WALK_SPEED, (c) => this.gestureSeconds.get(c));
+      actor.perform(p);
+      // on the ground where the timeline puts it (a mark's y is its height above the ground)
+      actor.object.position.y = this.groundAt(p.x, p.z) + (mark ?? b.position)[1];
+    }
   }
 
   /** Heads turn toward whoever speaks, else toward the nearest partner (viewer/gaze.ts). */
@@ -401,6 +440,10 @@ class LoadedScene implements SceneRuntime {
         if (!base) actor.object.position.y = markY(old.object);
         actor.object.rotation.y = base?.yaw ?? old.object.rotation.y;
         actor.object.userData.placement = old.object.userData.placement;
+        actor.object.userData.placementMark = old.object.userData.placementMark;
+        actor.object.userData.editMark = old.object.userData.editMark;
+        actor.object.userData.performs = old.object.userData.performs;
+        actor.addGestures?.(this.gestureClips);
         old.stopSpeaking();
         this.scene.remove(old.object);
         old.dispose();
@@ -441,6 +484,16 @@ class LoadedScene implements SceneRuntime {
   }
 }
 
+/** A previz.motion-library/1 JSON + its clip file (beat gestures, server/pipeline/motion.ts). */
+async function loadGestureClips(url: string): Promise<Clip[]> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const lib = validateLibrary(await res.json());
+  const bin = await fetch(new URL(lib.file, url).href);
+  if (!bin.ok) throw new Error(`${lib.file}: HTTP ${bin.status}`);
+  return parseLibrary(lib, await bin.arrayBuffer());
+}
+
 /**
  * Moves actors whose blocking puts them inside collider geometry (or off its floor) to free floor
  * (toward the start camera, ≥ 0.5 m from the others) and onto the ground there (its height above
@@ -474,9 +527,37 @@ function correctActorPlacement(rt: LoadedScene, collider: THREE.Object3D) {
       (a, b) => Math.hypot(a[0] - r.x, a[1] - r.z) - Math.hypot(b[0] - r.x, b[1] - r.z),
     )[0];
     if (partner) actor.object.rotation.y = yawToward([r.x, r.z], partner);
+    // a performing actor starts its choreography from the corrected mark
+    if (rt.performers.has(actor.characterId))
+      actor.object.userData.placementMark = {
+        position: [r.x, 0, r.z],
+        yaw: partner ? actor.object.rotation.y : undefined,
+      };
     console.info(
       `[placement] ${actor.characterId}: moved to free floor (${from.map((v) => v.toFixed(2))}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
     );
+  }
+  // beats: walk targets inside geometry move to free floor too, clear of the actors who stay put
+  const still = actors.filter((a) => !rt.performers.has(a.characterId)).map((a) => xz(a.object));
+  for (const [id, b] of rt.performers) {
+    const mark = (rt.actors.get(id)?.object.userData.placementMark ?? null) as {
+      position: [number, number, number];
+    } | null;
+    const shifted = mark ? shiftBlocking(b, mark.position) : b;
+    const fixed = fixMarks(shifted, (x, z, pose) => {
+      const r = correctPlacement(grid, x, z, { pose, toward: [start[0], start[2]], avoid: still });
+      if (r.status === 'stuck')
+        console.warn(
+          `[placement] ${id}: beat mark (${x.toFixed(2)}, ${z.toFixed(2)}) has no free floor within 3 m`,
+        );
+      else if (r.status === 'moved')
+        console.info(
+          `[placement] ${id}: beat mark (${x.toFixed(2)}, ${z.toFixed(2)}) → (${r.x.toFixed(2)}, ${r.z.toFixed(2)})`,
+        );
+      return [r.x, r.z];
+    });
+    // stored unshifted: perform() applies the placement / edit mark every frame
+    if (fixed !== shifted) rt.performers.set(id, mark ? shiftBlocking(fixed, b.position) : fixed);
   }
 }
 
@@ -552,6 +633,10 @@ export async function loadScene(
           actor.object.position.set(...onGround(b.position, groundY));
           actor.object.rotation.y = b.yaw;
           actor.setPose(b.pose ?? 'standing');
+          if (b.beats?.length) {
+            rt.performers.set(asset.characterId, b);
+            actor.object.userData.performs = true; // edits move its mark (edits/apply.ts)
+          }
         } else {
           // no blocking: line up facing the source camera, 3 m in front of it
           actor.object.position.set(...onGround([-1 + unblocked++ * 1.2, 0, -3], groundY));
@@ -569,6 +654,20 @@ export async function loadScene(
   const speaker = new Map(manifest.plan.dialogue.map((l) => [l.id, l.characterId]));
   for (const a of manifest.audio) {
     if (rt.actors.has(speaker.get(a.lineId) ?? '')) void preloadAudio(rt.resolve(a.url));
+  }
+
+  // the scene's generated gesture clips load in the background; beats use them once they land
+  if (manifest.motion) {
+    void loadGestureClips(rt.resolve(manifest.motion.library))
+      .then((clips) => {
+        if (rt.isDisposed) return;
+        rt.gestureClips = clips;
+        for (const c of clips) rt.gestureSeconds.set(c.name, c.frames / c.fps);
+        for (const a of rt.actors.values()) a.addGestures?.(clips);
+      })
+      .catch((err) =>
+        console.warn('gesture clips failed to load; beats use the shared clips', err),
+      );
   }
 
   rt.dynamics = createDynamics(manifest.plan.dynamics);

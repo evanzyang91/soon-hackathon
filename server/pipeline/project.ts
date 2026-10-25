@@ -66,6 +66,7 @@ import {
   type VisualStyle,
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
+import { resolveSceneMotion } from './motion.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
 import { actorDirFor, buildActor, heightFor, photoSha, withHeight } from './actors.ts';
 import {
@@ -1212,6 +1213,9 @@ export class ProjectStore {
    * floor as before.
    */
   private async groundStep(scene: ScenePlan, outDir: string, asset: WorldAsset, log: (m: string) => void): Promise<WorldAsset> {
+    // a scanned room is floored from the LiDAR scan (room-world.ts) and turned / shifted by
+    // roomAlign, which the ground field's scene → Marble mapping does not undo
+    if (asset.source === 'room-scan') return asset;
     try {
       if (await storedGroundField(outDir, asset)) return asset;
       const marks = await this.markXZ(scene, outDir, asset);
@@ -1238,6 +1242,8 @@ export class ProjectStore {
     log: (m: string) => void,
   ): Promise<{ asset: WorldAsset; note: string }> {
     if (!this.calibrate || st.mock || asset.provider !== 'marble') return { asset, note: '' };
+    // a scanned room is scaled and floored from the LiDAR scan itself (room-world.ts)
+    if (asset.source === 'room-scan') return { asset, note: '' };
     const marks = await this.markXZ(scene, outDir, asset);
     if (asset.scaleCalibration) {
       // carried by a library copy: re-decided from its stored report (no Claude call), with the
@@ -1318,6 +1324,8 @@ export class ProjectStore {
   ): Promise<string> {
     if (!this.stage || st.mock || !this.keys.anthropic) return '';
     if (asset.provider !== 'marble' || !asset.colliderGlb || !scene.characterIds.length) return '';
+    // staging renders and resolves marks in Marble's frame; a scanned room's roomAlign is not applied there
+    if (asset.source === 'room-scan') return '';
     const plan = await this.plan(st.id);
     if (!plan) return '';
     const sceneDir = this.sceneDir(st.id, scene.index);
@@ -1914,24 +1922,34 @@ export class ProjectStore {
           await readJson(join(sceneDir, 'audio.json')).catch(() => undefined),
         ).data ?? [];
       const ids = new Set(scene.characterIds);
-      // the staged marks (staging.ts) when they were made for this world and this scene
+      // the staged marks (staging.ts) when they were made for this world and this scene (the
+      // planner's beats move with them)
       const staged = stagedBlocking(await readStaging(sceneDir), {
         asset: rawWorld,
         scene,
         characters: plan.characters,
       });
       const lookSeed = lookSeedFor(scene, styleForPlan(plan));
+      // beat gestures → clips (generated on Modal with MOTION_GEN=1, else the shared clips)
+      const motion = await resolveSceneMotion(staged ? { ...scene, blocking: staged } : scene, {
+        sceneDir,
+        sceneRel: `scene-${idx}`,
+        cacheDir: env.motionCacheDir,
+        generate: env.motionGen && !this.mock && !!this.keys.modal,
+        log: (m) => void this.log(id, `[scene ${idx}] ${m}`),
+      });
       const manifest = SceneManifest.parse({
         version: 1,
         projectId: id,
         // the manifest's plan always carries a look (planned or derived) so the laptop's
         // "Scene's look" exists for plans made before looks were planned
-        plan: { ...(staged ? { ...scene, blocking: staged } : scene), look: scene.look ?? lookSeed },
+        plan: { ...motion.scene, look: scene.look ?? lookSeed },
+        ...(motion.motion ? { motion: motion.motion } : {}),
         characters: plan.characters.filter((c) => ids.has(c.id)),
         world: worldAsset,
         actors: actorAssets,
         audio,
-        startCamera: START_CAMERA,
+        startCamera: rawWorld.startCamera ?? START_CAMERA,
       });
       await writeJsonAtomic(join(sceneDir, 'manifest.json'), manifest);
       // the scene opens graded with the plan's look; an existing edits.json (the director's) stays

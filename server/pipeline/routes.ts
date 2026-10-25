@@ -2,12 +2,14 @@
 // path; we return false for anything that is not ours so it can 404.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
+import { env } from '../env.ts';
 import { ActorDetail, StageName } from '../../shared/schema.ts';
 import { PipelineError, defaultStore, isProjectId, type ProjectStore } from './project.ts';
 import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
 import { handleShotsRequest, shotsRoute, shotsStoreFor } from './shots.ts';
 import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
 import { chatRoute, handleChatRequest, type ChatRouteOptions } from './chat/routes.ts';
+import { handleRoomRequest, roomRoute } from './room-routes.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -85,10 +87,23 @@ function validate<T>(schema: z.ZodType<T>, data: unknown): T {
   return r.data;
 }
 
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * True for a request made on this machine. A tunnel (cloudflared, ngrok) also connects from
+ * loopback, so a forwarding header marks the request as remote.
+ */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  const h = req.headers;
+  if (h['x-forwarded-for'] || h['cf-connecting-ip'] || h['forwarded']) return false;
+  return LOOPBACK.has(req.socket.remoteAddress ?? '');
+}
+
 /** Builds a handler bound to a store (tests use their own; the server uses the env default). */
 export function createPipelineHandler(
   getStore: () => ProjectStore,
-  opts: { resume?: boolean; chat?: ChatRouteOptions } = {},
+  /** localOnlySpend: POSTs (which can call paid providers) are refused unless isLocalRequest. */
+  opts: { resume?: boolean; chat?: ChatRouteOptions; localOnlySpend?: boolean } = {},
 ) {
   let resumed: Promise<unknown> | undefined;
   return async function handle(
@@ -99,6 +114,11 @@ export function createPipelineHandler(
     // ['api', 'projects', id?, 'retry'?] or ['api', 'projects', id, 'actors', characterId, 'rebuild']
     const parts = url.pathname.replace(/\/+$/, '').split('/').slice(1);
     if (parts[0] !== 'api' || parts[1] !== 'projects') return false;
+    // Phones and tunnels share the LAN origin; only the laptop itself may start paid work.
+    if (opts.localOnlySpend && req.method === 'POST' && !isLocalRequest(req)) {
+      send(res, 403, { error: 'paid actions are only allowed from the laptop running the server' });
+      return true;
+    }
     // GET / PUT /api/projects/:id/scenes/:n/edits (look + scene edits, server/pipeline/edits.ts)
     if (editsRoute(parts)) return handleEditsRequest(req, res, parts, editsStoreFor(getStore()));
     // GET / PUT …/scenes/:n/shots, PUT …/shots/:shotId/frame, GET …/shotlist.csv (server/pipeline/shots.ts)
@@ -107,6 +127,8 @@ export function createPipelineHandler(
     if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
     // uploads, chat, chat/confirm, generate (project chat, server/pipeline/chat/)
     if (chatRoute(parts)) return handleChatRequest(req, res, parts, url, getStore(), opts.chat);
+    // PUT room-capture(/video) from the iPhone app; POST room-world builds the set (paid)
+    if (roomRoute(parts)) return handleRoomRequest(req, res, parts, getStore());
     const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';
     if (parts.length > 4 && !rebuild) return false;
     if (parts.length === 4 && parts[3] !== 'retry') return false;
@@ -166,7 +188,10 @@ export function createPipelineHandler(
   };
 }
 
-export const handlePipelineRequest = createPipelineHandler(defaultStore, { resume: true });
+export const handlePipelineRequest = createPipelineHandler(defaultStore, {
+  resume: true,
+  localOnlySpend: !env.mock && !env.allowRemoteSpend,
+});
 
 /**
  * Optional: call once at boot so interrupted pipelines (e.g. a Marble job mid-poll) resume

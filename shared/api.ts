@@ -34,7 +34,7 @@
 //        with decline: true marks it skipped. Every status change bumps the chat revision.
 // POST   /api/projects/:id/generate  → ProjectStatus (202): starts world / actors / tts for a
 //                                    draft project (no-op when already generating).
-// GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts } }
+// GET    /api/health                 → { ok: true, mock: boolean, keys: { marble, modal, anthropic, tts, higgsfield } }
 // GET    /api/rooms/new              → { room: string, phoneUrl: string }   (relay)
 // WS     /ws                         shared/protocol.ts
 //

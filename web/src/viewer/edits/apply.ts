@@ -235,9 +235,15 @@ export class SceneEditsRuntime {
       if (!obj) continue;
       const b = this.snapshot(obj);
       const moving = type === 'prop' && this.isMovingProp(id);
-      if (t.position && !moving)
-        obj.position.set(...(type === 'actor' && groundY ? onGround(t.position, groundY) : t.position));
-      if (t.yaw !== undefined && !moving) obj.rotation.y = t.yaw;
+      if (obj.userData.performs) {
+        // an actor with beats: the edit moves where its choreography starts (world.ts perform,
+        // which also stands it on the ground: position[1] is the height above it)
+        obj.userData.editMark = { position: t.position, yaw: t.yaw };
+      } else {
+        if (t.position && !moving)
+          obj.position.set(...(type === 'actor' && groundY ? onGround(t.position, groundY) : t.position));
+        if (t.yaw !== undefined && !moving) obj.rotation.y = t.yaw;
+      }
       if (t.scale !== undefined) obj.scale.copy(b.scale).multiplyScalar(t.scale);
       this.touched.add(obj);
     }
@@ -282,6 +288,7 @@ export class SceneEditsRuntime {
     o.position.copy(b.position);
     o.rotation.y = b.yaw;
     o.scale.copy(b.scale);
+    delete o.userData.editMark;
   }
 
   private attachRegions(force = false) {

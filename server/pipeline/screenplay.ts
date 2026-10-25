@@ -16,6 +16,7 @@ import {
   LutPreset,
   ScreenplayPlan,
   VisualStyle,
+  type Beat,
   type Blocking,
   type Character,
   type DynamicElement,
@@ -114,6 +115,22 @@ const Draft = z.object({
           position: Point,
           facing: Point.describe('point in world meters the character faces'),
           pose: z.enum(['standing', 'sitting', 'walking']),
+          beats: z
+            .array(
+              z.object({
+                t: z.number().describe('scene seconds when it starts'),
+                action: z.string().describe('what the character does, for the director'),
+                moveTo: Point.nullable().describe('walk to this mark, or null to stay put'),
+                facing: Point.nullable().describe('point to face afterwards, or null'),
+                pose: z.enum(['standing', 'sitting']).nullable(),
+                gesture: z
+                  .string()
+                  .nullable()
+                  .default(null)
+                  .describe('text-to-motion prompt for an on-the-spot body action, or null'),
+              }),
+            )
+            .default([]),
         }),
       ),
       dynamics: z.array(
@@ -162,6 +179,9 @@ Blocking (world frame)
 - Units are meters. Y is up and the floor is y = 0. The world's source camera is at the origin looking down -Z; +X is to its right. Actors stand with their feet on the floor (y = 0), 1.5-4 m in front of the camera (z between -1.5 and -4) and within 2 m of the center line (x between -2 and 2).
 - One entry per character present in the scene (anyone who speaks or is described as present). Two people in conversation stand roughly 1.2-1.8 m apart, facing each other. Groups form an open arc that faces inward and slightly toward the camera.
 - "facing" is the point the character looks toward: usually the other character's position, or the origin when they address no one in particular. "pose" is sitting when the action says they sit, walking when they are described as moving, otherwise standing.
+- "position", "facing" and "pose" are where the character is when the scene starts. "beats" is what they do after that, in time order, so the scene plays out instead of everyone holding still: arriving, crossing to a spot, sitting down, standing up, turning to someone or away, pacing, leaving. Take beats from the action lines and parentheticals, and add the small motivated moves a director would give (turning toward whoever they answer, stepping closer or away on an emotional line). 0-6 beats per character; an empty list is fine for someone who really stays put.
+- Beat timing: the scene clock starts at 0 with the first line. Each dialogue line lasts about 0.4 s per word plus 0.6 s, one after another in order; time a beat to the line it belongs to. A walk takes about 1 s per 1.2 m; give "moveTo" (feet on the floor, inside the same area as the blocking) for any move, and keep marks at least 0.6 m from other characters. "facing" is where they look after the beat (null keeps the direction they walked or were facing). "pose" is sitting or standing after the beat, or null when it does not change. A character described as entering starts at the edge (2-4 m from their first mark) with pose standing and a first beat at t 0 that walks them in.
+- "gesture": when a beat is a distinct body action done on the spot (slams both hands on the table, throws up their hands, hugs themself, checks a phone, rubs their eyes, shrugs, points down the street), write it as a text-to-motion prompt: one sentence starting "A person", present tense, the body only (arms, hands, head, torso, weight), at most 25 words, no names, no camera words, no other people. null for walks (moveTo), sitting down, standing up, plain turns and beats with no visible motion. Prefer 1-3 gestures per character in a scene.
 
 Dynamics
 - Things that move through the scene according to the action lines, never the speaking characters. kind: car, bus, truck, motorcycle, bicycle, pedestrian, bird, dog, horse (the label says "rider" when ridden), wagon (a horse-drawn cart or stagecoach; its horses belong to it), boat, dragon, drone, spacecraft, or generic for anything else.
@@ -518,11 +538,29 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
       const characterId = resolve(b.characterId, `${where}.blocking`);
       if (!characterId || blocking.some((x) => x.characterId === characterId)) continue;
       const position: Vec3 = [round3(b.position.x), 0, round3(b.position.z)];
+      const beats: Beat[] = [];
+      let at = position;
+      for (const d of b.beats ?? []) {
+        if (!(d.t >= 0) || !d.action.trim()) continue;
+        const moveTo: Vec3 | undefined = d.moveTo
+          ? [round3(d.moveTo.x), 0, round3(d.moveTo.z)]
+          : undefined;
+        if (moveTo) at = moveTo;
+        beats.push({
+          t: round3(d.t),
+          action: d.action.trim().slice(0, 200),
+          ...(moveTo ? { moveTo } : {}),
+          ...(d.pose ? { pose: d.pose } : {}),
+          ...(d.facing ? { yaw: round3(yawFacing(at, v3(d.facing))) } : {}),
+          ...(d.gesture?.trim() && !moveTo ? { gesture: d.gesture.trim().slice(0, 240) } : {}),
+        });
+      }
       blocking.push({
         characterId,
         position,
         yaw: round3(yawFacing(position, v3(b.facing))),
         pose: b.pose,
+        ...(beats.length ? { beats: beats.slice(0, 24) } : {}),
       });
     }
     const unplaced = characterIds.filter((id) => !blocking.some((b) => b.characterId === id));

@@ -1,7 +1,8 @@
 // Director-only overlays: camera frustums for dropped cameras and the live phone. They live on
 // GIZMO_LAYER, which the director camera sees and the phone/PiP cameras do not.
 import * as THREE from 'three';
-import type { DropCamera } from '@shared/protocol';
+import type { DropCamera, RoomScan } from '@shared/protocol';
+import type { Vec3 } from '@shared/schema';
 
 export const GIZMO_LAYER = 1;
 
@@ -154,5 +155,79 @@ export class CameraMarkers {
     for (const g of this.gizmos) g.dispose();
     this.gizmos = [];
     this.key = '';
+  }
+}
+
+/**
+ * The physical room the ARKit phone scanned (RoomScan), drawn where it really is relative to the
+ * scene: the phone's anchor + the scan's offset-frame outline. Floor outline, and walls up to the
+ * ceiling when one was seen (else 2.4 m), so the director keeps the blocking inside the real room.
+ */
+export class RoomOutlineGizmo {
+  readonly object = new THREE.Group();
+  private lines: THREE.LineSegments | null = null;
+  private label: THREE.Sprite | null = null;
+  private readonly material = new THREE.LineDashedMaterial({
+    color: '#36d6e7',
+    dashSize: 0.12,
+    gapSize: 0.08,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.9,
+  });
+  private key = '';
+
+  constructor() {
+    this.object.name = 'room-outline';
+    this.object.renderOrder = 9;
+  }
+
+  /** `scan` null hides it. Rebuilt only when the scan or the anchor changes. */
+  set(scan: RoomScan | null, anchor: Vec3) {
+    const key = scan ? JSON.stringify([scan.outline, scan.floorY, scan.ceiling, anchor]) : '';
+    if (key === this.key) return;
+    this.key = key;
+    this.clear();
+    if (!scan) return;
+    const floor = anchor[1] + scan.floorY + 0.01;
+    const top = floor + (scan.ceiling ?? 2.4);
+    const pts = scan.outline.map(([x, z]) => [anchor[0] + x, anchor[2] + z] as const);
+    const v: number[] = [];
+    pts.forEach(([x, z], i) => {
+      const [nx, nz] = pts[(i + 1) % pts.length]!;
+      v.push(x, floor, z, nx, floor, nz); // floor edge
+      v.push(x, top, z, nx, top, nz); // ceiling edge
+      v.push(x, floor, z, x, top, z); // wall corner
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+    this.lines = new THREE.LineSegments(g, this.material);
+    this.lines.computeLineDistances();
+    this.object.add(this.lines);
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+    const cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    this.label = labelSprite(`REAL ROOM ${scan.area.toFixed(1)} m²`, '#36d6e7');
+    this.label.position.set(cx, top + 0.15, cz);
+    this.object.add(this.label);
+    onLayer(this.object);
+  }
+
+  private clear() {
+    this.lines?.geometry.dispose();
+    this.lines?.removeFromParent();
+    this.lines = null;
+    if (this.label) {
+      this.label.material.map?.dispose();
+      this.label.material.dispose();
+      this.label.removeFromParent();
+      this.label = null;
+    }
+  }
+
+  dispose() {
+    this.clear();
+    this.material.dispose();
+    this.key = '';
+    this.object.removeFromParent();
   }
 }

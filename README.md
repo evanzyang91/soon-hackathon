@@ -4,7 +4,7 @@ Paste a short-film screenplay and get one walkable 3D scene per screenplay scene
 Marble gaussian-splat world, the characters standing in it as LHM gaussian avatars (or a tinted
 mannequin), their dialogue voiced with TTS, and moving props for the action lines ("a red sedan
 drives past"). Fly around the scene on the laptop, drop virtual cameras, then pair a phone in its
-browser (no app) and use it as the handheld camera: its orientation sensors pan, tilt and roll
+browser and use it as the handheld camera: its orientation sensors pan, tilt and roll
 the shot, its accelerometer adds handheld sway, and its frustum and live view appear on the
 laptop while the actors speak their lines.
 
@@ -163,6 +163,36 @@ Under `MARBLE_DRY_RUN=1` the world from a photo logs the exact requests and gets
    "text_prompt":"Photorealistic exterior city street, … No people, no vehicles.","disable_recaption":true},
    "permission":{"public":false}}
 ```
+
+## Actors that do things (beats)
+
+Each character's blocking can carry **beats**: timed actions on the scene clock that Claude writes
+from the action lines, the parentheticals and the dialogue timing ("hurries up beside Maya, out
+of breath" → a walk to a new mark at t 0; "steps a half pace closer" on his sad line; "turns
+with her to watch the bus"). A beat can walk the actor to a mark (`moveTo`), sit or stand them
+(`pose`, or read from the action), and turn them (`yaw`). `shared/beats.ts` turns the beats into
+where the actor is, which way it faces and whether it stands, sits or walks at any scene time, so
+pressing Play, scrubbing or filming a take from the phone all see the same performance. Rigged
+avatars walk with their walk cycle locked to the distance covered (no foot sliding), stand up
+before walking off a seat, cross-fade into standing on arrival and turn at about half a turn per
+second; mannequins swing their legs in place while they move. When placement correction or a
+"move Leo closer" edit moves an actor, the whole choreography moves with its starting mark.
+Older plans without beats behave as before.
+
+**Gestures.** A beat that is a distinct on-the-spot action ("throws up her hands", "rubs his
+eyes") also carries a `gesture`: a short text-to-motion prompt Claude writes. The manifest stage
+turns it into a `clip` the actor plays once from the beat's start, locked to the scene clock
+(scrubbing works), then cross-fades back to idle or talking; walking off ends it.
+
+- `MOTION_GEN=1` (live, Modal key): every new prompt is generated with HY-Motion 1.0 on a Modal
+  L40S (`worker/motion_library.py --gestures`, one GPU call for all new prompts in a scene),
+  turned into a one-shot clip (warm-up trimmed, facing +Z, the actor ends where it started, the
+  steadier of two seeds), cached by prompt in `data/motion-library/gestures/` (`MOTION_CACHE_DIR`)
+  and merged into `scene-<n>/motion/motion-library.json`, which the manifest points at. A prompt
+  is generated once, ever; later scenes and projects reuse it.
+- Otherwise (MOCK, no Modal key, or a failed generation): the nearest clip the actor already ships
+  with, by keyword (a shrug or a question → `talk-2`, pointing or explaining → `talk-1`, nodding or
+  watching → `idle-listen`, seated variants when sitting), or none.
 
 ## Look development
 
@@ -473,6 +503,41 @@ room as a phone with true 6DoF tracking. Walking moves the camera 1:1 (`PhonePos
 `source: 'arkit'`), and the shot renders through `phone.html?pose=external` in a web view. It needs
 Xcode to build; `cd ios/PrevizCore && swift test` runs its pose and protocol tests without Xcode.
 Setup, certificate pairing, the pose math and the web contract are in `ios/README.md`.
+
+**Scan room** (in the app) maps the real room you are filming in: walk it while pointing at the
+floor, then tap Done. The laptop draws the room as a dashed cyan box (`REAL ROOM 12.4 m²`) around
+the phone's attached camera, exactly where the phone walks, so you can block actors inside the
+space you actually have; move or rotate that drop camera to place the room in the world. The phone
+outlines its view in red with `Wall 0.3 m` before you walk into a real wall, and says when you are
+outside the scanned room. The outline is the convex hull of the floor ARKit found (an L-shaped
+room comes out as its hull).
+
+### My room becomes the set
+
+The same scan can become the scene's world. While **Scan room** runs, the app also records the
+camera feed (≤ 30 s, 30 fps, ~8 Mbit/s, so well under Marble's 100 MB video limit) and remembers
+where the camera stood at the first frame. On **Done** it uploads the video and the scan to the
+open scene (`PUT /api/projects/:id/scenes/:n/room-capture[/video]`; free, so the phone may do
+it). The laptop's project panel then shows **Scanned room: 12.4 m², 22 s video** under the scene
+with **Build set from scanned room**, which spends Marble credits and so only works on the laptop
+(`POST …/room-world`, ~5 min). `server/pipeline/room-world.ts` sends the video as a Marble video
+prompt and places the result over the real room:
+
+- Marble does not document a video world's frame; like an image prompt's world, its origin is
+  taken to be the first frame's camera, looking down −Z.
+- **Scale:** the phone's height above the LiDAR floor at the first frame ÷ the world camera's
+  height above its splat ground (`calibrate-ground.ts`); outside ×0.4–2.5 Marble's scale is kept
+  and marked unscaled.
+- **Floor:** that splat ground is y = 0. **Placement:** `WorldAsset.roomAlign` turns the world by
+  the first frame's heading and shifts it to where the phone stood, so the scene frame is the scan's
+  own walking frame; the world's `startCamera` is the scan's Recentre point at standing height.
+- The app keeps the scan's Recentre map; in a scene built from its scan it restores that map
+  instead of re-centring (Recentre does the same), so walking moves you through the generated room
+  1:1 with the real one. This needs the same app session as the scan (ARKit's world resets when
+  the app restarts; re-centre by hand then).
+
+The previous world is kept as `scene-<n>/world.prev-<k>/`; actors keep their planned marks, which
+may fall outside a small room (drag them, or "move Leo closer").
 
 ## Controls
 
@@ -802,8 +867,12 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   True 6DoF would need a native ARKit/ARCore companion speaking the same protocol.
 - **No visemes.** A rigged LHM avatar opens its jaw with the voice's loudness (the mannequin
   too); there is no phoneme lip-sync. Seated actors sit on nothing (no chair is placed); a long
-  coat stretches at the hips when seated. A `walking` actor starts 2.4 m behind its mark and
-  walks in when the scene clock runs; the approach ignores the collider. Avatars built before the
+  coat stretches at the hips when seated. A `walking` actor without beats starts 2.4 m behind its mark and
+  walks in when the scene clock runs. Walks (that and beats) go in a straight line and ignore the
+  collider; the motion vocabulary is the shared clip library (standing, talking, sitting, walking),
+  so without `MOTION_GEN` a beat like "slams the table" is staged by position and facing, not a
+  matching gesture. Generated gestures are one take each, not retargeted to props (a hand meant
+  for a table stops in the air) and play only on rigged LHM avatars. Avatars built before the
   runtime rig (no `rig` in `sequence.json`) still play their baked idle/talk loop and are lowered
   0.45 m when seated.
 - **iOS is untested headless.** The automated tests drive desktop Chromium with synthetic sensor

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 
 // .env.local wins over .env (dotenv never overrides a variable that is already set).
@@ -18,6 +19,14 @@ export const env = {
   calibrateVision: process.env.CALIBRATE_VISION !== '0',
   /** Stage the actors on each new live Marble world with Claude vision (staging.ts); STAGING=0 skips it. */
   staging: process.env.STAGING !== '0',
+  /** Generate beat gestures with HY-Motion on Modal (server/pipeline/motion.ts); off by default. */
+  motionGen: flag(process.env.MOTION_GEN),
+  /** Generated gesture clips, cached by prompt and reused by every project. */
+  motionCacheDir:
+    process.env.MOTION_CACHE_DIR ??
+    fileURLToPath(new URL('../data/motion-library/gestures/', import.meta.url)),
+  /** Let phones / tunnels start paid pipeline work (POST /api/projects/…); off by default. */
+  allowRemoteSpend: flag(process.env.ALLOW_REMOTE_SPEND),
   keys: {
     marble: process.env.WLT_API_KEY ?? '',
     anthropic: process.env.ANTHROPIC_API_KEY ?? '',
@@ -25,15 +34,17 @@ export const env = {
     elevenlabs: process.env.ELEVENLABS_API_KEY ?? '',
     modalTokenId: process.env.MODAL_TOKEN_ID ?? '',
     modalTokenSecret: process.env.MODAL_TOKEN_SECRET ?? '',
+    higgsfield: process.env.HIGGSFIELD_API_KEY ?? '',
   },
   /** Project outputs; served at /projects/<id>/ . */
-  dataDir: process.env.DATA_DIR ?? new URL('../data/projects/', import.meta.url).pathname,
+  dataDir: process.env.DATA_DIR ?? fileURLToPath(new URL('../data/projects/', import.meta.url)),
   /** Pre-generated Marble worlds reused by live projects (server/pipeline/world-library.ts). */
   worldLibraryDir:
-    process.env.WORLD_LIBRARY_DIR ?? new URL('../data/marble/', import.meta.url).pathname,
+    process.env.WORLD_LIBRARY_DIR ?? fileURLToPath(new URL('../data/marble/', import.meta.url)),
   /** Pre-built LHM avatars reused by live projects (server/pipeline/actor-library.ts). */
   actorsLibraryDir:
-    process.env.ACTORS_LIBRARY_DIR ?? new URL('../data/actors-library/', import.meta.url).pathname,
+    process.env.ACTORS_LIBRARY_DIR ??
+    fileURLToPath(new URL('../data/actors-library/', import.meta.url)),
 } as const;
 
 /** Presence only — never the values. Safe to return from /api/health. */
@@ -42,4 +53,5 @@ export const keyPresence = () => ({
   modal: !!env.keys.modalTokenId || !!process.env.MODAL_PROFILE,
   anthropic: !!env.keys.anthropic,
   tts: !!env.keys.openai || !!env.keys.elevenlabs,
+  higgsfield: !!env.keys.higgsfield,
 });

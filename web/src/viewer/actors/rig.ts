@@ -291,6 +291,8 @@ export class Mixer {
   private fadeLeft = 0;
   private readonly a = newPose();
   private readonly out = newPose();
+  /** `out` holds a sampled pose (until the first update it is all zeros: the rest / T-pose). */
+  private sampled = false;
   /** playback rate of the current clip (walk deceleration slows it) */
   rate = 1;
 
@@ -309,7 +311,9 @@ export class Mixer {
 
   play(clip: Clip, fade = 0.25, startTime?: number) {
     if (this.current?.clip === clip) return;
-    if (this.current) {
+    // Fading needs a pose to fade from: a switch before the first update (an actor that loads
+    // mid-walk, or a frozen frame) starts the new clip directly instead of from the T-pose.
+    if (this.current && this.sampled) {
       this.from.q.set(this.out.q);
       this.from.root.set(this.out.root);
       this.fade = this.fadeLeft = Math.max(0, fade);
@@ -332,6 +336,7 @@ export class Mixer {
     if (!cur) return this.out;
     if (advance) cur.time += dt * this.rate;
     sampleClip(cur.clip, cur.time, this.a);
+    this.sampled = true;
     if (this.fadeLeft > 0) {
       this.fadeLeft = Math.max(0, this.fadeLeft - dt);
       const k = this.fade > 0 ? 1 - this.fadeLeft / this.fade : 1;

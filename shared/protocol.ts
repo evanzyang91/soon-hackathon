@@ -87,6 +87,29 @@ export const PhoneCommand = z.object({
 });
 export type PhoneCommand = z.infer<typeof PhoneCommand>;
 
+/**
+ * Phone → laptops (the ARKit app; the relay keeps the latest per room for late laptops): the
+ * physical room the phone scanned. Coordinates are in the pose `offset` frame, the one Recentre
+ * sets up, so the real room sits at anchor + point exactly where the phone walks. The app sends it
+ * again after every Recentre and camera switch.
+ */
+export const RoomScan = z.object({
+  type: z.literal('room'),
+  /** Stamped by the relay (never trusted from the client). */
+  phoneId: z.string().optional(),
+  /** 'lidar': planes from the LiDAR depth sensor; 'planes': camera-only plane detection. */
+  source: z.enum(['lidar', 'planes']),
+  /** Free floor outline [x, z] in metres (offset frame), counter-clockwise, not closed. */
+  outline: z.array(z.tuple([z.number(), z.number()])).min(3).max(64),
+  /** Real floor height in the offset frame (≈ −the phone's height at Recentre). */
+  floorY: z.number(),
+  /** Floor to ceiling, metres, when a ceiling was seen. */
+  ceiling: z.number().positive().optional(),
+  /** Floor area inside the outline, m². */
+  area: z.number().nonnegative(),
+});
+export type RoomScan = z.infer<typeof RoomScan>;
+
 export const Hello = z.object({
   type: z.literal('hello'),
   role: z.enum(['laptop', 'phone']),
@@ -98,7 +121,19 @@ export const Peers = z.object({
   phones: z.number().int(),
 });
 
-export const ClientMessage = z.discriminatedUnion('type', [Hello, PhonePose, SceneState, PhoneCommand]);
-export const ServerMessage = z.discriminatedUnion('type', [Peers, PhonePose, SceneState, PhoneCommand]);
+export const ClientMessage = z.discriminatedUnion('type', [
+  Hello,
+  PhonePose,
+  SceneState,
+  PhoneCommand,
+  RoomScan,
+]);
+export const ServerMessage = z.discriminatedUnion('type', [
+  Peers,
+  PhonePose,
+  SceneState,
+  PhoneCommand,
+  RoomScan,
+]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 export type ServerMessage = z.infer<typeof ServerMessage>;

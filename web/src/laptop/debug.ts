@@ -23,6 +23,8 @@ export interface PrevizDebugState {
   phones: number;
   lastPose: unknown;
   gizmo: { visible: boolean; position: number[]; quaternion: number[] };
+  /** The scanned physical room from the ARKit phone (null until one arrives). */
+  roomScan: { area: number; points: number; drawn: boolean } | null;
   pip: { visible: boolean; label: string; frames: number };
   mainFrames: number;
   viewFromPhone: boolean;
@@ -104,6 +106,13 @@ export function installDebugHook(director: Director) {
       room: director.room?.room ?? null,
       phones: director.phone.phones,
       lastPose: director.phone.lastPose,
+      roomScan: director.roomScan
+        ? {
+            area: director.roomScan.area,
+            points: director.roomScan.outline.length,
+            drawn: director.roomGizmo.object.children.length > 0,
+          }
+        : null,
       gizmo: {
         visible: g.visible,
         position: g.position.toArray(),

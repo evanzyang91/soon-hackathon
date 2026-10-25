@@ -83,12 +83,17 @@ import {
 import { splatGround, writeGroundField, type GroundMeasurement } from './calibrate-ground.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { glbTriangles } from './glb.ts';
-import { ASSET_FILE } from './marble.ts';
+import { ASSET_FILE, WORLD_FILE, type MarbleWorld } from './marble.ts';
 
 export const REPORT_FILE = 'scale-calibration.json';
 export const DEADBAND = 0.05;
 /** A measured floor offset larger than this is treated as a bad measurement and not written. */
 export const MAX_FLOOR_OFFSET = 0.5;
+/**
+ * The same limit for a world Marble returned without a ground plane (marble-1.0-draft has no
+ * semantics_metadata, so the floor is assumed at the camera and can be far off).
+ */
+export const MAX_UNDECLARED_FLOOR_OFFSET = 2;
 export const FACTOR_RANGE = [0.5, 2] as const;
 /** Source-camera eye height (m above the collider floor) Marble's text worlds are built around. */
 export const EYE_HEIGHT = { typ: EXPECTED.camera.typ, sd: 0.2 } as const;
@@ -426,6 +431,8 @@ export interface CalibrationReport {
   createdAt: string;
   metricScaleFactor: number;
   groundPlaneOffset: number;
+  /** false when Marble gave no ground_plane_offset (0 was assumed); absent in older reports. */
+  groundPlaneDeclared?: boolean;
   interior: boolean;
   geometry: Omit<GeometryReport, 'measurements'> & {
     measurements: Measurement[];
@@ -447,9 +454,12 @@ export interface CalibrationReport {
  * (m at Marble's scale, + = the visible ground is lower), to the millimetre; undefined without a
  * ground measurement or beyond ±MAX_FLOOR_OFFSET.
  */
-export function floorOffsetOf(report: Pick<CalibrationReport, 'ground'>): number | undefined {
+export function floorOffsetOf(
+  report: Pick<CalibrationReport, 'ground' | 'groundPlaneDeclared'>,
+): number | undefined {
   const h = report.ground?.height;
-  if (typeof h !== 'number' || !Number.isFinite(h) || Math.abs(h) > MAX_FLOOR_OFFSET) return undefined;
+  const max = report.groundPlaneDeclared === false ? MAX_UNDECLARED_FLOOR_OFFSET : MAX_FLOOR_OFFSET;
+  if (typeof h !== 'number' || !Number.isFinite(h) || Math.abs(h) > max) return undefined;
   return Math.round(-h * 1000) / 1000 || 0;
 }
 
@@ -461,7 +471,8 @@ export async function withGround(
 ): Promise<CalibrationReport> {
   const ground = await splatGround(worldDir, await readWorldAsset(worldDir), marks).catch(() => null);
   const { floorOffsetMeters: _old, ...rest } = report;
-  const next: CalibrationReport = { ...rest, ground };
+  const groundPlaneDeclared = report.groundPlaneDeclared ?? (await marbleDeclaresGround(worldDir));
+  const next: CalibrationReport = { ...rest, groundPlaneDeclared, ground };
   const off = floorOffsetOf(next);
   return off === undefined ? next : { ...next, floorOffsetMeters: off };
 }
@@ -535,6 +546,15 @@ export function evidenceText(
   if (vision) parts.push(`vision: ${Number.isFinite(vision.factor) ? `×${vision.factor.toFixed(3)}, ` : ''}${vision.note}`);
   parts.push(d.reason);
   return parts.join(' · ');
+}
+
+/** False when the world's Marble response had no ground_plane_offset (true without one: mock). */
+async function marbleDeclaresGround(worldDir: string): Promise<boolean> {
+  const file = join(worldDir, WORLD_FILE);
+  if (!(await exists(file))) return true;
+  const world = await readJson<MarbleWorld>(file);
+  const gpo = world?.assets?.splats?.semantics_metadata?.ground_plane_offset;
+  return typeof gpo === 'number' && Number.isFinite(gpo);
 }
 
 /** Measures one world directory (world-asset.json + collider + SPZ). Never writes. */
@@ -631,13 +651,15 @@ export async function calibrateWorld(worldDir: string, o: CalibrateOptions = {})
     return null;
   });
   if (ground) log(`calibrate: splat ground ${ground.height === null ? 'unmeasurable' : `${ground.height.toFixed(3)} m`} (${ground.probes.map((p) => `(${p.x}, ${p.z}) ${p.height ?? '—'}`).join(', ')})`);
-  const floorOffsetMeters = floorOffsetOf({ ground });
+  const groundPlaneDeclared = await marbleDeclaresGround(worldDir);
+  const floorOffsetMeters = floorOffsetOf({ ground, groundPlaneDeclared });
   return {
     schema: 'previz.scale-calibration/1',
     worldId: asset.worldId,
     createdAt: new Date().toISOString(),
     metricScaleFactor: asset.metricScaleFactor,
     groundPlaneOffset: asset.groundPlaneOffset,
+    groundPlaneDeclared,
     interior,
     geometry,
     vision: vision

@@ -23,7 +23,7 @@ test('/api/health reports MOCK mode and key presence (never values)', async ({ r
   const body = (await res.json()) as { ok: boolean; mock: boolean; keys: Record<string, unknown> };
   expect(body.ok).toBe(true);
   expect(body.mock).toBe(true);
-  expect(Object.keys(body.keys).sort()).toEqual(['anthropic', 'marble', 'modal', 'tts']);
+  expect(Object.keys(body.keys).sort()).toEqual(['anthropic', 'higgsfield', 'marble', 'modal', 'tts']);
   for (const v of Object.values(body.keys)) expect(typeof v).toBe('boolean');
 });
 

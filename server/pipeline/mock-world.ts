@@ -16,12 +16,13 @@
 //   pnpm tsx server/pipeline/cli.ts make-mock-world [set|all]
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import type { Quat, Vec3 } from '../../shared/schema.ts';
 import { DEFAULT_MOCK_SET, MOCK_SETS, type MockSet } from './mock-set.ts';
 import { encodeSpz, type Splat } from './spz.ts';
 
-export const MOCK_WORLD_DIR = new URL('../../fixtures/mock-world/', import.meta.url).pathname;
+export const MOCK_WORLD_DIR = fileURLToPath(new URL('../../fixtures/mock-world/', import.meta.url));
 export const mockSetDir = (set: MockSet = DEFAULT_MOCK_SET) => join(MOCK_WORLD_DIR, set);
 /** Budget per set: small enough for the repo and for SwiftShader in the e2e specs. */
 export const MOCK_SPZ_MAX_BYTES = 160 * 1024;

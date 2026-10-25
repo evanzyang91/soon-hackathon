@@ -48,6 +48,34 @@ export const DialogueLine = z.object({
 });
 export type DialogueLine = z.infer<typeof DialogueLine>;
 
+/**
+ * Something an actor does at a moment of the scene (shared/beats.ts turns a blocking's beats into
+ * where the actor is, which way it faces and whether it stands, sits or walks at any scene time).
+ */
+export const Beat = z.object({
+  /** Scene clock seconds when the beat starts (a walk starts later if the previous one is not done). */
+  t: z.number().nonnegative(),
+  /** What happens, as written for a director: "crosses to the window", "sinks onto the bench". */
+  action: z.string().max(200),
+  /** Walk to this mark (metres, world frame; y is ignored, actors stay on the floor). */
+  moveTo: Vec3.optional(),
+  /** After the beat (on arrival, for a walk): stand or sit. Absent = read from `action`. */
+  pose: z.enum(['standing', 'sitting']).optional(),
+  /** After the beat: face this yaw (Blocking.yaw convention). Absent = keep / direction walked. */
+  yaw: z.number().optional(),
+  /**
+   * A distinct body motion to perform on the spot, as a text-to-motion prompt ("A person slams
+   * both palms down on a table in front of them."). Absent for walks, sits and plain turns.
+   */
+  gesture: z.string().max(240).optional(),
+  /**
+   * Motion clip played once from the beat's start (set by the pipeline from `gesture`): a clip of
+   * the manifest's `motion` library (generated for this prompt) or of the actor's own library.
+   */
+  clip: z.string().optional(),
+});
+export type Beat = z.infer<typeof Beat>;
+
 export const Blocking = z.object({
   characterId: z.string(),
   /** Meters in the world frame (origin = Marble source camera, y = floor). */
@@ -64,6 +92,11 @@ export const Blocking = z.object({
    * visible set: "on the sidewalk by the shelter bench". Absent for the planner's blind guess.
    */
   note: z.string().optional(),
+  /**
+   * What the actor does over the scene, in time order. Absent or empty: the actor holds its mark
+   * (a 'walking' pose then walks in to it, as before).
+   */
+  beats: z.array(Beat).max(24).optional(),
 });
 export type Blocking = z.infer<typeof Blocking>;
 
@@ -300,6 +333,20 @@ export const WorldAsset = z.object({
       cells: z.number().int().positive(),
     })
     .optional(),
+  /** Where the world came from: a prompt (default) or the director's scanned room (Marble video). */
+  source: z.enum(['generated', 'room-scan']).optional(),
+  /**
+   * room-scan worlds: a rigid placement applied after the metric transform (turn about +Y by
+   * `yaw`, then shift by x / z metres) so the scene frame is the scan's pose `offset` frame and
+   * the generated room sits exactly over the real one (server/pipeline/room-world.ts).
+   */
+  roomAlign: z.object({ yaw: z.number(), x: z.number(), z: z.number() }).optional(),
+  /**
+   * The camera this world wants the scene to start from (a scanned room: the scan's Recentre
+   * point at standing height, so a phone that restores the scan's frame walks the room 1:1).
+   * Absent: the default start camera.
+   */
+  startCamera: z.object({ position: Vec3, quaternion: Quat, fovDeg: z.number() }).optional(),
 });
 export type WorldAsset = z.infer<typeof WorldAsset>;
 
@@ -364,6 +411,11 @@ export const SceneManifest = z.object({
   audio: z.array(LineAudio),
   /** Default director camera when the scene opens. */
   startCamera: z.object({ position: Vec3, quaternion: Quat, fovDeg: z.number() }),
+  /**
+   * The scene's generated gesture clips (previz.motion-library/1 JSON, project-relative), played
+   * by beats whose `clip` names one of them. Absent: beats use the actors' own clips only.
+   */
+  motion: z.object({ library: z.string() }).optional(),
 });
 export type SceneManifest = z.infer<typeof SceneManifest>;
 

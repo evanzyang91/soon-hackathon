@@ -58,6 +58,26 @@ public struct PhonePose: Codable, Sendable, Equatable {
   }
 }
 
+/// `RoomScan`: the physical room, in the pose `offset` frame (see RoomFootprint).
+public struct RoomScan: Codable, Sendable, Equatable {
+  public enum Source: String, Codable, Sendable { case lidar, planes }
+  public var type = "room"
+  public var source: Source
+  /// [[x, z], …] metres, counter-clockwise, not closed (3…64 points).
+  public var outline: [[Double]]
+  public var floorY: Double
+  public var ceiling: Double?
+  public var area: Double
+
+  public init(source: Source, outline: [[Double]], floorY: Double, ceiling: Double?, area: Double) {
+    self.source = source
+    self.outline = outline
+    self.floorY = floorY
+    self.ceiling = ceiling
+    self.area = area
+  }
+}
+
 public struct Hello: Codable, Sendable, Equatable {
   public var type = "hello"
   public var role = "phone"
@@ -191,9 +211,18 @@ public struct ManifestStart: Decodable, Sendable, Equatable {
     public var fovDeg: Double
   }
 
+  public struct World: Decodable, Sendable, Equatable {
+    /// 'room-scan' for a world built from this app's room scan (server/pipeline/room-world.ts).
+    public var source: String?
+  }
+
   public var projectId: String
   public var plan: Plan
   public var startCamera: Camera
+  public var world: World?
+
+  /// The scene is the scanned room: restore the scan's frame to walk it 1:1.
+  public var isRoomScan: Bool { world?.source == "room-scan" }
 }
 
 /// Active drop camera → else the manifest's start camera → else a standing eye height at origin.

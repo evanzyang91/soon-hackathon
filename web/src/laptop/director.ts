@@ -1,7 +1,13 @@
 // Laptop director state + render loop. Panels read state from here and call its actions; it
 // emits coarse change events so they can re-render.
 import * as THREE from 'three';
-import type { DropCamera, PhoneCommand, SceneState, ServerMessage } from '@shared/protocol';
+import type {
+  DropCamera,
+  PhoneCommand,
+  RoomScan,
+  SceneState,
+  ServerMessage,
+} from '@shared/protocol';
 import { SceneManifest, type Quat, type SuggestedShot, type Vec3 } from '@shared/schema';
 import type { RegionSelection } from '../viewer/edits/select';
 import type { TargetRef } from '../viewer/manipulate/edits';
@@ -12,7 +18,7 @@ import { sceneShotActors, suggestShots } from '../viewer/shots';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world';
 import { downloadBlob } from './dom';
 import { FlyControls } from './fly-controls';
-import { CameraMarkers, FrustumGizmo, GIZMO_LAYER } from './gizmos';
+import { CameraMarkers, FrustumGizmo, GIZMO_LAYER, RoomOutlineGizmo } from './gizmos';
 import {
   buildSceneState,
   cycleCamera,
@@ -81,6 +87,10 @@ export class Director {
   readonly recorder: TakeRecorder;
   readonly markers = new CameraMarkers();
   readonly phoneGizmo = new FrustumGizmo('#ff4fa0', 0.7, { body: true, label: 'PHONE' });
+  /** The physical room the ARKit phone scanned, around the phone's anchor. */
+  readonly roomGizmo = new RoomOutlineGizmo();
+  /** Latest RoomScan from the phone (null until one arrives). */
+  roomScan: RoomScan | null = null;
 
   runtime: SceneRuntime | null = null;
   loading: string | null = null;
@@ -217,7 +227,7 @@ export class Director {
       this.sceneStale = false;
       this.speakingLineId = null;
       this.lastLineId = null;
-      rt.scene.add(this.markers.group, this.phoneGizmo.object);
+      rt.scene.add(this.markers.group, this.phoneGizmo.object, this.roomGizmo.object);
       this.view.setScene(rt.scene);
       prev?.dispose();
       // the collider arrives after the scene opens: refresh the HUD (Collider button) then
@@ -669,6 +679,9 @@ export class Director {
       if (before === 0) this.emit('phone');
     } else if (msg.type === 'cmd') {
       this.handlePhoneCommand(msg.cmd);
+    } else if (msg.type === 'room') {
+      this.roomScan = msg;
+      this.emit('phone');
     }
   }
 
@@ -814,6 +827,8 @@ export class Director {
     this.phoneGizmo.object.visible = attached && !this.viewFromPhone;
     this.phoneGizmo.setPose(this.phoneCamera.position, this.phoneCamera.quaternion);
     this.phoneGizmo.setFov(this.phoneCamera.fov, this.phoneAspect());
+    const start = this.runtime?.manifest.startCamera.position ?? [0, 1.6, 0];
+    this.roomGizmo.set(this.roomScan, phoneAnchor(this.cameras, this.activeCameraId, start));
     this.phoneGizmo.setColor(
       poseIsFresh(this.phone, now)
         ? this.phone.lastPose?.recording
@@ -846,6 +861,7 @@ export class Director {
     this.runtime?.dispose();
     this.markers.dispose();
     this.phoneGizmo.dispose();
+    this.roomGizmo.dispose();
     this.view.dispose();
   }
 }

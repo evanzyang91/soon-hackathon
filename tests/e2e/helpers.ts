@@ -178,6 +178,7 @@ export interface LaptopState {
   phones: number;
   lastPose: { phoneId?: string; q: number[]; aspect?: number } | null;
   gizmo: { visible: boolean; position: number[]; quaternion: number[] };
+  roomScan: { area: number; points: number; drawn: boolean } | null;
   pip: { visible: boolean; label: string; frames: number };
   mainFrames: number;
   lastStillAt: number;
@@ -199,5 +200,9 @@ export interface PhoneState {
   renderLevel: number;
   framesRendered: number;
   yawOffset: number;
-  anchor: { name: string; key: string; yaw: number };
+  anchor: { name: string; key: string; yaw: number; position: number[] };
+  cameraPosition: number[];
+  poseSource: 'external' | 'sensors';
+  externalPoses: number;
+  wall: null | 'clear' | 'near' | 'outside';
 }

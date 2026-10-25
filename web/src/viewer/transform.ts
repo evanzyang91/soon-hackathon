@@ -18,16 +18,24 @@
 // stored as WorldAsset.floorOffsetMeters, at Marble's scale). The world is raised by that much
 // (× the calibration factor, since the world scales about the declared floor), so the visible
 // ground lands at y = 0 where the actors stand; the collider rides along as a child of the world.
+//
+// A scanned-room world (WorldAsset.roomAlign) is then turned about +Y and shifted on the floor so
+// it sits over the real room: p'' = Ry(yaw) p' + (x, 0, z). three.js: rotation order 'YXZ'.
 import type { Vec3, WorldAsset } from '@shared/schema';
 
 export interface WorldTransform {
   rotationX: number;
   scale: number;
   positionY: number;
+  /** Room alignment (0 unless WorldAsset.roomAlign): yaw about +Y, then a floor shift. */
+  rotationY: number;
+  positionX: number;
+  positionZ: number;
 }
 
 type FrameInfo = Pick<WorldAsset, 'metricScaleFactor' | 'groundPlaneOffset'> & {
   opencvFrame?: boolean;
+  roomAlign?: { yaw: number; x: number; z: number } | null;
   scaleCalibration?: { factor: number } | null;
   floorOffsetMeters?: number | null;
 };
@@ -58,10 +66,15 @@ export function rawFloorY(w: FrameInfo): number {
 export function worldTransform(w: FrameInfo): WorldTransform {
   const factor = calibrationFactor(w);
   const scale = w.metricScaleFactor * factor;
+  const a = w.roomAlign;
+  const ok = !!a && [a.yaw, a.x, a.z].every(Number.isFinite);
   return {
     rotationX: (w.opencvFrame ?? true) ? Math.PI : 0,
     scale,
     positionY: -rawFloorY(w) * scale + factor * floorOffset(w),
+    rotationY: ok ? a!.yaw : 0,
+    positionX: ok ? a!.x : 0,
+    positionZ: ok ? a!.z : 0,
   };
 }
 
@@ -72,5 +85,14 @@ export function applyWorldTransform(t: WorldTransform, p: Vec3): Vec3 {
   const s = Math.sin(t.rotationX);
   const ry = y * c - z * s;
   const rz = y * s + z * c;
-  return [x * t.scale, ry * t.scale + t.positionY, rz * t.scale];
+  // then Ry(yaw) on the scaled, flipped point (three.js Euler 'YXZ': Ry · Rx)
+  const px = x * t.scale;
+  const pz = rz * t.scale;
+  const cy = Math.cos(t.rotationY ?? 0);
+  const sy = Math.sin(t.rotationY ?? 0);
+  return [
+    px * cy + pz * sy + (t.positionX ?? 0),
+    ry * t.scale + t.positionY,
+    -px * sy + pz * cy + (t.positionZ ?? 0),
+  ];
 }
