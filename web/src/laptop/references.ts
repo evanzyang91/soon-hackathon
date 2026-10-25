@@ -1,5 +1,5 @@
 // The director's reference photos on the laptop (uploaded in the project chat): a small thumbnail
-// in the Scene tab's cast row for a character built from a photo (Character.referenceImage), and
+// in the Scene mode's cast row for a character built from a photo (Character.referenceImage), and
 // the photo of a place next to the Marble thumbnail in the projects drawer's scene row
 // (ScenePlan.worldReference). Neither is in ProjectStatus, so the project's current plan.json is
 // fetched from the static route, again only when the chat revision moves (the chat is what sets
