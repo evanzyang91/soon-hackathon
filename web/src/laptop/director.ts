@@ -62,6 +62,17 @@ export interface Take {
   file: string;
 }
 
+/**
+ * The phone's camera popover lands on the shot list: "select-camera" and "add-shot" go to the Shots
+ * panel (shots-panel.ts), which selects / adds exactly as its own rows and Add shot do.
+ */
+export interface PhoneShots {
+  /** Put the phone on shot `id` (null: free handheld, no shot). */
+  select(id: string | null): void;
+  /** Add `view` (what the phone sees now) as a shot named `name` (else "Shot 1F"), selected. */
+  add(view: CameraPose, name?: string): void;
+}
+
 /** Phone framing when its pose does not carry `aspect` (landscape 16:9). */
 export const PHONE_ASPECT = 16 / 9;
 const HEARTBEAT_MS = 250;
@@ -105,7 +116,7 @@ export class Director {
   cameras: DropCamera[] = [];
   activeCameraId: string | null = null;
   speakingLineId: string | null = null;
-  /** Last dialogue line started (clicked, played in order, or from the phone's "Line ›"). */
+  /** Last dialogue line started (clicked, played in order, or the phone's hold on play). */
   lastLineId: string | null = null;
   viewFromPhone = false;
   pipEnabled = true;
@@ -121,6 +132,8 @@ export class Director {
   lastStillAt = 0;
   /** Adds fields to each SceneState before it is sent (look panel: editsRevision, live look). */
   decorateState: ((state: SceneState) => void) | null = null;
+  /** Where the phone's "select-camera" / "add-shot" go (the Shots panel sets it). */
+  phoneShots: PhoneShots | null = null;
   /** Direct manipulation's undo stack (moves, deletes, region edits, camera drags) for this scene. */
   readonly undo = new UndoStack();
   /** What is selected in the viewport (viewer/manipulate); panels highlight it. */
@@ -538,14 +551,14 @@ export class Director {
 
   /**
    * The scene is running: clock playing and its dialogue under way ("Play scene" in progress or a
-   * line being spoken). The phone shows its ACTION button as CUT exactly then.
+   * line being spoken). The phone's play button shows pause exactly then.
    */
   get sceneRunning(): boolean {
     const playlist = this.playlistRun !== -1 && this.playlistRun === this.playlistToken;
     return !!this.runtime?.playing && (playlist || !!this.speakingLineId);
   }
 
-  /** The phone's ACTION / CUT: "Play scene" from the first line, or stop the lines and the clock. */
+  /** The phone's play button: "Play scene" from the first line, or stop the lines and the clock. */
   toggleScene() {
     if (!this.runtime) return;
     if (this.sceneRunning) {
@@ -554,7 +567,7 @@ export class Director {
     } else void this.playAll();
   }
 
-  /** The phone's "Line ›": the line after the last one played, wrapping to the first. */
+  /** The phone's hold on play: the line after the last one played, wrapping to the first. */
   async playNextLine() {
     const rt = this.runtime;
     if (!rt) return;
@@ -606,6 +619,20 @@ export class Director {
       this.phone.lastPose,
       phoneAnchor(this.cameras, this.activeCameraId, start),
     );
+  }
+
+  /**
+   * What the phone sees now, as the PiP renders it: the shot it is on (or the start camera when
+   * handheld) plus its walk offset, sway and orientation, at its lens. Before its first pose: the
+   * shot itself.
+   */
+  phoneView(): CameraPose | null {
+    const pose = this.phonePose();
+    if (pose) return pose;
+    const src =
+      this.cameras.find((c) => c.id === this.activeCameraId) ?? this.runtime?.manifest.startCamera;
+    if (!src) return null;
+    return { position: [...src.position], quaternion: [...src.quaternion], fovDeg: src.fovDeg };
   }
 
   // ---- takes --------------------------------------------------------------------------------
@@ -681,12 +708,12 @@ export class Director {
     } else if (msg.type === 'pose') {
       if (before === 0) this.emit('phone');
     } else if (msg.type === 'cmd') {
-      this.handlePhoneCommand(msg.cmd);
+      this.handlePhoneCommand(msg);
     }
   }
 
-  private handlePhoneCommand(cmd: PhoneCommand['cmd']) {
-    switch (cmd) {
+  private handlePhoneCommand(msg: PhoneCommand) {
+    switch (msg.cmd) {
       case 'next-camera':
         this.setActiveCamera(cycleCamera(this.cameras, this.activeCameraId));
         break;
@@ -705,6 +732,20 @@ export class Director {
       case 'next-line':
         void this.playNextLine();
         break;
+      case 'select-camera': {
+        // the phone's camera popover: a shot of the list, or null = free handheld
+        const id = msg.cameraId ?? null;
+        if (id !== null && !this.cameras.some((c) => c.id === id)) break;
+        if (this.phoneShots) this.phoneShots.select(id);
+        else this.setActiveCamera(id);
+        break;
+      }
+      case 'add-shot': {
+        // "Add shot from here": the phone's view becomes a shot of the list, and the phone's shot
+        const view = this.phoneView();
+        if (view && this.runtime) this.phoneShots?.add(view, msg.name?.trim() || undefined);
+        break;
+      }
       case 'recenter':
         break;
     }

@@ -12,9 +12,9 @@ export interface PrevizDebugState {
   time: number;
   playing: boolean;
   speakingLineId: string | null;
-  /** Last line started (what the phone's "Line ›" continues from). */
+  /** Last line started (what the phone's next line continues from). */
   lastLineId: string | null;
-  /** Clock playing with dialogue under way: the phone shows CUT. */
+  /** Clock playing with dialogue under way: the phone's play button shows pause. */
   sceneRunning: boolean;
   cameras: number;
   activeCameraId: string | null;
