@@ -19,7 +19,7 @@ export const DraftAction = z.object({
   target: z
     .string()
     .describe(
-      'plan-patch: "character:<id>" | "scene:<index>" | "line:<lineId>" | "project"; character-reference: "character:<id>"; world-reference: "scene:<index>"; replan / generate: ""',
+      'plan-patch: "character:<id>" | "scene:<index>" | "line:<lineId>" | "project" | "style"; character-reference: "character:<id>"; world-reference: "scene:<index>"; replan / generate: ""',
     ),
   field: z.string().describe('plan-patch: the field to change (see the field list); otherwise ""'),
   value: z

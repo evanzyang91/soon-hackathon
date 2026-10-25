@@ -30,8 +30,14 @@
 //       keeps the planner's). --reuse takes a current staging.json instead of asking again.
 //       --before-after renders the planner's vs the staged marks from the start camera (+ a second
 //       angle); --views keeps the two images Claude saw.
+//   pnpm tsx server/pipeline/cli.ts look <projectDir> <sceneIndex> [--write] [--preset <name>]
+//       Prints the scene's look seed (plan.json's look, else derived from heading, time of day and
+//       interior: look-seed.ts) and the look name it gives. --preset swaps the preset (keeping the
+//       mood words). --write sets scene-<n>/edits.json's look to it, keeping the edits, the history
+//       (one entry added) and the director's lights and lens; revision + 1. No network.
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { seedToLook } from '../../shared/look-presets.ts';
 import { env } from '../env.ts';
 import {
   calibrateWorld,
@@ -44,8 +50,10 @@ import {
   writeCalibration,
 } from './calibrate.ts';
 import { describeField, groundField } from './calibrate-ground.ts';
+import { EditsStore } from './edits.ts';
 import { readJson } from './fsutil.ts';
-import { ScreenplayPlan } from '../../shared/schema.ts';
+import { lookSeedFor, styleForPlan, writeSceneLook } from './look-seed.ts';
+import { LookPresetName, ScreenplayPlan } from '../../shared/schema.ts';
 import {
   applyStagingToManifest,
   formatStaging,
@@ -247,6 +255,33 @@ async function main() {
       }
       return;
     }
+    case 'look': {
+      const [dir, n] = pos;
+      if (!dir || n === undefined || !/^\d+$/.test(n))
+        throw new Error('usage: look <projectDir> <sceneIndex> [--write] [--preset <name>]');
+      const projectDir = resolve(dir);
+      const plan = ScreenplayPlan.parse(await readJson(join(projectDir, 'plan.json')));
+      const scene = plan.scenes[Number(n)];
+      if (!scene) throw new Error(`no scene ${n} in ${dir}/plan.json`);
+      let seed = lookSeedFor(scene, styleForPlan(plan));
+      const preset = str(flags.preset);
+      if (preset) {
+        const p = LookPresetName.safeParse(preset);
+        if (!p.success) throw new Error(`unknown preset "${preset}" (${LookPresetName.options.join(', ')})`);
+        // the planner's adjustments were tuned to its own preset: keep only the mood words
+        seed = { preset: p.data, mood: seed.mood };
+      }
+      console.log(`${scene.heading}: ${scene.look ? "the plan's look" : 'derived from the heading (plan.json has no look)'}${preset ? `, preset ${preset}` : ''}`);
+      console.log(JSON.stringify(seed, null, 2));
+      console.log(`look name: ${seedToLook(seed).name}`);
+      if (flags.write === true) {
+        // the project's own data dir and id, so the store's validation and revisions apply
+        const store = new EditsStore(() => dirname(projectDir));
+        const saved = await writeSceneLook(store, basename(projectDir), Number(n), seed, 'look from the plan (cli look)');
+        log(`wrote scene-${n}/edits.json: look "${saved.look.name}", revision ${saved.revision} (${saved.edits.length} edit(s) and the history kept)`);
+      }
+      return;
+    }
     case 'make-mock-world': {
       const r = await writeMockWorld();
       log(
@@ -256,7 +291,7 @@ async function main() {
     }
     default:
       console.log(
-        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | stage <projectDir> <sceneIndex> | make-mock-world  (see header of server/pipeline/cli.ts)',
+        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | stage <projectDir> <sceneIndex> | look <projectDir> <sceneIndex> | make-mock-world  (see header of server/pipeline/cli.ts)',
       );
       process.exitCode = cmd ? 1 : 0;
   }

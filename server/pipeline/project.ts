@@ -16,6 +16,8 @@
 //   scene-<n>/audio/        one file per dialogue line; scene-<n>/audio.json caches LineAudio[]
 //   scene-<n>/staging.json  StagingReport: the actors' marks staged on this world (staging.ts)
 //   scene-<n>/manifest.json SceneManifest, written once world/actors/tts have all settled
+//   scene-<n>/edits.json    look + edits (edits.ts); the manifest step writes the plan's look
+//                           (look-seed.ts) when the scene has none yet, never over an existing one
 //
 // A new Marble world is scale-calibrated right after download (calibrate.ts: collider references +
 // Claude vision with 1.70 m mannequins) and the result lands in world-asset.json as
@@ -61,6 +63,7 @@ import {
   type Character,
   type DialogueLine,
   type ScenePlan,
+  type VisualStyle,
 } from '../../shared/schema.ts';
 import { env, keyPresence } from '../env.ts';
 import { copyLibraryActor, findLibraryActor } from './actor-library.ts';
@@ -79,6 +82,7 @@ import { parseFountain } from './fountain.ts';
 import { editsStoreFor } from './edits.ts';
 import { exists, readJson, writeJsonAtomic } from './fsutil.ts';
 import { slugify } from './geometry.ts';
+import { lookSeedFor, seedSceneLook, styleForPlan } from './look-seed.ts';
 import { ASSET_FILE, generateWorld, promptKey, RECEIPT_FILE, type GenerateWorldOptions } from './marble.ts';
 import { photoToPng, readPhoto } from './photo.ts';
 import { dropRegionEdits, findGeneratedWorld, produceRegenWorld, type RegenSpec } from './reprompt/regen.ts';
@@ -154,6 +158,8 @@ export interface PipelineDeps {
     log: (m: string) => void;
     /** 'high' (rebuilds only): LHM-1B + fine-tune into actors/<id>/high/; throws on failure. */
     detail?: ActorDetail;
+    /** The screenplay's style: a generated reference keeps the cast's wardrobe in its genre and era. */
+    style?: VisualStyle;
   }) => Promise<ActorAsset>;
   synthesizeLine: (opts: {
     line: DialogueLine;
@@ -1482,7 +1488,7 @@ export class ProjectStore {
       status: 'running',
       note: `building ${cast.length} actor(s)`,
     });
-    const built = await Promise.all(cast.map((c) => this.actor(st, c)));
+    const built = await Promise.all(cast.map((c) => this.actor(st, c, plan.style)));
     await this.syncActors(st, plan);
     const failed = cast.filter((_, k) => !built[k]);
     if (failed.length) {
@@ -1509,7 +1515,7 @@ export class ProjectStore {
   }
 
   /** Builds (once per project) or loads the shared actor for a character. */
-  private actor(st: ProjectStatus, character: Character): Promise<ActorAsset | undefined> {
+  private actor(st: ProjectStatus, character: Character, style?: VisualStyle): Promise<ActorAsset | undefined> {
     const key = `${st.id}:${character.id}`;
     const existing = this.actorBuilds.get(key);
     if (existing) return existing;
@@ -1550,7 +1556,7 @@ export class ProjectStore {
           return asset;
         }
         const built = await this.actorSem.use(() =>
-          this.deps.buildActor({ character, projectDir, sceneDir: actorDir, mock: st.mock, log }),
+          this.deps.buildActor({ character, projectDir, sceneDir: actorDir, mock: st.mock, log, style }),
         );
         const asset = await normalizeActor(ActorAsset.parse(built), actorDir, projectDir);
         await writeJsonAtomic(cachePath, { ...asset, ...(sha ? { referenceSha: sha } : {}) });
@@ -1634,6 +1640,7 @@ export class ProjectStore {
       );
       await mkdir(actorDir, { recursive: true });
       const target = character;
+      const style = plan.style;
       const raw = await this.actorSem.use(() =>
         this.deps.buildActor({
           character: target,
@@ -1641,6 +1648,7 @@ export class ProjectStore {
           sceneDir: actorDir,
           mock: st.mock,
           detail,
+          style,
           log: (m) => {
             log(m);
             const usd = /~\$([0-9.]+) GPU/.exec(m);
@@ -1916,6 +1924,11 @@ export class ProjectStore {
         startCamera: START_CAMERA,
       });
       await writeJsonAtomic(join(sceneDir, 'manifest.json'), manifest);
+      // the scene opens graded with the plan's look; an existing edits.json (the director's) stays
+      const seeded = await seedSceneLook(editsStoreFor(this), id, idx, lookSeedFor(scene, styleForPlan(plan))).catch(
+        (e) => void this.log(id, `[scene ${idx}] look not seeded: ${errMsg(e)}`),
+      );
+      if (seeded) await this.log(id, `[scene ${idx}] look seeded: ${seeded.look.name}`);
       job.manifestUrl = api.manifest(id, idx);
       const missing = [
         actorAssets.length < ids.size ? `${ids.size - actorAssets.length} actor(s) missing` : '',
