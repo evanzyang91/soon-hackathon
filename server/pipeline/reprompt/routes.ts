@@ -18,6 +18,7 @@ import { Quat, ScreenplayPlan, Vec3 } from '../../../shared/schema.ts';
 import { env } from '../../env.ts';
 import { editsStoreFor, EditsNotFound } from '../edits.ts';
 import { readJson } from '../fsutil.ts';
+import { pickMockSet } from '../mock-set.ts';
 import { PipelineError, isProjectId, type ProjectStore } from '../project.ts';
 import { appendOps } from '../../../web/src/viewer/edits/model.ts';
 import { loadSceneContext } from './context.ts';
@@ -190,6 +191,8 @@ export async function handleRepromptRequest(
           name: `${st.title} · ${scene.heading} (regen)`,
           regen,
           mock,
+          // MOCK / dry run: the stand-in set follows the new prompt ("turn the kitchen into a cave")
+          mockSet: pickMockSet({ ...scene, worldPrompt: regen.prompt }, planJson.success ? planJson.data.style : undefined),
           log: stageLog,
           ...opts.regen,
         });
