@@ -310,6 +310,7 @@ const DEFAULT_SPEED: Record<DynamicElement['kind'], number> = {
   drone: 4,
   spacecraft: 15,
   generic: 3,
+  model: 0,
 };
 
 function trimPrompt(s: string): string {
