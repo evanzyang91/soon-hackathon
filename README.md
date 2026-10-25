@@ -171,7 +171,7 @@ grain, bloom), **Atmosphere** (fog colour + density, sky tint), **Lens** (depth 
 distance, f-stop; **Pick focus** or Alt+click the view focuses on the splat under the cursor) and
 **Lights** (up to four point / spot / sun lights with colour, intensity, radius, cone, position,
 **Place at camera**; "Scene light" scales the captured lighting). The header has a name, presets
-(seven LUTs and four looks: Daylight neutral, Night street, Warm interior, Overcast), undo / redo
+(twelve LUTs and eighteen looks in three groups, plus **Scene's look**, the planner's suggestion), undo / redo
 (⌘Z / ⇧⌘Z, 50 steps), per-group **Reset** and a **Compare** button that shows the ungraded frame
 while held. A dropped camera can get its own lens ("Own lens for camera …"); the phone attached
 to it uses that lens.
