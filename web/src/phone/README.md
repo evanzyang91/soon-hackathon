@@ -16,7 +16,7 @@ or a 2D viewfinder when 3D is unavailable. Pose streaming never depends on the 3
 | **ACTION** / **CUT** (top right) | laptop "Play scene" (dialogue in order + scene clock) / stop it; shows CUT while the laptop runs the scene |
 | **Line ›** | laptop plays the line after the last one played (wraps to the first) |
 | **Recenter** | current heading → the attached camera's heading (keeps the walk offset) |
-| **Shutter**, **Record**, **Cam ›** | laptop still, laptop take, next dropped camera (resets the walk offset) |
+| **Shutter**, **Record**, **Cam ›** | laptop frame (PNG), laptop take, next shot in the shot list (resets the walk offset) |
 | `?sim=1`: drag, wheel, W A S D / arrows, Q / E (or Page Down / Up) | look, lens, walk, height |
 
 The walk offset (metres, world frame) goes out in every pose as `PhonePose.offset`; phone camera
