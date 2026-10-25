@@ -10,7 +10,9 @@
 //   'complete'                → assets on disk, verified by size + sha256: no network at all
 // MARBLE_DRY_RUN=1 (or opts.dryRun) stops before the POST: it logs the exact request body, writes
 // it to <outDir>/marble-dry-run.json, and returns the mock world (provider 'mock') so the rest of
-// a live pipeline continues without spending credits.
+// a live pipeline continues without spending credits. The mock world is one of the procedural
+// sets in fixtures/mock-world/<set>/ (opts.mockSet, picked per scene by mock-set.ts; default the
+// street), named in WorldAsset.caption as "mock set: <set>".
 // The receipt's promptSha256 is promptKey(): the text prompt's sha256, or for an image prompt a
 // hash over the prompt, the image bytes' sha256 and is_pano, so a new photo is a new world and the
 // same photo + prompt is recognised as already generated (reprompt/regen.ts findGeneratedWorld).
@@ -25,7 +27,8 @@ import { pipeline } from 'node:stream/promises';
 import { WorldAsset } from '../../shared/schema.ts';
 import { env } from '../env.ts';
 import { exists, readJson, safeEndpoint, writeJsonAtomic, writeJsonExclusive } from './fsutil.ts';
-import { MOCK_WORLD_DIR, writeMockWorld } from './mock-world.ts';
+import { DEFAULT_MOCK_SET, mockSetCaption, type MockSet } from './mock-set.ts';
+import { mockSetDir, writeMockSet } from './mock-world.ts';
 import { readSpzHeader } from './spz.ts';
 
 export const MARBLE_MODELS = ['marble-1.1', 'marble-1.0-draft', 'marble-1.1-plus'] as const;
@@ -59,6 +62,8 @@ export interface GenerateWorldOptions {
   retryFailed?: boolean;
   /** Log the generate request instead of sending it and return the mock world. Default: env. */
   dryRun?: boolean;
+  /** Which procedural set the mock world is (MOCK and dry runs; mock-set.ts pickMockSet). Default street. */
+  mockSet?: MockSet;
   /**
    * Generate from an image instead of the text prompt (scoped re-prompt regeneration: the world's
    * own panorama, edited): the PNG is uploaded as a Marble media asset and sent as the image
@@ -165,7 +170,7 @@ export function generateRequestBody(o: { name: string; prompt: string; model?: s
 
 export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAsset> {
   await mkdir(opts.outDir, { recursive: true });
-  if (opts.mock) return mockWorld(opts.outDir, opts.log);
+  if (opts.mock) return mockWorld(opts.outDir, opts.log, opts.mockSet);
   if (opts.dryRun ?? env.marbleDryRun) {
     const base = opts.deps?.baseUrl ?? BASE_URL;
     const url = `${base}/marble/v1/worlds:generate`;
@@ -181,36 +186,39 @@ export async function generateWorld(opts: GenerateWorldOptions): Promise<WorldAs
       });
       opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not uploaded: POST ${upload.url} ${JSON.stringify(upload.body)} + PUT ${bytes} bytes`);
       opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
-      return mockWorld(opts.outDir, opts.log);
+      return mockWorld(opts.outDir, opts.log, opts.mockSet);
     }
     const body = generateRequestBody(opts);
     await writeJsonAtomic(join(opts.outDir, DRY_RUN_FILE), { method: 'POST', url, body, promptSha256: await promptKey(opts) });
     opts.log(`marble: DRY RUN (MARBLE_DRY_RUN=1), not submitted: POST ${url} ${JSON.stringify(body)}`);
-    return mockWorld(opts.outDir, opts.log);
+    return mockWorld(opts.outDir, opts.log, opts.mockSet);
   }
   return new MarbleRun(opts).run();
 }
 
-async function mockWorld(outDir: string, log: (m: string) => void): Promise<WorldAsset> {
-  const src = join(MOCK_WORLD_DIR, 'world.spz');
+/** Copies fixtures/mock-world/<set>/ into outDir as the scene's world. */
+export async function mockWorld(outDir: string, log: (m: string) => void, set: MockSet = DEFAULT_MOCK_SET): Promise<WorldAsset> {
+  const dir = mockSetDir(set);
+  const src = join(dir, 'world.spz');
   if (!(await exists(src))) {
-    log('mock world fixture missing; regenerating fixtures/mock-world');
-    await writeMockWorld();
+    log(`mock set ${set}: fixture missing; regenerating fixtures/mock-world/${set}`);
+    await writeMockSet(set);
   }
   await copyFile(src, join(outDir, 'world.spz'));
   const asset: WorldAsset = {
     provider: 'mock',
     spz: { k500: 'world.spz' },
+    caption: mockSetCaption(set),
     metricScaleFactor: 1,
     groundPlaneOffset: 0,
     opencvFrame: true, // the fixture is stored in Marble's OpenCV frame, like a real world
   };
-  if (await exists(join(MOCK_WORLD_DIR, 'thumbnail.png'))) {
-    await copyFile(join(MOCK_WORLD_DIR, 'thumbnail.png'), join(outDir, 'thumbnail.png'));
+  if (await exists(join(dir, 'thumbnail.png'))) {
+    await copyFile(join(dir, 'thumbnail.png'), join(outDir, 'thumbnail.png'));
     asset.thumbnail = 'thumbnail.png';
   }
   await writeJsonAtomic(join(outDir, ASSET_FILE), asset);
-  log('mock world: copied fixtures/mock-world');
+  log(`mock world: copied fixtures/mock-world/${set} (${mockSetCaption(set)})`);
   return asset;
 }
 
