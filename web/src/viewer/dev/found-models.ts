@@ -24,12 +24,16 @@ interface CellSpec {
 
 const q = new URLSearchParams(location.search);
 const frozen = q.has('t') ? Number(q.get('t')) : null;
-const specs = (await (await fetch(q.get('cells') ?? '')).json()) as CellSpec[];
+const all = (await (await fetch(q.get('cells') ?? '')).json()) as CellSpec[];
+const one = q.has('cell') ? all[Number(q.get('cell'))] : undefined;
+const specs = one ? [one] : all;
+/** ?az=<deg> turns the camera about the vertical (0: from the front left; 90: from the left side). */
+const AZ = THREE.MathUtils.degToRad(Number(q.get('az') ?? 0));
 
 const COLS = Math.min(3, specs.length);
 const ROWS = Math.ceil(specs.length / COLS);
-const CW = 520;
-const CH = 360;
+const CW = one ? 1200 : 520;
+const CH = one ? 800 : 360;
 const W = COLS * CW;
 const H = ROWS * CH;
 const sheet = document.getElementById('sheet')!;
@@ -54,7 +58,8 @@ function frame(cell: Cell) {
   const box = new THREE.Box3().setFromObject(cell.prop.object).union(new THREE.Box3().setFromObject(cell.plain.object));
   const centre = box.getCenter(new THREE.Vector3());
   const r = box.getSize(new THREE.Vector3()).length() / 2;
-  const dir = new THREE.Vector3(-1, 0.55, -0.75).normalize();
+  // one cell: a side view from the left (travel = screen left)
+  const dir = (one ? new THREE.Vector3(-1, 0.3, -0.12) : new THREE.Vector3(-1, 0.55, -0.75)).applyAxisAngle(new THREE.Vector3(0, 1, 0), AZ).normalize();
   cell.camera.position.copy(centre).addScaledVector(dir, (r / Math.tan(THREE.MathUtils.degToRad(cell.camera.fov / 2))) * 0.95);
   cell.camera.lookAt(centre);
 }
@@ -97,7 +102,7 @@ function layout(cell: Cell) {
   // the procedural body stands to the found model's right (+X), a little apart
   const a = new THREE.Box3().setFromObject(cell.prop.object);
   const sizeA = a.getSize(new THREE.Vector3());
-  cell.plain.object.position.set(Math.max(sizeA.x, 1) * 0.75 + 0.5, cell.spec.lift ?? 0, 0);
+  cell.plain.object.position.set(Math.max(sizeA.x, 1) * 0.75 + 0.5, cell.spec.lift ?? 0, one ? Math.max(sizeA.z, 1) * 1.2 : 0);
   const span = Math.max(sizeA.x, sizeA.z, 1);
   const g = cell.scene.getObjectByName('ground');
   if (g) cell.scene.remove(g);

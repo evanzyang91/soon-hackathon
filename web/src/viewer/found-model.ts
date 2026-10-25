@@ -9,10 +9,14 @@
 //              (creature, dog, horse, pedestrian), the length of everything else; a display
 //              platform under the model is hidden; materials stay as authored
 //   facing     PropModel.yawOffset when the server gave one; else the named parts (head / jaw /
-//              beak / headlight / front / hood … against tail / rear / trunk / exhaust …, bones
-//              and meshes alike); else the clip's own root motion; else the shape: an airplane's
-//              fuselage is the horizontal axis with the tall end (the fin, its rear), anything else
-//              is longest along its length and faces +Z (glTF's convention) — yaw π
+//              beak / headlight / front / hood / FL FR … against tail / rear / trunk / exhaust /
+//              RL RR …, bones and meshes alike); else the clip's own root motion; else the shape:
+//              the length is the longer horizontal extent of a clearly elongated ground body, and
+//              for flyers and squat bodies the horizontal axis the model is not mirror-symmetric
+//              across (a wingspan often beats the fuselage); along it an aircraft's nose carries
+//              the propeller, else its tail the fin (the higher end); anything else faces +Z when
+//              long along Z (glTF's convention: yaw π) and −X when long along X (three of the four
+//              unnamed X-long cars checked did). Verified on 20 Objaverse models (docs/PLAN-v4.md)
 //   clips      chosen by intent from their names (idle / stand / breath; walk / trot / fly / flap /
 //              swim; run / gallop / sprint; attacks, jumps, deaths, turns and strafes never), or
 //              PropModel.clips; an unnamed clip is locomotion when its leg / wing bones repeat
@@ -87,10 +91,10 @@ export function nameTokens(name: string): string[] {
 
 const words = (s: string) => new Set(s.split(' '));
 const FRONT = words(
-  'head heads skull jaw snout muzzle beak nose mouth teeth tongue eye eyes headlight headlights headlamp headlamps front hood bonnet grill grille windshield windscreen cockpit propeller spinner bow',
+  'head heads skull jaw snout muzzle beak nose mouth teeth tongue eye eyes headlight headlights headlamp headlamps front hood bonnet grill grille windshield windscreen cockpit propeller spinner bow fl fr',
 );
 const REAR = words(
-  'tail tails rear trunk exhaust brake taillight taillights backlight backlights spoiler rudder elevator stabilizer stabiliser stern tailplane',
+  'tail tails rear trunk exhaust brake taillight taillights backlight backlights spoiler rudder elevator stabilizer stabiliser stern tailplane rl rr',
 );
 const LEG = words('leg legs thigh knee shin calf foot feet ankle toe toes hip upperleg lowerleg femur tibia paw hoof wing wings arm');
 const HIP = words('hip hips thigh upperleg femur pelvis');
@@ -173,12 +177,27 @@ function visibleBox(root: THREE.Object3D, skip: Set<THREE.Object3D>): THREE.Box3
   return box;
 }
 
+/** The centre of a node's meshes (a group named "Headlight" holds its mesh off its origin), else its origin (a bone). */
 function nodeCentre(o: THREE.Object3D, rootInv: THREE.Matrix4): THREE.Vector3 {
-  if ((o as THREE.Mesh).isMesh) {
+  let meshes = false;
+  o.traverse((c) => {
+    if ((c as THREE.Mesh).isMesh && !(c as THREE.SkinnedMesh).isSkinnedMesh) meshes = true;
+  });
+  if (meshes) {
     const b = new THREE.Box3().setFromObject(o);
-    return b.getCenter(new THREE.Vector3()).applyMatrix4(rootInv);
+    if (!b.isEmpty()) return b.getCenter(new THREE.Vector3()).applyMatrix4(rootInv);
   }
   return new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).applyMatrix4(rootInv);
+}
+
+/**
+ * Whether a node name says front / rear: a whole word of the set, or one of the strong words
+ * glued to another ("micro_dragon_fino:head" loses its colon to GLTFLoader: "finohead").
+ */
+const STRONG_FRONT = ['head', 'jaw', 'snout', 'beak', 'skull', 'muzzle'];
+const STRONG_REAR = ['tail'];
+function says(tokens: string[], set: Set<string>, strong: string[]): boolean {
+  return tokens.some((w) => set.has(w) || (w.length > 5 && strong.some((s) => w.startsWith(s) || w.endsWith(s))));
 }
 
 /** Snaps a horizontal direction onto the nearest axis when it is within 20° of it. */
@@ -210,7 +229,7 @@ function cyclesIn(clip: THREE.AnimationClip): number {
   const legs = quats.filter((t) => nameTokens(t.name.replace(/\.quaternion$/, '')).some((w) => LEG.has(w)));
   const tracks = (legs.length >= 2 ? legs : quats).slice(0, 24);
   if (!tracks.length) return 1;
-  const N = Math.min(600, Math.max(24, Math.round(dur * 30)));
+  const N = Math.min(300, Math.max(24, Math.round(dur * 30)));
   const series: Float64Array[] = [];
   for (const t of tracks) {
     // every track has one at run time (setInterpolation); a quaternion track's slerps
@@ -238,11 +257,16 @@ function cyclesIn(clip: THREE.AnimationClip): number {
   };
   const zero = auto(0);
   if (zero < 1e-9) return 1;
-  // a seamless loop of k cycles repeats after N / k samples: the most cycles (shortest period of
-  // at least 0.25 s) that still correlates is the gait's; a multiple of it correlates too
-  for (let k = Math.floor(dur / 0.25); k >= 2; k--) {
-    const lag = Math.round(N / k);
-    if (lag >= 2 && auto(lag) / zero > 0.6) return k;
+  // the period is the first peak after the correlation has fallen away (a smooth pose correlates
+  // with itself a moment later; a gait comes back a whole cycle later): a seamless loop of k
+  // cycles peaks at N / k
+  const half = Math.floor(N / 2);
+  const r = new Float64Array(half + 2);
+  for (let lag = 1; lag <= half + 1; lag++) r[lag] = auto(lag) / zero;
+  let fell = false;
+  for (let lag = 2; lag <= half; lag++) {
+    if (r[lag]! < 0.25) fell = true;
+    if (fell && r[lag]! > 0.6 && r[lag]! >= r[lag - 1]! && r[lag]! >= r[lag + 1]!) return Math.max(1, Math.round(N / lag));
   }
   return 1;
 }
@@ -331,7 +355,7 @@ export function analyseModel(loaded: LoadedModel, el: Pick<DynamicElement, 'kind
     const s = b.getSize(new THREE.Vector3());
     const flat = s.y < 0.08 * Math.max(s.x, s.z);
     const wide = s.x > 0.6 * fullSize.x && s.z > 0.6 * fullSize.z;
-    const low = b.max.y < full.min.y + 0.2 * fullSize.y;
+    const low = b.max.y < full.min.y + 0.3 * fullSize.y;
     if (flat && wide && low) hiddenSet.add(o);
   });
   const box = hiddenSet.size ? visibleBox(root, hiddenSet) : full.clone();
@@ -372,6 +396,9 @@ export function analyseModel(loaded: LoadedModel, el: Pick<DynamicElement, 'kind
   if (!clips.idle && chosen.generic.length === 1 && clips.move?.clip === chosen.generic[0]) clips.idle = { clip: chosen.generic[0]!, speed: 0, cycles: 1, rootMotion: false };
 
   // facing
+  const animatedNodes = new Set(
+    loaded.gltf.animations.flatMap((c) => c.tracks.map((t) => THREE.PropertyBinding.parseTrackName(t.name).nodeName)),
+  );
   let yaw = Math.PI;
   let facing: FoundAnalysis['facing'] = 'convention';
   const saucer =
@@ -385,8 +412,8 @@ export function analyseModel(loaded: LoadedModel, el: Pick<DynamicElement, 'kind
     for (const o of nodes) {
       if (o === root || hiddenSet.has(o)) continue;
       const t = nameTokens(o.name);
-      const isFront = t.some((w) => FRONT.has(w));
-      const isRear = t.some((w) => REAR.has(w));
+      const isFront = says(t, FRONT, STRONG_FRONT);
+      const isRear = says(t, REAR, STRONG_REAR);
       if (isFront === isRear) continue;
       (isFront ? front : rear).push(nodeCentre(o, rootInv));
     }
@@ -406,27 +433,31 @@ export function analyseModel(loaded: LoadedModel, el: Pick<DynamicElement, 'kind
       const s = snap(new THREE.Vector2(rd.x, rd.z));
       yaw = yawFor(s.x, s.y);
       facing = 'root-motion';
-    } else if (drive === 'airplane') {
-      // the fuselage axis ends in the fin: the horizontal axis whose higher end is higher is the
-      // length, and that end the rear (a wingspan longer than the fuselage is common)
-      const tops = endTops(root, hiddenSet, box);
-      const axis = Math.max(tops.x.lo, tops.x.hi) > Math.max(tops.z.lo, tops.z.hi) ? 'x' : 'z';
-      const t = tops[axis];
-      const sign = t.hi > t.lo ? -1 : 1; // front = away from the fin
+    } else {
+      // the shape: what travels is left-right symmetric, so the length is the horizontal axis it
+      // is not mirror-symmetric across (a wingspan is often longer than the fuselage); a clearly
+      // elongated ground body is simply longest along its length
+      const ratio = Math.max(size.x, size.z) / Math.max(1e-6, Math.min(size.x, size.z));
+      const flies = drive === 'airplane' || drive === 'wings' || drive === 'helicopter' || drive === 'drone' || drive === 'spacecraft';
+      const axis: 'x' | 'z' = ratio > 1.3 && !flies ? (size.x > size.z ? 'x' : 'z') : lengthAxis(root, hiddenSet, box);
+      // glTF faces +Z; of the unnamed models long along X we checked (cars), three of four face −X
+      let sign = axis === 'z' ? 1 : -1;
+      facing = axis === 'z' ? 'convention' : 'shape';
+      if (drive === 'airplane' || drive === 'helicopter') {
+        // the nose carries the propeller (a spinning or animated part at one end); else the tail
+        // carries the fin, the higher end
+        const nose = spinnerEnd(nodes, animatedNodes, rootInv, axis, centre, size);
+        const tops = endTops(root, hiddenSet, box)[axis];
+        sign = nose ?? (tops.hi > tops.lo ? -1 : 1);
+        facing = 'shape';
+      }
       yaw = axis === 'x' ? yawFor(sign, 0) : yawFor(0, sign);
-      facing = 'shape';
-    } else if (size.x > size.z * 1.15) {
-      // long along x and nothing says which end leads: +X (Blender's side view exports so)
-      yaw = yawFor(1, 0);
-      facing = 'shape';
     }
   }
 
   // parts that turn: wheels roll, rotors / propellers / fans spin, turrets sway
   const parts: PartInfo[] = [];
-  const animated = new Set(
-    loaded.gltf.animations.flatMap((c) => c.tracks.map((t) => THREE.PropertyBinding.parseTrackName(t.name).nodeName)),
-  );
+  const animated = animatedNodes;
   const lateral = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw);
   const claimed = new Set<THREE.Object3D>();
   const boxVolume = Math.max(1e-9, size.x * size.y * size.z);
@@ -472,10 +503,36 @@ function pathLen(path: DynamicElement['path']): number {
   return n;
 }
 
-/** The highest vertex in the first and last fifth of each horizontal axis, above the model's floor. */
-function endTops(root: THREE.Object3D, skip: Set<THREE.Object3D>, box: THREE.Box3) {
-  const tops = { x: { lo: 0, hi: 0 }, z: { lo: 0, hi: 0 } };
+/**
+ * The horizontal axis a model is long along: the one it is not mirror-symmetric across (16³
+ * occupancy of its vertices compared with its mirror image across each vertical centre plane).
+ */
+function lengthAxis(root: THREE.Object3D, skip: Set<THREE.Object3D>, box: THREE.Box3): 'x' | 'z' {
+  const N = 16;
+  const grid = new Uint8Array(N * N * N);
   const size = box.getSize(new THREE.Vector3());
+  const cell = (v: number, lo: number, s: number) => Math.min(N - 1, Math.max(0, Math.floor(((v - lo) / Math.max(1e-9, s)) * N)));
+  eachVertex(root, skip, (v) => {
+    grid[cell(v.x, box.min.x, size.x) + N * (cell(v.y, box.min.y, size.y) + N * cell(v.z, box.min.z, size.z))] = 1;
+  });
+  const iou = (mirrorX: boolean) => {
+    let both = 0;
+    let any = 0;
+    for (let k = 0; k < N; k++)
+      for (let j = 0; j < N; j++)
+        for (let i = 0; i < N; i++) {
+          const a = grid[i + N * (j + N * k)]!;
+          const b = mirrorX ? grid[N - 1 - i + N * (j + N * k)]! : grid[i + N * (j + N * (N - 1 - k))]!;
+          both += a & b;
+          any += a | b;
+        }
+    return any ? both / any : 0;
+  };
+  // symmetric across x (x ↔ −x) = x is the lateral axis = long along z
+  return iou(true) >= iou(false) ? 'z' : 'x';
+}
+
+function eachVertex(root: THREE.Object3D, skip: Set<THREE.Object3D>, fn: (v: THREE.Vector3) => void) {
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const m = new THREE.Matrix4();
   const v = new THREE.Vector3();
@@ -487,16 +544,41 @@ function endTops(root: THREE.Object3D, skip: Set<THREE.Object3D>, box: THREE.Box
     if (!pos) return;
     m.multiplyMatrices(inv, mesh.matrixWorld);
     const step = Math.max(1, Math.floor(pos.count / 20000));
-    for (let i = 0; i < pos.count; i += step) {
-      mesh.getVertexPosition(i, v).applyMatrix4(m);
-      const h = v.y - box.min.y;
-      const ux = (v.x - box.min.x) / Math.max(1e-6, size.x);
-      const uz = (v.z - box.min.z) / Math.max(1e-6, size.z);
-      if (ux < 0.2) tops.x.lo = Math.max(tops.x.lo, h);
-      if (ux > 0.8) tops.x.hi = Math.max(tops.x.hi, h);
-      if (uz < 0.2) tops.z.lo = Math.max(tops.z.lo, h);
-      if (uz > 0.8) tops.z.hi = Math.max(tops.z.hi, h);
-    }
+    for (let i = 0; i < pos.count; i += step) fn(mesh.getVertexPosition(i, v).applyMatrix4(m));
+  });
+}
+
+/** +1 / −1 when a spinning part (named propeller / rotor / fan, or animated) sits at that end of `axis`. */
+function spinnerEnd(
+  nodes: THREE.Object3D[],
+  animated: Set<string>,
+  rootInv: THREE.Matrix4,
+  axis: 'x' | 'z',
+  centre: THREE.Vector3,
+  size: THREE.Vector3,
+): number | null {
+  for (const o of nodes) {
+    if ((o as THREE.Bone).isBone) continue;
+    if (!(PART_SPIN.test(o.name) || (animated.has(o.name) && o.children.some((c) => (c as THREE.Mesh).isMesh)))) continue;
+    const c = nodeCentre(o, rootInv);
+    const off = axis === 'x' ? c.x - centre.x : c.z - centre.z;
+    if (Math.abs(off) > 0.3 * (axis === 'x' ? size.x : size.z)) return Math.sign(off);
+  }
+  return null;
+}
+
+/** The highest vertex in the first and last fifth of each horizontal axis, above the model's floor. */
+function endTops(root: THREE.Object3D, skip: Set<THREE.Object3D>, box: THREE.Box3) {
+  const tops = { x: { lo: 0, hi: 0 }, z: { lo: 0, hi: 0 } };
+  const size = box.getSize(new THREE.Vector3());
+  eachVertex(root, skip, (v) => {
+    const h = v.y - box.min.y;
+    const ux = (v.x - box.min.x) / Math.max(1e-6, size.x);
+    const uz = (v.z - box.min.z) / Math.max(1e-6, size.z);
+    if (ux < 0.2) tops.x.lo = Math.max(tops.x.lo, h);
+    if (ux > 0.8) tops.x.hi = Math.max(tops.x.hi, h);
+    if (uz < 0.2) tops.z.lo = Math.max(tops.z.lo, h);
+    if (uz > 0.8) tops.z.hi = Math.max(tops.z.hi, h);
   });
   return tops;
 }
@@ -529,6 +611,12 @@ export interface FoundInfo {
   reason?: string;
   /** The clip playing now (its name), if any. */
   clip?: string;
+  /**
+   * Walkers: the travelling clip's playback rate (path speed / the clip's natural speed at this
+   * size) and how that natural speed was found ('root motion' or '<n> cycles').
+   */
+  rate?: number;
+  gait?: string;
   facing?: FoundAnalysis['facing'];
   loadMs?: number;
   bytes?: number;
@@ -589,6 +677,10 @@ export function createFoundProp(el: DynamicElement, url: string): Prop {
       }
       rig = buildRig(loaded, a, el, model, bodySize, drive, object);
       object.add(rig.group);
+      if (rig.gait) {
+        info.rate = Math.round(rig.gait.rate * 100) / 100;
+        info.gait = rig.gait.how;
+      }
       info.status = 'ready';
       show(usesFoundModel(el.id));
     })
@@ -627,6 +719,7 @@ export function createFoundProp(el: DynamicElement, url: string): Prop {
 interface Rig {
   group: THREE.Group;
   clipName: string | undefined;
+  gait?: { rate: number; how: string };
   animate(distance: number, time: number, motion?: PropMotion): void;
   dispose(): void;
 }
@@ -712,9 +805,11 @@ function buildRig(
   const moveAct = action(moving, !!idle && moving?.clip === idle.clip);
   // the prop's object is what the path moves: its change between frames is the climb and the turn
   const probe = drive === 'legs' || drive === 'ground' ? null : new MotionProbe(object, 0.3, 0.5);
+  const natural = moving && drive === 'legs' ? moving.speed * s : 0;
   const rig: Rig = {
     group,
     clipName: undefined,
+    gait: natural > 0 ? { rate: el.speed / natural, how: moving!.rootMotion ? 'root motion' : `${moving!.cycles} cycle${moving!.cycles > 1 ? 's' : ''}` } : undefined,
     animate(distance, time, motion) {
       const scaleW = s * object.scale.x;
       // ---- clips
