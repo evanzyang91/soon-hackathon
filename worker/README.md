@@ -470,3 +470,55 @@ no rights in outputs; the licence excludes the EU, UK and South Korea).
   (above); the fine-tune's camera geometry under pytest (`tests/test_finetune.py`); the network
   retry path for real (a DNS outage during the download → retry recovered the checkpoint).
 - Not verified: phone (iOS Safari) frame rate with 40,000-splat actors.
+
+# Prop worker: a picture of an object → TripoSR → a .glb (Modal)
+
+"Generate from a description…" (Scene › Background › Add prop; `server/pipeline/props.ts`) draws
+the object with the OpenAI image API (the object alone, centred, full view, plain white
+background, soft studio light, no text, photoreal, 1024×1024), then turns that picture into a
+mesh here.
+
+| File | Role |
+| --- | --- |
+| `modal_prop.py` | GPU app `previz-stage-prop`: `prop()` on an L4 (4 CPU, 16 GiB, 15 min timeout, `max_containers=1`, `retries=0`), `check()` CPU only; Volume `previz-stage-prop-cache` holds the weights (`HF_HOME`, `U2NET_HOME`) |
+| `run_prop.py` | Local CLI used by `props.ts`: `--image ref.png --out model.glb [--report run.json]`, `--check` |
+| `prop_glb.py` | numpy only: TripoSR's frame → glTF (y up, front +z), outward winding, area-weighted normals, linear vertex colours, a rough non-metallic material, the GLB container; `python3 worker/prop_glb.py` self-checks |
+
+**Model: TripoSR** (VAST-AI-Research/TripoSR at `107cefd`, MIT; weights `stabilityai/TripoSR` at
+`5b52193`, MIT). It was picked for speed and for an image that needs no compiler: one feed-forward
+pass (well under a second of GPU time), 1.7 GB of weights, plain PyTorch. The textured
+alternatives paint a texture with a diffusion stage (minutes per object, compiled rasterisers, a
+much heavier image) and some carry licences with territorial exclusions. The trade-off is
+TripoSR's look: a vertex-coloured mesh from marching cubes, softer than a textured asset, with the
+back of the object guessed.
+
+One call: rembg (u2net) cuts the object out → TripoSR's own foreground resize to 85 % on mid grey
+→ TripoSR → marching cubes at 256³ through scikit-image (a stand-in for the `torchmcubes` CUDA
+extension, same vertex order) → pieces under 5 % of the largest dropped → decimated to ≤ 50,000
+triangles (fast-simplification) → colours queried from the reconstruction at the kept vertices →
+`prop_glb.py`. The function returns the GLB (and the cut-out it used, saved next to it as
+`cutout.png`); nothing is checkpointed, because a re-run is cheap.
+
+```sh
+python3 worker/run_prop.py --check                         # auth + image build + imports (CPU only)
+python3 worker/run_prop.py --image ref.png --out model.glb --report run.json
+modal deploy worker/modal_prop.py                          # optional: run_prop then uses the deployed function
+```
+
+**Cost / time** (measured 2026-10-25, "a weathered wooden barrel", through the laptop):
+
+| Run | Wall (Go → placed) | OpenAI picture | Waiting for the L4 | In the container (load · work) | Spend |
+| --- | --- | --- | --- | --- | --- |
+| 1, first ever | 258 s | 9.6 s | ~2 min image build + 10 s | 106 s (98 s with the first weight download · 4.4 s) | $0.056 + $0.033 |
+| 2, image and weights cached | 263 s | 9.4 s | 2.6 min | 94 s (84 s · 5.6 s) | $0.056 + $0.029 |
+
+Run 1 came out leaning 22° toward the camera (the picture was taken from a little above), which is
+why `prop_glb.level` exists. Run 2 has it (17° corrected) and a lower camera in the picture prompt.
+The GPU work is about 5 s; the rest is cold start. Ways to cut it, not done: bake the weights
+into the image, use a memory snapshot, or keep a container warm while the director works
+(`min_containers=1`, about $0.80 an hour of L4).
+
+Progress lines start with `[prop]` (the job's note in the laptop); the last stdout line is
+`RESULT {json}` with `faces`, `vertices`, `seconds` (in the container), `wallSeconds`, `timings`
+and `estimatedComputeUSD`. Auth as for the actor worker (`MODAL_TOKEN_*`, or the repo's
+`.env.local`).

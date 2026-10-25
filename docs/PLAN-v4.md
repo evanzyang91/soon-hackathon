@@ -140,6 +140,9 @@ and links the CSV. The UI speaks in lenses (mm), shots, frames, coverage and mar
 Evidence: `docs/images/flow-1-script.png` … `flow-6-export.png`, `flow-tools.png` (GPU Chromium,
 1440×900, MOCK, the western fixture); `tests/e2e/shots.spec.ts`.
 
+**Q1 props (2026-10-25).** Scene › Background › Add prop imports a .glb (file picker or a drop on the view) or generates one from a description: an OpenAI picture, then TripoSR on a Modal L4 (`worker/run_prop.py`), levelled, with a polled job row; MOCK returns the bundled barrel. Either way the prop becomes a `prop-add` of kind `model` 2 m in front of the camera on the ground, undoable, and the phone draws it (`tests/e2e/props.spec.ts`; evidence `docs/images/prop-import.png`, `prop-generated.png`).
+Live: "a weathered wooden barrel" took 263 s (cold start; about 6 s of GPU work) and cost about $0.08. Not done: Re-prompt does not edit model props, and nothing keeps a container warm.
+
 Not done, or done differently: **walk-to** is not in the cast rows (the viewer has no way to send
 an actor along a path yet; it needs a blocking-path contract). Frames for the seeded coverage are
 grabbed by visiting each shot with the main view (when the Shots mode first shows them, from
