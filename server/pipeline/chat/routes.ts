@@ -1,7 +1,6 @@
 // Project chat routes (shared/api.ts), registered from server/pipeline/routes.ts:
 //
-//   POST /api/projects/:id/uploads?name=   raw PNG / JPEG / WebP ≤ 12 MB → 201 Attachment, or a
-//                                          model/gltf-binary .glb ≤ 25 MB → 201 { id, kind: 'model', file }
+//   POST /api/projects/:id/uploads?name=   raw PNG / JPEG / WebP ≤ 12 MB → 201 Attachment
 //   GET  /api/projects/:id/chat            → ProjectChat (empty thread when nothing was said)
 //   POST /api/projects/:id/chat            ChatRequest → ChatResponse { chat, status }
 //   POST /api/projects/:id/chat/confirm    ChatConfirmRequest (decline?: true → skipped) → ChatResponse
@@ -17,7 +16,7 @@ import { isProjectId } from '../project.ts';
 import { confirmAction, type ChatHost } from './apply.ts';
 import type { ChatPlannerCall } from './planner.ts';
 import { chatTurn } from './service.ts';
-import { MAX_MODEL_UPLOAD_BYTES, saveModelUpload, saveUpload, uploadLimit } from './uploads.ts';
+import { MAX_UPLOAD_BYTES, saveUpload } from './uploads.ts';
 
 const MAX_JSON = 1024 * 1024;
 
@@ -140,18 +139,7 @@ export async function handleChatRequest(
     }
 
     if (route.name === 'uploads') {
-      const contentType = req.headers['content-type'];
-      const bytes = await readRaw(req, uploadLimit(contentType));
-      if (uploadLimit(contentType) === MAX_MODEL_UPLOAD_BYTES) {
-        // a prop's glTF binary (Scene › Background › Add prop › Import)
-        const { upload, created } = await saveModelUpload(host.projectDir(id), bytes, {
-          name: url.searchParams.get('name') ?? undefined,
-        });
-        if (created)
-          await host.logEvent(id, `upload: ${upload.file} (3D model, ${upload.bytes} bytes${upload.name ? `, "${upload.name}"` : ''})`);
-        send(res, 201, upload, { location: `/projects/${id}/${upload.file}` });
-        return true;
-      }
+      const bytes = await readRaw(req, MAX_UPLOAD_BYTES);
       const { attachment, created } = await saveUpload(host.projectDir(id), bytes, {
         contentType: req.headers['content-type'],
         name: url.searchParams.get('name') ?? undefined,
