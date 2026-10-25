@@ -17,6 +17,7 @@ import type {
   Vec3,
   VisualStyle,
 } from '../../shared/schema.ts';
+import { detectDynamics } from './dynamics.ts';
 import { lookAtQuat, round3, slugify, uniqueSlug, yawFacing } from './geometry.ts';
 
 export const VOICES = {
@@ -184,141 +185,7 @@ export function parseFountain(text: string): RawScript {
 // Heuristic staging
 // ---------------------------------------------------------------------------
 
-const DYNAMIC_WORDS: { kind: DynamicElement['kind']; re: RegExp }[] = [
-  { kind: 'car', re: /\b(cars?|sedans?|taxis?|cabs?|vans?|suvs?|jeeps?|convertibles?)\b/i },
-  { kind: 'bus', re: /\b(bus|buses|trams?|streetcars?|trolleys?)\b/i },
-  { kind: 'truck', re: /\b(trucks?|lorr(?:y|ies)|pickups?|semis?|tractor-trailers?)\b/i },
-  { kind: 'motorcycle', re: /\b(motorcycles?|motorbikes?|scooters?|mopeds?)\b/i },
-  { kind: 'bicycle', re: /\b(bikes?|bicycles?|cyclists?|bicyclists?)\b/i },
-  {
-    kind: 'bird',
-    re: /\b(birds?|pigeons?|gulls?|seagulls?|crows?|ravens?|sparrows?|starlings?|doves?)\b/i,
-  },
-  { kind: 'pedestrian', re: /\b(joggers?|pedestrians?|passers?-?by|commuters?)\b/i },
-  { kind: 'dog', re: /\b(dogs?|hounds?|pupp(?:y|ies)|wolf|wolves|coyotes?)\b/i },
-  { kind: 'horse', re: /\b(horses?|horseback|riders?|stallions?|mares?|pon(?:y|ies)|cavalry)\b/i },
-  { kind: 'wagon', re: /\b(wagons?|stagecoach(?:es)?|carriages?|carts?|bugg(?:y|ies))\b/i },
-  {
-    kind: 'boat',
-    re: /\b(boats?|ships?|rowboats?|canoes?|ferr(?:y|ies)|yachts?|sailboats?|gondolas?|barges?)\b/i,
-  },
-  { kind: 'dragon', re: /\b(dragons?|wyverns?|wyrms?|drakes?)\b/i },
-  { kind: 'drone', re: /\b(drones?|quadcopters?)\b/i },
-  {
-    kind: 'spacecraft',
-    re: /\b(spacecraft|spaceships?|starships?|shuttles?|rockets?|landers?|ufos?)\b|\blift(?:s|ing)? off\b/i,
-  },
-];
-
-const sentences = (paragraphs: string[]) =>
-  paragraphs
-    .flatMap((p) => p.split(/(?<=[.!?])\s+/))
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-// Only moving things become dynamics ("a bus shelter" stays scenery; "a bus rumbles by" moves).
-// A bare "by" is not motion ("a hall lit by torches … a cart", "a carriage waits by the gate").
-const MOTION_RE =
-  /\b(drives?|driving|drove|pass(?:es|ing|ed)?|past|(?:goes|go|went|rushes|races?|flash(?:es)?|whizz(?:es)?) by|rumbles?|ambles?|wanders?|crosses|crossing|rumbling|speeds?|speeding|zooms?|rolls?|rolling|pulls? (?:up|away|out)|circles?|circling|fl(?:y|ies|ying|ew)|swoops?|wheels?|rides?|riding|cycles?|pedals?|jogs?|jogging|hurr(?:y|ies)|streams?|trots?|trotting|gallops?|galloping|canters?|hums?|humming|hover(?:s|ing)?|lift(?:s|ing)? off|takes? off|launch(?:es|ing)?|glides?|gliding|sails?|sailing|soars?|soaring|patrols?|patrolling|chugs?|bobs?|bobbing)\b/i;
-
-/** A closed ring of `n` + 1 points (first = last) around `centre`, with a gentle height wave. */
-function ring(centre: Vec3, rx: number, rz: number, wave: number, n = 12): Vec3[] {
-  const out: Vec3[] = [];
-  for (let k = 0; k <= n; k++) {
-    const a = (k / n) * Math.PI * 2;
-    out.push([
-      round3(centre[0] + Math.cos(a) * rx),
-      round3(centre[1] + Math.sin(a * 2) * wave),
-      round3(centre[2] + Math.sin(a) * rz),
-    ]);
-  }
-  return out;
-}
-
-/** Path, speed (m/s) and end pause per kind: shapes and speeds the props in props.ts are built for. */
-function dynamicPath(
-  kind: DynamicElement['kind'],
-  sentence: string,
-): Pick<DynamicElement, 'path' | 'speed' | 'pauseSeconds'> {
-  const line = (z: number, x: number, y = 0): Vec3[] => [
-    [-x, y, z],
-    [x, y, z],
-  ];
-  switch (kind) {
-    case 'car':
-      return { path: line(-9.5, 30), speed: 8, pauseSeconds: 2 };
-    case 'bus':
-      return { path: line(-11.5, 30).reverse(), speed: 6, pauseSeconds: 4 };
-    case 'truck':
-      return { path: line(-10.5, 30), speed: 7, pauseSeconds: 3 };
-    case 'motorcycle':
-      return { path: line(-9, 30).reverse(), speed: 9, pauseSeconds: 2 };
-    case 'bicycle':
-      return { path: line(-7, 20), speed: 5, pauseSeconds: 3 };
-    case 'pedestrian':
-      return { path: line(-7.5, 12).reverse(), speed: 1.4, pauseSeconds: 2 };
-    case 'dog':
-      return { path: line(-8, 12).reverse(), speed: 2.5, pauseSeconds: 3 };
-    case 'horse':
-      return { path: line(-9.5, 25), speed: 4, pauseSeconds: 3 };
-    case 'wagon':
-      // the ground-dynamics lane the mock sets keep open (docs/PLAN-v3.md §5)
-      return { path: line(-10.5, 25), speed: 2.5, pauseSeconds: 4 };
-    case 'boat':
-      return { path: line(-25, 35), speed: 3, pauseSeconds: 4 };
-    case 'dragon':
-      // high and far so its wingspan reads against the sky, never over the actors
-      return { path: ring([0, 22, -45], 25, 15, 4), speed: 10, pauseSeconds: 0 };
-    case 'drone':
-      return {
-        path: [
-          [-6, 3, -5],
-          [0, 3.6, -6],
-          [6, 3, -5],
-        ],
-        speed: 4,
-        pauseSeconds: 3,
-      };
-    case 'spacecraft':
-      return /\blift(?:s|ing)? off|\btakes? off|\blaunch/i.test(sentence)
-        ? {
-            path: [
-              [-30, 0, -90],
-              [-28, 25, -95],
-              [-15, 90, -130],
-            ],
-            speed: 15,
-            pauseSeconds: 4,
-          }
-        : { path: line(-140, 120, 50), speed: 15, pauseSeconds: 3 };
-    default:
-      // birds circle overhead: a closed ring, 6 m radius, ~8 m up, centred 9 m out
-      return { path: ring([0, 8, -9], 6, 6, 0.6), speed: 6, pauseSeconds: 0 };
-  }
-}
-
-export function detectDynamics(action: string[], sceneIndex: number): DynamicElement[] {
-  const out: DynamicElement[] = [];
-  const all = sentences(action);
-  const wagon = DYNAMIC_WORDS.find((w) => w.kind === 'wagon')!.re;
-  for (const { kind, re } of DYNAMIC_WORDS) {
-    const hit = all.find(
-      // a wagon's team is part of the wagon prop, not a second horse
-      (s) => re.test(s) && MOTION_RE.test(s) && !(kind === 'horse' && wagon.test(s)),
-    );
-    if (!hit) continue;
-    const label = hit.length > 120 ? `${hit.slice(0, 117)}...` : hit;
-    out.push({
-      id: `s${sceneIndex + 1}-${kind}`,
-      kind,
-      label,
-      ...dynamicPath(kind, hit),
-      loop: true,
-      scale: 1,
-    });
-  }
-  return out;
-}
+// Background action (detectDynamics, the word lists and the path makers) lives in dynamics.ts.
 
 /** Actors 1.4 m apart facing each other (2), facing camera (1), or on an arc around a centre. */
 export function heuristicBlocking(characterIds: string[], interior: boolean): Blocking[] {
@@ -818,7 +685,7 @@ export function mockPlan(
       characterIds,
       dialogue,
       blocking,
-      dynamics: detectDynamics(s.action, index),
+      dynamics: detectDynamics(s.action, index, blocking),
       shots: heuristicShots(blocking),
     };
   });
