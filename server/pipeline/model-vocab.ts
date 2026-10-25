@@ -125,7 +125,7 @@ export const MODEL_FAMILIES: ModelFamily[] = [
   f('alien', 'creature', 2, ['alien', 'extraterrestrial', 'xenomorph', 'martian'], { not: ['ship', 'spaceship', 'ufo', 'saucer', 'planet'] }),
   // ---- people (pedestrians, extras) ------------------------------------------------------------
   f('person', 'person', 1.75, ['person', 'pedestrian', 'man', 'woman', 'passerby', 'passer by', 'commuter', 'tourist', 'shopper', 'civilian', 'villager', 'peasant', 'businessman', 'stranger'], { also: ['human', 'character', 'guy', 'lady', 'male', 'female'], not: ['iron', 'spider', 'bat', 'pac', 'snow', 'snowman', 'lego'], lvis: ['person'] }),
-  f('jogger', 'person', 1.75, ['jogger', 'runner', 'sprinter'], { also: ['running man', 'running woman'], not: ['carpet', 'rug', 'blade', 'table'], parent: 'person' }),
+  f('jogger', 'person', 1.75, ['jogger', 'runner', 'sprinter'], { also: ['running man', 'running woman'], not: ['carpet', 'rug', 'blade', 'table', 'sonic'], parent: 'person' }),
   f('child', 'person', 1.2, ['child', 'kid', 'boy', 'girl', 'toddler'], { parent: 'person' }),
   f('soldier', 'person', 1.8, ['soldier', 'trooper', 'marine', 'guard', 'knight', 'warrior', 'samurai', 'viking', 'gladiator', 'stormtrooper'], { not: ['chess', 'helmet', 'sword', 'shield', 'ship', 'mudguard', 'bodyguard'], parent: 'person' }),
   f('zombie', 'person', 1.8, ['zombie', 'undead', 'ghoul', 'mummy']),
@@ -181,7 +181,7 @@ export const MODEL_FAMILIES: ModelFamily[] = [
   f('spaceship', 'aircraft', 4, ['spaceship', 'spacecraft', 'starship', 'space ship', 'starfighter', 'space fighter', 'space cruiser', 'lander', 'space station'], { also: ['sci fi ship', 'scifi ship', 'spaceshuttle'], not: ['interior', 'cockpit', 'corridor', 'hangar', 'door', 'panel', 'room', 'bridge'] }),
   // ---- boats -----------------------------------------------------------------------------------
   f('sailboat', 'boat', 10, ['sailboat', 'sailing boat', 'sail boat', 'yacht', 'sloop', 'schooner', 'catamaran', 'sailing ship'], { lvis: ['yacht'], parent: 'boat' }),
-  f('pirate ship', 'boat', 25, ['pirate ship', 'galleon', 'tall ship', 'frigate', 'caravel', 'brig', 'man o war', 'viking ship', 'longship'], { not: ['bottle', 'flag'], parent: 'ship' }),
+  f('pirate ship', 'boat', 25, ['pirate ship', 'galleon', 'tall ship', 'frigate', 'caravel', 'brig', 'man o war', 'viking ship', 'longship'], { not: ['bottle', 'flag', 'star', 'space', 'nebulon'], parent: 'ship' }),
   f('submarine', 'boat', 6, ['submarine', 'u boat', 'uboat'], { not: ['sandwich', 'yellow'] }),
   f('canoe', 'boat', 0.8, ['canoe', 'kayak', 'rowboat', 'dinghy', 'raft', 'gondola', 'punt'], { not: ['ski', 'lift', 'cable', 'life', 'paddle'], lvis: ['canoe', 'kayak', 'dinghy', 'raft', 'gondola_(boat)'], parent: 'boat' }),
   f('ship', 'boat', 25, ['ship', 'cargo ship', 'container ship', 'cruise ship', 'ocean liner', 'liner', 'freighter', 'tanker', 'battleship', 'warship', 'destroyer', 'aircraft carrier', 'steamship', 'steamboat', 'paddle steamer', 'ferry', 'titanic'], { not: ['space', 'star', 'alien', 'air', 'bottle', 'eye', 'eyeliner', 'model', 'wheel', 'anchor', 'steering', 'interior', 'deck', 'cabin'], lvis: ['cargo_ship', 'cruise_ship', 'passenger_ship', 'ferry'] }),
@@ -418,6 +418,8 @@ export const NEGATIVE_WORDS = new Set([
   'chibi', 'funko', 'pop', 'bobblehead', 'puppet', 'balloon', 'inflatable', 'kite', 'paper', 'text',
   'letter', 'font', 'typography', 'title', 'transformer', 'wip', 'unfinished', 'broken', 'ruined',
   'cutout', 'silhouette', 'outline', 'lineart', 'pixel', 'voxel', 'minecraft', 'roblox', 'lego',
+  'majorette', 'matchbox', 'diecast', 'remote', 'rc', 'playmobil', 'hotwheels', 'keyframe', 'shapekey',
+  'sonic', 'mario', 'pokemon', 'pikachu', 'minion', 'spongebob',
 ]);
 /** Name words that make a ground vehicle something else (a flying taxi, a hover car). */
 export const GROUP_NEGATIVE: Partial<Record<ModelGroup, Set<string>>> = {

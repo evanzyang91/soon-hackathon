@@ -896,7 +896,6 @@ export class FoundModels {
   }
 
   private async lookup(label: string, kind: Kind): Promise<Outcome> {
-    const t0 = Date.now();
     const found = await findModel(label, kind, { indexFile: this.o.indexFile, top: 4 });
     const what = found.query?.family.id ?? kind;
     if (!found.candidate) {
@@ -907,10 +906,10 @@ export class FoundModels {
           : 'no match';
       return { model: null, note: `${what}: none (${why})` };
     }
-    const budget = this.o.budgetMs ?? SCENE_BUDGET_MS;
+    // no budget check here: attach() enforces it, and a download that ends after it still lands
+    // in the library for the next manifest (each one is capped by its own timeout)
     const notes: string[] = [];
     for (const c of found.candidates.slice(0, this.o.attempts ?? 2)) {
-      if (Date.now() - t0 > budget) break;
       try {
         const got = await fetchModel(c, {
           libraryDir: this.o.libraryDir,
@@ -923,12 +922,13 @@ export class FoundModels {
         }
         const model = propModelFor(c, got.meta, found.query!.heightM);
         const how = got.cached ? 'library' : `${mb(got.meta.bytes)} in ${secs(got.ms)}`;
-        return { model, note: `${what}: "${c.name}" (${model.license}, ${how})` };
+        const skipped = notes.length ? `; skipped ${notes.join(', ')}` : '';
+        return { model, note: `${what}: "${c.name}" (${model.license}, ${how}${skipped})` };
       } catch (e) {
         notes.push(`"${c.name}" ${(e as Error).message}`);
       }
     }
-    return { model: null, note: `${what}: none (${notes.join('; ') || 'out of time'})` };
+    return { model: null, note: `${what}: none (${notes.join('; ') || 'nothing usable'})` };
   }
 
   /**
@@ -947,9 +947,14 @@ export class FoundModels {
     );
     const live = mine.filter((l): l is Lookup => !!l);
     if (!live.length) return { dynamics: [...dynamics], summary: null };
-    const deadline =
-      Math.min(...live.map((l) => l.startedAt)) + (this.o.budgetMs ?? SCENE_BUDGET_MS);
+    // the budget runs from when the lookups still pending started (at the scene's scheduling, or
+    // now for an element a chat turn just added); settled ones cost nothing
+    const budget = this.o.budgetMs ?? SCENE_BUDGET_MS;
     const pending = live.filter((l) => !l.done);
+    const deadline = Math.min(
+      t0 + budget,
+      Math.max(0, ...pending.map((l) => l.startedAt + budget)),
+    );
     if (pending.length && deadline > Date.now())
       await Promise.race([
         Promise.all(pending.map((l) => l.promise)),
@@ -962,7 +967,7 @@ export class FoundModels {
       if (!l) return d;
       if (!l.done) {
         notes.push(
-          `${d.kind} "${d.label.slice(0, 40)}": late (still looking after ${secs(this.o.budgetMs ?? SCENE_BUDGET_MS)})`,
+          `${d.kind} "${d.label.slice(0, 40)}": late (not back within the ${secs(budget)} budget; the next manifest takes it from the library)`,
         );
         return d;
       }
