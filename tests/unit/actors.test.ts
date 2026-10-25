@@ -273,6 +273,37 @@ describe('buildActor', () => {
       expect(p).toContain(s);
   });
 
+  it('without a style the reference prompt is byte-identical to the one before styles existed', () => {
+    // a plan without plan.style (the live project's Leo and Maya) must never read as a new reference
+    const before =
+      'Full-body photograph of one person standing upright, front-facing, looking straight at the camera, ' +
+      'arms relaxed and held slightly away from the body, legs straight, whole body visible from the top of ' +
+      'the head to the shoes with margin around it, neutral expression, plain light-grey seamless studio ' +
+      'background, soft even lighting, no props, no text, photoreal. ' +
+      'The person: A woman in her thirties, short dark hair, green raincoat, jeans, white sneakers.';
+    expect(referencePrompt(maya)).toBe(before);
+    expect(referencePrompt(maya, undefined)).toBe(before);
+    const style = { genre: 'western', era: '1880s American frontier', worldStyle: 'Photoreal western film still', palette: 'dusty ochre' };
+    expect(referencePrompt(maya, style)).toBe(`${before} Wardrobe, hair and styling consistent with western, 1880s American frontier.`);
+  });
+
+  it("a generated reference carries the screenplay's style sentence", async () => {
+    const prompts: string[] = [];
+    const style = { genre: 'high fantasy', era: 'medieval-inspired kingdom', worldStyle: 'Lush', palette: 'moss' };
+    await buildActor(
+      { ...opts(), style },
+      {
+        ...deps(async () => ({ ok: false, code: 1 })),
+        generateReference: async (prompt, out) => {
+          prompts.push(prompt);
+          await writeFile(out, Buffer.from('89504e470d0a1a0a', 'hex'));
+        },
+      },
+    );
+    expect(prompts).toEqual([referencePrompt(maya, style)]);
+    expect(prompts[0]).toMatch(/consistent with high fantasy, medieval-inspired kingdom\.$/);
+  });
+
   describe("a director's photo (Character.referenceImage)", () => {
     const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
     /** A solid-colour landscape "photo" (the worker wants a portrait: it gets letterboxed). */

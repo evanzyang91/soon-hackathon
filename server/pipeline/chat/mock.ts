@@ -15,11 +15,21 @@
 //   photo hint character:<id> · "this is <Name>" · "<Name> looks like this" → character-reference
 //   photo hint scene:<index> · "use this for scene N" · "use this for the <heading words>"
 //                                             → world-reference (pano for 360 / 2:1 photos)
+//   genre|style|whole film … western|fantasy|sci-fi|horror|period|noir|contemporary
+//                                             → style genre / era / worldStyle / palette (fountain.ts
+//                                               GENRE_STYLES)
+//   scene N look <preset>                     → scene N-1 look.preset ("golden hour" = golden-hour)
 //   generate | go ahead | build it | start    → generate (a draft; a generated project says so)
 //   anything else                             → MOCK_FALLBACK, no action
 import type { Attachment } from '../../../shared/chat.ts';
-import type { Character, ScenePlan, ScreenplayPlan } from '../../../shared/schema.ts';
-import { parseHeading, VOICES } from '../fountain.ts';
+import { LOOK_PRESET_LABELS } from '../../../shared/look-presets.ts';
+import {
+  LookPresetName,
+  type Character,
+  type ScenePlan,
+  type ScreenplayPlan,
+} from '../../../shared/schema.ts';
+import { GENRE_STYLES, parseHeading, VOICES, type GenreKey } from '../fountain.ts';
 import { castName, listNames } from './plan-card.ts';
 import { emptyDraftAction, type ChatContext, type ChatDraft, type DraftAction } from './draft.ts';
 import { VOICE_CHOICES } from './patch.ts';
@@ -42,6 +52,16 @@ const ORDINALS = [
   'tenth',
 ];
 const GENERATE = /\b(generate|go ahead|build it|start)\b/i;
+/** Genre words of "make the style a western" → the mock planner's style for that genre. */
+const GENRE_ASK: [RegExp, GenreKey][] = [
+  [/\bwesterns?\b/i, 'western'],
+  [/\bfantasy\b/i, 'fantasy'],
+  [/\b(?:sci-?fi|science fiction|space opera)\b/i, 'scifi'],
+  [/\bhorror\b/i, 'horror'],
+  [/\b(?:period|costume drama|victorian|regency)\b/i, 'period'],
+  [/\bnoir\b/i, 'noir'],
+  [/\b(?:contemporary|modern|present[- ]day)\b/i, 'contemporary'],
+];
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Quoted spans of the director's text; an apostrophe inside a word ("Maya's", "don't") is not one. */
@@ -333,6 +353,49 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
       value: prompt,
     });
     said.push(`${summary}.`);
+  }
+
+  // the whole film's genre: "make the style a western", "genre: fantasy", "the whole film as a horror"
+  const genreAsk =
+    /\b(?:genre|style|whole (?:film|movie|thing|project)|entire (?:film|movie|project))\b([^.!?;]*)/i.exec(
+      bare,
+    );
+  const genre = genreAsk && GENRE_ASK.find(([re]) => re.test(genreAsk[0]))?.[1];
+  if (genre) {
+    const style = GENRE_STYLES[genre];
+    for (const field of ['genre', 'era', 'worldStyle', 'palette'] as const)
+      actions.push({
+        ...emptyDraftAction('plan-patch', `The style is now ${style.genre} (${field})`),
+        target: 'style',
+        field,
+        value: style[field],
+      });
+    said.push(`The style is now ${style.genre}, ${style.era}.`);
+  }
+
+  // scene N look <preset>: "scene 2 look candlelit", "scene 1 look: golden hour"
+  for (const m of bare.matchAll(
+    /\bscene\s+(\d+)(?:'s)?\s+look\s*(?:is|should be|to|=|:)?\s*([a-z][a-z -]*)/gi,
+  )) {
+    const scene = plan.scenes[Number(m[1]) - 1];
+    const words = m[2]!.trim().toLowerCase().replace(/\s+/g, '-');
+    const preset = LookPresetName.options.find(
+      (p) =>
+        words.startsWith(p) ||
+        words.startsWith(LOOK_PRESET_LABELS[p].toLowerCase().replace(/\s+/g, '-')),
+    );
+    if (!scene) said.push(`There is no scene ${m[1]}.`);
+    else if (!preset) said.push(`Looks are ${LookPresetName.options.join(', ')}.`);
+    else {
+      const summary = `Scene ${scene.index + 1} looks ${LOOK_PRESET_LABELS[preset]}`;
+      actions.push({
+        ...emptyDraftAction('plan-patch', summary),
+        target: `scene:${scene.index}`,
+        field: 'look.preset',
+        value: preset,
+      });
+      said.push(`${summary}.`);
+    }
   }
 
   // photos: hints first, then "this is <Name>" / "use this for …" for the next unassigned one
