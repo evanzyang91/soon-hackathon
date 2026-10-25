@@ -21,6 +21,7 @@ import {
 } from '../../../shared/schema.ts';
 import { env } from '../../env.ts';
 import { costOf } from '../calibrate-vision.ts';
+import { DYNAMIC_KINDS_TEXT, DYNAMIC_PATHS_TEXT } from '../dynamics.ts';
 import { lookSeedFor, styleForPlan } from '../look-seed.ts';
 import { decodePng, encodePng, isPng, resize } from '../reprompt/png.ts';
 import { ChatDraft, type ChatContext } from './draft.ts';
@@ -52,6 +53,7 @@ Rules
 - A description change rewrites the whole description with the change worked in, keeping everything the director did not change (physical appearance and wardrobe only, 40-80 words). Height goes in heightMeters (a tall man about 1.88, a child about 1.3); "taller" or "shorter" without a number is about 0.10 m from the current height (1.70 when unset). "Older" changes the apparent age in the description.
 - A world prompt change rewrites the complete environment description with the change worked in (no people, no animals, no vehicles, no action; at most 600 characters); keep the rest of the place. A different place for a scene is a worldPrompt patch (and a heading patch when the heading names the place), not a replan.
 - Grade, colour, mood, fog, darkness or "make it look like ..." for one scene is a scene look patch, never a world change: "colder" lowers look.temperature by about 0.3 from the current value, "warmer" raises it, "foggier" raises look.fog.density by about 0.15, "darker" or "brighter" moves look.exposure by about 0.4, "moodier" raises look.vignette and look.contrast; a different kind of light is a new look.preset. Change look.mood when the feel changes. Values are absolute: start from the current values in the plan.
+- Background action (the moving props of a scene: traffic, animals, monsters, aircraft, boats: "add a dinosaur walking by in scene 1", "an airplane flies low overhead", "remove the bus") is a plan-patch of the scene's "dynamics", free and applied at once, never a replan or a world change. Its value is JSON: {"add": [{"kind": "creature", "label": "a dinosaur walking by"}], "remove": ["<id or word>"]}. kind is the closest of: ${DYNAMIC_KINDS_TEXT}. The label keeps the director's words, with the species or type, colour, size and what it does ("a huge t-rex charges past", "a police helicopter hovers over the street"): the 3D body is built from it. Leave path and speed out and the app gives the thing the standard path for its label near the actors (walks by, flies low overhead, hovers, circles, lands, stands …); give "path" ([[x, y, z], …] in metres) and "speed" only when the director says where. remove takes the ids listed under the scene's background (or a word of a label). One patch per scene holds all of that scene's adds and removes.
 - The whole film's genre or register ("make it a western", "more like a fairy tale") is a style patch rewriting genre, era, worldStyle and palette together. It regrades and regenerates nothing by itself: also patch each scene's look.preset when the director wants the look to follow, and change world prompts only when asked.
 - "start", "go ahead", "generate", "build it" mean generate. Only a draft can be generated; on a generated project say that it already is and return no action.
 - A structural change is a replan whose edits change the screenplay text: each edit finds an exact, unique passage of the current screenplay and replaces it (to add a scene, find the text it follows and replace it with that text plus the new scene: heading, action, character cues and dialogue in screenplay format). Also carry over line changes made earlier in this conversation where the screenplay still has the old wording.
@@ -61,12 +63,14 @@ Rules
 Targets and fields (plan-patch)
 - "character:<id>": ${FIELDS.character.filter((f) => f !== 'referenceImage').join(', ')} (voice.id is one of ${VOICE_CHOICES.join(', ')}; voice.gender is female, male or neutral).
 - "scene:<index>": ${FIELDS.scene.filter((f) => f !== 'worldReference').join(', ')}. The index is 0-based: the director's "scene 2" is index 1. Positions are "x, y, z" in metres with y = 0 on the floor; the world's camera stands at the origin looking down -Z, +X to its right; actors usually stand 1.5-4 m in front of it. pose is standing, sitting or walking; facing is a character id, "camera", or a point.
+  Scene field dynamics (background action) takes the JSON above; path rules when you give one:
+${DYNAMIC_PATHS_TEXT.replace(/^- /gm, '    - ')}
   Scene look fields: look.preset is one of ${LookPresetName.options.join(', ')}; look.lut is one of ${LutPreset.options.join(', ')}; colours are "#rrggbb"; exposure is in stops (-3 to 3), contrast (0.5 to 2) and saturation (0 to 2) are 1 when neutral, temperature and tint run from -1 to 1, every other look number from 0 to 1.
 - "line:<lineId>": text, parenthetical.
 - "project": title.
 - "style": ${FIELDS.style.join(', ')} (the whole screenplay's genre, era, the render style world prompts open with, and palette).
 - character-reference: target "character:<id>" and the photo's attachmentId. world-reference: target "scene:<index>", attachmentId, isPano.
-Values are text: numbers as digits ("1.85"), booleans "true" or "false".`;
+Values are text: numbers as digits ("1.85"), booleans "true" or "false", a scene's dynamics its JSON.`;
 
 // ---------------------------------------------------------------------------------------------
 
@@ -111,6 +115,16 @@ export function describePlan(plan: ScreenplayPlan, st: ProjectStatus): string {
       lines.push(
         `  marks: ${s.blocking.map((b) => `${b.characterId} ${b.pose} at (${b.position.map(r2).join(', ')}) yaw ${Math.round((b.yaw * 180) / Math.PI)}°`).join('; ')}`,
       );
+    lines.push(
+      `  background: ${
+        s.dynamics
+          .map(
+            (d) =>
+              `${d.id} ${d.kind} "${clip(d.label, 80)}" ${d.speed > 0 ? `moving ${r2(d.speed)} m/s from (${d.path[0]!.map(r2).join(', ')})` : `still at (${d.path[0]!.map(r2).join(', ')})`}`,
+          )
+          .join('; ') || 'none'
+      }`,
+    );
     for (const d of s.dialogue)
       lines.push(
         `  ${d.id} ${d.characterId}${d.parenthetical ? ` (${d.parenthetical})` : ''}: "${d.text}"`,
