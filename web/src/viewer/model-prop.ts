@@ -1,9 +1,10 @@
 // Props of kind 'model' (docs/PLAN-v4.md "Props by import or by prompt"): a glTF binary the
 // director imported or had generated (DynamicElement.model, shared/schema.ts PropModel), drawn as
-// is on the laptop and the phone alike.
+// is on the laptop and the phone alike. Any other kind with a model is a found model
+// (found-model.ts): createElementProp picks.
 //
-//   load       GLTFLoader, one load per URL shared by every prop that draws it (reference counted:
-//              the last dispose frees geometries, materials, textures and image bitmaps)
+//   load       model-cache.ts: one load per URL shared by every prop that draws it (reference
+//              counted: the last dispose frees geometries, materials, textures and image bitmaps)
 //   normalise  centred on x / z, lowest point on y = 0 (the prop's origin is the ground under
 //              it), bounding-box height = PropModel.heightM (absent: 1 m), then turned by
 //              yawOffset; the materials stay as authored (textures, vertex colours)
@@ -13,99 +14,16 @@
 // The prop's object is what dynamics.ts / edits/apply.ts drive (position, heading, scale); the
 // model hangs inside it, so a transform edit or a drag never touches the normalisation.
 import * as THREE from 'three';
-import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import type { DynamicElement, PropModel } from '@shared/schema';
+import { createFoundProp } from './found-model';
+import { acquireModel } from './model-cache';
 import { createProp, type Prop } from './props';
 
 /** PropModel.heightM when absent (shared/schema.ts). */
 export const DEFAULT_MODEL_HEIGHT = 1;
 
 export type ModelStatus = 'loading' | 'ready' | 'failed';
-
-interface Loaded {
-  gltf: GLTF;
-  /** The template's bounding box (computed once per URL). */
-  box: THREE.Box3;
-  skinned: boolean;
-}
-
-interface Entry {
-  url: string;
-  promise: Promise<Loaded>;
-  loaded: Loaded | null;
-  users: number;
-}
-
-const cache = new Map<string, Entry>();
-let loader: GLTFLoader | null = null;
-
-function acquire(url: string): Entry {
-  let e = cache.get(url);
-  if (!e) {
-    const entry: Entry = { url, promise: Promise.resolve(null as unknown as Loaded), loaded: null, users: 0 };
-    loader ??= new GLTFLoader();
-    entry.promise = loader.loadAsync(url).then((gltf) => {
-      gltf.scene.updateMatrixWorld(true);
-      let skinned = false;
-      gltf.scene.traverse((o) => {
-        if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned = true;
-      });
-      const loaded: Loaded = { gltf, box: new THREE.Box3().setFromObject(gltf.scene, true), skinned };
-      entry.loaded = loaded;
-      // every user let go while it was loading
-      if (entry.users <= 0) scheduleFree(entry);
-      return loaded;
-    });
-    // a failed load is retried by the next prop that asks (a model saved a moment later)
-    entry.promise.catch(() => cache.get(url) === entry && cache.delete(url));
-    cache.set(url, entry);
-    e = entry;
-  }
-  e.users++;
-  return e;
-}
-
-function release(e: Entry) {
-  e.users--;
-  if (e.users <= 0 && e.loaded) scheduleFree(e);
-}
-
-/** How long an unused model stays cached (an edited prop is rebuilt: dispose, then create). */
-const KEEP_MS = 2000;
-
-function scheduleFree(e: Entry) {
-  setTimeout(() => {
-    if (e.users <= 0) freeEntry(e);
-  }, KEEP_MS);
-}
-
-function freeEntry(e: Entry) {
-  if (cache.get(e.url) === e) cache.delete(e.url);
-  const loaded = e.loaded;
-  e.loaded = null;
-  if (loaded) disposeTree(loaded.gltf.scene);
-}
-
-function disposeTree(root: THREE.Object3D) {
-  const textures = new Set<THREE.Texture>();
-  const materials = new Set<THREE.Material>();
-  root.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (!mesh.isMesh && !(o as THREE.Points).isPoints && !(o as THREE.Line).isLine) return;
-    mesh.geometry?.dispose();
-    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (m) materials.add(m);
-  });
-  for (const m of materials) {
-    for (const v of Object.values(m)) if ((v as THREE.Texture | null)?.isTexture) textures.add(v as THREE.Texture);
-    m.dispose();
-  }
-  for (const t of textures) {
-    const image = t.source?.data as { close?: () => void } | undefined;
-    t.dispose();
-    image?.close?.(); // ImageBitmap
-  }
-}
 
 /** Resolves a PropModel.file (project-root relative) against the scene's manifest URL. */
 export function projectFileResolver(manifestUrl: string): (file: string) => string {
@@ -130,7 +48,7 @@ export function createModelProp(model: PropModel, url: string, label = ''): Mode
   turn.name = 'model-yaw';
   turn.rotation.y = model.yawOffset ?? 0;
   object.add(turn);
-  const entry = acquire(url);
+  const entry = acquireModel(url);
   let status: ModelStatus = 'loading';
   let disposed = false;
   let root: THREE.Object3D | null = null;
@@ -195,7 +113,7 @@ export function createModelProp(model: PropModel, url: string, label = ''): Mode
       fallback?.dispose();
       object.removeFromParent();
       // clones share the template's geometry / materials: the last user frees them
-      release(entry);
+      entry.release();
     },
   };
 }
@@ -205,19 +123,23 @@ export function createModelProp(model: PropModel, url: string, label = ''): Mode
  * prop will use; null when it cannot be loaded or is empty.
  */
 export async function modelHeight(url: string): Promise<number | null> {
-  const e = acquire(url);
+  const e = acquireModel(url);
   try {
     const { box } = await e.promise;
     return box.isEmpty() ? null : box.getSize(new THREE.Vector3()).y;
   } catch {
     return null;
   } finally {
-    release(e);
+    e.release();
   }
 }
 
-/** The prop for a scene element: its own model for kind 'model', else the procedural kind. */
+/**
+ * The prop for a scene element: its own model for kind 'model'; for any other kind the procedural
+ * body, replaced by its found model (`el.model`, found-model.ts) once that loads and suits it.
+ */
 export function createElementProp(el: DynamicElement, resolve?: (file: string) => string): Prop {
   if (el.kind === 'model' && el.model && resolve) return createModelProp(el.model, resolve(el.model.file), el.label);
+  if (el.model && resolve) return createFoundProp(el, resolve(el.model.file));
   return createProp(el.kind, el.label);
 }

@@ -48,8 +48,23 @@ export interface PrevizDebugState {
   /**
    * The screenplay's background action, then the props prop-add edits added (imported /
    * generated models among them: `model` = 'loading' | 'ready' | 'failed' while their .glb loads).
+   * A found model on a procedural kind (viewer/found-model.ts) adds 'skipped' (over budget, no
+   * usable clip), `body` = what is drawn ('model' | 'procedural'), `clip` = the clip playing,
+   * `loadMs` and the `reason` it is not drawn.
    */
-  dynamics: { id: string; position: number[]; phase: string; kind?: string; added?: boolean; visible?: boolean; model?: string }[];
+  dynamics: {
+    id: string;
+    position: number[];
+    phase: string;
+    kind?: string;
+    added?: boolean;
+    visible?: boolean;
+    model?: string;
+    body?: string;
+    clip?: string;
+    loadMs?: number;
+    reason?: string;
+  }[];
   /**
    * Dialogue audio: WebAudio context state, actors whose voice is playing, loudest level now
    * (0..1); `heard` / `peak`: who played and how loud during the current / last line (sampled

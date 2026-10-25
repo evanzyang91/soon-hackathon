@@ -12,10 +12,22 @@ import * as THREE from 'three';
 import type { DynamicElement } from '@shared/schema';
 import { airplane, creature, helicopter } from './props-more';
 
+/**
+ * Where a prop is in its path's timeline (dynamics-path.ts PathSample), for bodies that blend
+ * between standing and travelling (a found model's idle / move clips). Absent = moving.
+ */
+export interface PropMotion {
+  phase: 'moving' | 'paused' | 'done';
+  /** Seconds since the phase began. */
+  since: number;
+  /** The element's path speed, m/s (0 = parked). */
+  speed: number;
+}
+
 export interface Prop {
   object: THREE.Group;
   /** distance = metres travelled (wheels, legs), time = scene seconds (wings, rotors, bobbing). */
-  animate(distance: number, time: number): void;
+  animate(distance: number, time: number, motion?: PropMotion): void;
   dispose(): void;
 }
 

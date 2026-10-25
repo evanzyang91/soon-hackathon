@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Found models</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #14171c;
+        color: #e8ebf0;
+        font:
+          12px/1.35 system-ui,
+          sans-serif;
+      }
+      #sheet {
+        position: relative;
+      }
+      canvas {
+        display: block;
+      }
+      .cell {
+        position: absolute;
+        box-sizing: border-box;
+        border: 1px solid #2a2f37;
+        pointer-events: none;
+        padding: 6px 8px;
+      }
+      .cell b {
+        font-size: 13px;
+      }
+      .cell .muted {
+        color: #9aa3ae;
+      }
+      .cell .foot {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 6px;
+        color: #8f98a5;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Found models (web/src/viewer/found-model.ts) next to the procedural body they replace, animated in place. Not part of the app. -->
+    <div id="sheet"></div>
+    <script type="module" src="./found-models.ts"></script>
+  </body>
+</html>
