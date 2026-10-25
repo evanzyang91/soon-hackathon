@@ -24,12 +24,14 @@ import type { SceneEdits } from '@shared/look';
 import type { DynamicElement } from '@shared/schema';
 import { PathSampler } from '../dynamics-path';
 import { markY, onGround } from '../ground';
-import { createProp, type Prop } from '../props';
+import { createElementProp, projectFileResolver } from '../model-prop';
+import type { Prop } from '../props';
 import type { SceneRuntime } from '../world';
 import {
   effectiveProps,
   effectiveTransforms,
   isParked,
+  parkedHeading,
   regionSpecs,
   type RegionEdit,
   type SdfSpec,
@@ -39,7 +41,7 @@ import {
 
 /** What apply.ts needs from a SceneRuntime (tests and harnesses can fake it). */
 export type EditsHost = Pick<SceneRuntime, 'scene' | 'splat' | 'actors' | 'dynamics' | 'colliderReady' | 'time'> &
-  Partial<Pick<SceneRuntime, 'groundY'>> & {
+  Partial<Pick<SceneRuntime, 'groundY' | 'manifestUrl'>> & {
     edits: SceneEdits | null;
   };
 
@@ -112,7 +114,11 @@ export class SceneEditsRuntime {
   /** Bumped whenever the scene was rebuilt from a document (tests / UI). */
   version = 0;
 
+  /** A kind 'model' prop's file (project-root relative) → URL; none without a manifest URL. */
+  private readonly resolveFile: ((file: string) => string) | undefined;
+
   constructor(private readonly host: EditsHost) {
+    this.resolveFile = host.manifestUrl ? projectFileResolver(host.manifestUrl) : undefined;
     this.group.name = 'edit-props';
     host.scene.add(this.group);
     // transforms wait for the collider: placement correction may still move actors before it
@@ -128,7 +134,11 @@ export class SceneEditsRuntime {
     if (this.host.edits !== this.applied) this.apply(this.host.edits);
     if (this.host.splat !== this.mesh) this.attachRegions();
     for (const a of this.added) {
-      if (!a.sampler) continue;
+      if (!a.sampler) {
+        // a parked model still plays its own animation clip (model-prop.ts)
+        if (a.element.kind === 'model') a.prop.animate(0, time);
+        continue;
+      }
       const s = a.sampler.sample(time);
       a.prop.object.position.set(...s.position);
       a.prop.object.rotation.y = s.heading;
@@ -194,15 +204,14 @@ export class SceneEditsRuntime {
     this.added = kept;
     for (const el of added) {
       if (this.added.some((a) => a.element.id === el.id)) continue;
-      const prop = createProp(el.kind, el.label);
+      const prop = createElementProp(el, this.resolveFile);
       prop.object.scale.setScalar(el.scale ?? 1);
       prop.object.userData.dynamicId = el.id;
       prop.object.userData.editProp = true;
       let sampler: PathSampler | null = null;
       if (isParked(el)) {
-        const [a, b] = el.path;
-        prop.object.position.set(...a!);
-        prop.object.rotation.y = Math.atan2(-(b![0] - a![0]), -(b![2] - a![2]));
+        prop.object.position.set(...el.path[0]!);
+        prop.object.rotation.y = parkedHeading(el.path);
       } else {
         sampler = new PathSampler(el.path, { speed: el.speed, loop: el.loop ?? true, pauseSeconds: el.pauseSeconds ?? 2 });
       }

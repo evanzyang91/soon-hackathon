@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import type { DynamicElement, Vec3 } from '@shared/schema';
 import { PathSampler, type PathSample } from './dynamics-path';
-import { createProp, type Prop } from './props';
+import { createElementProp } from './model-prop';
+import type { Prop } from './props';
 
 export interface DynamicInstance {
   element: DynamicElement;
@@ -20,7 +21,8 @@ export interface DynamicsRuntime {
   dispose(): void;
 }
 
-export function createDynamics(elements: DynamicElement[]): DynamicsRuntime {
+/** `resolve` turns a project-root relative file (a kind 'model' prop's .glb) into a URL. */
+export function createDynamics(elements: DynamicElement[], resolve?: (file: string) => string): DynamicsRuntime {
   const group = new THREE.Group();
   group.name = 'dynamics';
   const props: Prop[] = [];
@@ -28,7 +30,7 @@ export function createDynamics(elements: DynamicElement[]): DynamicsRuntime {
 
   for (const element of elements) {
     try {
-      const prop = createProp(element.kind, element.label);
+      const prop = createElementProp(element, resolve);
       prop.object.scale.setScalar(element.scale ?? 1);
       prop.object.userData.dynamicId = element.id;
       const sampler = new PathSampler(element.path, {
