@@ -52,7 +52,9 @@ export function propImagePrompt(prompt: string): string {
   return [
     `Product photograph of ${object}.`,
     'The object alone, centred in the frame with margin around it, in full view (nothing cropped),',
-    'seen from the front and slightly above, on a plain white seamless background, soft even studio light,',
+    // a low angle: the image-to-3D step keeps the picture's camera frame, so a high angle comes out
+    // leaning toward the camera (the worker levels what is left, worker/prop_glb.py)
+    'seen from the front with the camera only a little above its middle height, on a plain white seamless background, soft even studio light,',
     'no cast shadow, no other objects, no text, photoreal.',
   ].join(' ');
 }

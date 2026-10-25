@@ -5,7 +5,8 @@ z up. glTF is y up with the front toward +z, so ``(x', y', z') = (y, z, x)``. Th
 permutation (a proper rotation), so the triangle winding survives it. The writer emits one
 primitive with POSITION, NORMAL (area-weighted), COLOR_0 (linear float RGB) and uint32 indices,
 and a rough, non-metallic material (glTF's default metallicFactor is 1, which would render a
-reconstructed object as dark metal).
+reconstructed object as dark metal). ``level`` stands a reconstruction back up when the picture
+was taken from a little above (it needs scipy; everything else is numpy).
 """
 
 from __future__ import annotations
@@ -43,6 +44,58 @@ def outward(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
     depends on the field's convention)."""
     f = np.asarray(faces, dtype=np.int64)
     return f[:, ::-1].copy() if signed_volume(vertices, f) < 0 else f
+
+
+def camera_pitch(
+    vertices: np.ndarray,
+    max_tilt_deg: float = 35.0,
+    cone_deg: float = 10.0,
+    min_share: float = 0.03,
+    max_roll: float = 0.25,
+) -> float:
+    """How far (radians) the object leans toward the picture's camera (+z), or 0.
+
+    Image-to-3D reconstructs in the picture's camera frame, so an object photographed a little from
+    above comes out pitched toward the camera by that elevation: its top leans toward +z. The convex
+    hull still shows it: the flat face the object rests on (a barrel's bottom, the polygon under a
+    chair's feet) or its flat top (a lid, a table top) is pitched by the same angle. The face is the
+    hull direction near ±y, with little sideways (x) component, that the most hull area shares
+    within ``cone_deg``. 0 when there is none holding ``min_share`` of the hull's area (a ball, a
+    lying banana), when it leans the other way, or when it is off by more than ``max_tilt_deg``.
+    Needs scipy; y up, front +z.
+    """
+    from scipy.spatial import ConvexHull
+
+    hull = ConvexHull(np.asarray(vertices, dtype=np.float64))
+    tri = hull.points[hull.simplices]
+    area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+    normal = hull.equations[:, :3]
+    # top faces as they are, bottom faces flipped: both then point "up" and lean the same way
+    flipped = normal * np.where(normal[:, 1:2] < 0, -1.0, 1.0)
+    keep = (flipped[:, 1] >= np.cos(np.radians(max_tilt_deg))) & (np.abs(flipped[:, 0]) <= max_roll)
+    if not keep.any():
+        return 0.0
+    cand, cand_area = flipped[keep], area[keep]
+    near = cand @ cand.T >= np.cos(np.radians(cone_deg))
+    score = near @ cand_area
+    best = int(np.argmax(score))
+    if score[best] < min_share * area.sum():
+        return 0.0
+    n = (near[best][:, None] * cand_area[:, None] * cand).sum(0)
+    pitch = float(np.arctan2(n[2], n[1]))
+    return pitch if 0.0 < pitch <= np.radians(max_tilt_deg) else 0.0
+
+
+def level(vertices: np.ndarray, min_tilt_deg: float = 2.0, **kw) -> tuple[np.ndarray, float]:
+    """Vertices pitched back upright (about x) by ``camera_pitch``; the correction in degrees (0
+    when there is no clear flat face or the object already stands level)."""
+    v = np.asarray(vertices, dtype=np.float64)
+    pitch = camera_pitch(v, **kw)
+    if np.degrees(pitch) < min_tilt_deg:
+        return v, 0.0
+    c, s = np.cos(-pitch), np.sin(-pitch)
+    r = np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+    return v @ r.T, float(np.degrees(pitch))
 
 
 def vertex_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
