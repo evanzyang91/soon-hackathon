@@ -8,6 +8,10 @@
 //     worldPrompt/timeOfDay/interior                      regenerate-world (needs-confirm, ~5 min ·
 //                                                           1,580 credits)
 //     blocking / heading / name                           scene manifest rewritten (retry 'manifest')
+//     dynamics (background action)                        scene manifest rewritten from the plan (the
+//                                                           manifest step: world, actors and audio as
+//                                                           they are); the laptop swaps the open
+//                                                           scene's props when chatRevision moves
 //     look.* (scene)                                      edits.json re-graded at once when the scene
 //                                                           has one (look-seed.ts writeSceneLook, as
 //                                                           cli look --write); else the manifest
@@ -224,7 +228,7 @@ export async function applyProposals(
           const ns =
             t.kind === 'scene' ? [t.index] : t.kind === 'character' ? scenesWith(t.id) : [];
           for (const n of ns) if (stageOf(st, n, 'manifest') === 'done') manifest.add(n);
-          effectText = 'updates the scene';
+          effectText = p.field === 'dynamics' ? 'updates the background action' : 'updates the scene';
         }
       }
       if (p.type === 'plan-patch')

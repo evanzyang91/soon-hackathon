@@ -315,6 +315,10 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
     }
   };
 
+  // the open project's chat revision when last seen, and scenes whose manifest a chat turn may have
+  // rewritten (a background change): checked once their manifest stage is done again
+  const chatSeen = new Map<string, number>();
+  const recheck = new Set<string>();
   const refresh = async () => {
     try {
       projects = (await lister()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -330,6 +334,21 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
       const prev = applied.get(key);
       applied.set(key, sig);
       if (prev !== undefined && prev !== sig && a.rebuild?.status === 'done') void director.refreshActors();
+    }
+    // a chat turn changed the plan (e.g. "add a dinosaur walking by in scene 1"): once the open
+    // scene's manifest is written again, swap its background action live (a no-op when unchanged)
+    if (current) {
+      const rev = current.chatRevision ?? 0;
+      const seen = chatSeen.get(current.id);
+      chatSeen.set(current.id, rev);
+      const key = `${current.id}:${director.sceneIndex}`;
+      // (the first sighting checks too: the change may have landed before this panel knew the scene)
+      if (seen !== rev && director.sceneIndex != null) recheck.add(key);
+      const job = current.scenes.find((j) => j.sceneIndex === director.sceneIndex);
+      if (recheck.has(key) && job && sceneReady(job)) {
+        recheck.delete(key);
+        void director.refreshDynamics();
+      }
     }
     if (autoOpen) {
       const p = projects.find((x) => x.id === autoOpen);

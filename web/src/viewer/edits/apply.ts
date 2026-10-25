@@ -128,7 +128,11 @@ export class SceneEditsRuntime {
     if (this.host.edits !== this.applied) this.apply(this.host.edits);
     if (this.host.splat !== this.mesh) this.attachRegions();
     for (const a of this.added) {
-      if (!a.sampler) continue;
+      // a parked prop still lives on the clock: rotors spin, a standing animal breathes
+      if (!a.sampler) {
+        a.prop.animate(0, time);
+        continue;
+      }
       const s = a.sampler.sample(time);
       a.prop.object.position.set(...s.position);
       a.prop.object.rotation.y = s.heading;

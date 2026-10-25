@@ -25,7 +25,7 @@ export const DraftAction = z.object({
   value: z
     .string()
     .describe(
-      'plan-patch: the complete new value as text (heights in metres "1.85", booleans "true"/"false", points "x, y, z" in metres, a description is the full new description); otherwise ""',
+      'plan-patch: the complete new value as text (heights in metres "1.85", booleans "true"/"false", points "x, y, z" in metres, a description is the full new description; a scene\'s dynamics is its JSON {"add": […], "remove": […]} as text); otherwise ""',
     ),
   attachmentId: z
     .string()
@@ -141,10 +141,13 @@ export function checkDraft(
       const dup = proposals.findIndex(
         (x) => x.type === 'plan-patch' && x.targetKey === p.targetKey && x.field === p.field,
       );
+      // two background changes of one scene: the later value already holds both, keep both words
+      const before = dup >= 0 && p.field === 'dynamics' ? proposals[dup]!.summary : '';
       if (dup >= 0) proposals.splice(dup, 1);
+      const summary = a.summary.trim() || `${p.targetKey} ${p.field}`;
       proposals.push({
         type: 'plan-patch',
-        summary: a.summary.trim() || `${p.targetKey} ${p.field}`,
+        summary: before ? `${before}; ${summary}` : summary,
         ...p,
       });
       // checkPatch validated it on a copy; keep the running plan in step for the next one

@@ -9,7 +9,8 @@
 //                                   .pose | .facing
 //                                   look.preset · look.mood · look.<exposure|contrast|saturation|
 //                                   temperature|tint|lut|lutStrength|vignette|grain|bloom> ·
-//                                   look.fog.color|density · look.skyTint.color|strength
+//                                   look.fog.color|density · look.skyTint.color|strength ·
+//                                   dynamics (the background action, below)
 //   target "line:<lineId>"   fields text · parenthetical ("" clears it)
 //   target "project"         field  title
 //   target "style"           fields genre · era · worldStyle · palette (the whole screenplay's style)
@@ -21,8 +22,24 @@
 //
 // Scene targets use ScenePlan.index (0-based, like scene-<n>/ and every sceneIndex in the API);
 // the director's "scene 2" is index 1.
+//
+// A scene's `dynamics` (its moving props: traffic, animals, monsters, aircraft) take a JSON value,
+// either the changes or the whole new list:
+//
+//   {"add": [{"kind": "creature", "label": "a dinosaur walking by"}], "remove": ["s1-car", "bus"]}
+//   [{"kind": "airplane", "label": "an airliner flies low overhead", "path": [[-40, 24, -150], [20, 22, 60]], "speed": 25}, …]
+//
+// An added element needs a label (the viewer builds its body from it); kind defaults to the one its
+// words name (dynamics.ts kindForWords), path / speed / pauseSeconds to the standard path for the
+// label near the scene's actors (dynamics.ts dynamicPath), loop to true, scale to 1, and id to
+// "s<n>-<kind>-<k>". A point is [x, y, z] (or {x, y, z}) in metres; one point or speed 0 parks or
+// hovers it there. `remove` takes element ids, or a word of the label / a kind ("dinosaur"). The
+// applied value is the full new list. Free: on a generated scene apply.ts rewrites the manifest
+// from the plan (world, actors and audio untouched) and the open scene swaps its props live.
 import { LOOK_PRESET_LABELS, LOOK_PRESETS, seedToLook } from '../../../shared/look-presets.ts';
 import {
+  DynamicElement,
+  DynamicElementKind,
   LookPresetName,
   LutPreset,
   ScreenplayPlan,
@@ -34,6 +51,7 @@ import {
   type Vec3,
   type VisualStyle,
 } from '../../../shared/schema.ts';
+import { DEFAULT_SPEED, dynamicPath, kindForWords, sceneCentre } from '../dynamics.ts';
 import { VOICE_IDS } from '../fountain.ts';
 import { round3, yawFacing } from '../geometry.ts';
 import { lookSeedFor, styleForPlan } from '../look-seed.ts';
@@ -225,6 +243,7 @@ export const FIELDS = {
     'blocking.<characterId>.pose',
     'blocking.<characterId>.facing',
     ...LOOK_FIELDS,
+    'dynamics',
   ],
   line: ['text', 'parenthetical'],
   project: ['title'],
@@ -311,6 +330,7 @@ export function parseValue(
         return p ? { value: p } : { error: `"${s}" is not a point (x, y, z in metres)` };
       }
       if (isLookField(field)) return parseLookValue(field, s);
+      if (field === 'dynamics') return parseDynamics(plan.scenes[target.index]!, s);
       switch (field) {
         case 'heading':
           return s
@@ -338,6 +358,91 @@ export function parseValue(
       return { error: `a scene has no field ${field} (${FIELDS.scene.join(', ')})` };
     }
   }
+}
+
+const DYNAMICS_SHAPE = 'dynamics takes JSON: {"add": [{"kind", "label", "path"?, "speed"?}], "remove": ["<id or word>"]} or the full list';
+
+/** "[1, 0, -8]" | {x, y, z} | [x, z] → a point, else undefined. */
+function point(v: unknown): Vec3 | undefined {
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : NaN);
+  let p: number[] = [];
+  if (Array.isArray(v)) p = v.length === 2 ? [n(v[0]), 0, n(v[1])] : v.slice(0, 3).map(n);
+  else if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    p = [n(o.x), o.y === undefined ? 0 : n(o.y), n(o.z)];
+  }
+  return p.length === 3 && p.every(Number.isFinite) ? [round3(p[0]!), round3(p[1]!), round3(p[2]!)] : undefined;
+}
+
+/** A `dynamics` patch value → the scene's new list (see the header for the shape). */
+export function parseDynamics(scene: ScenePlan, raw: string): { value: DynamicElement[] } | { error: string } {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return { error: DYNAMICS_SHAPE };
+  }
+  const list = structuredClone(scene.dynamics);
+  let adds: unknown[];
+  if (Array.isArray(v)) {
+    list.length = 0;
+    adds = v;
+  } else if (v && typeof v === 'object') {
+    const o = v as { add?: unknown; remove?: unknown };
+    const removes = Array.isArray(o.remove) ? o.remove : o.remove == null ? [] : [o.remove];
+    for (const r of removes) {
+      const want = String(r).trim().toLowerCase();
+      if (!want) continue;
+      const byId = list.filter((d) => d.id.toLowerCase() === want);
+      const word = new RegExp(`\\b${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
+      const byLabel = byId.length ? byId : list.filter((d) => word.test(d.label));
+      const kind = DynamicElementKind.safeParse(want).success ? want : kindForWords(want);
+      const hits = byLabel.length ? byLabel : list.filter((d) => d.kind === kind);
+      if (!hits.length) return { error: `scene ${scene.index + 1} has no background "${String(r)}" (${list.map((d) => d.id).join(', ') || 'none'})` };
+      for (const h of hits) list.splice(list.indexOf(h), 1);
+    }
+    adds = Array.isArray(o.add) ? o.add : o.add == null ? [] : [o.add];
+  } else return { error: DYNAMICS_SHAPE };
+  const centre = sceneCentre(scene.blocking);
+  for (const a of adds) {
+    const o = (typeof a === 'string' ? { label: a } : a) as Record<string, unknown> | null;
+    if (!o || typeof o !== 'object') return { error: DYNAMICS_SHAPE };
+    const label = String(o.label ?? '').trim().slice(0, 160);
+    const asked = String(o.kind ?? '').trim().toLowerCase();
+    const known = DynamicElementKind.safeParse(asked);
+    const kind = known.success ? known.data : (kindForWords(`${asked} ${label}`) ?? 'generic');
+    if (kind === 'model') return { error: 'a model prop comes from an imported or generated 3D file, not from the chat' };
+    if (!label && !known.success) return { error: 'an added background element needs a label' };
+    const given = Array.isArray(o.path) ? o.path.map(point) : [];
+    if (given.some((p) => !p)) return { error: `${label || kind}: a path point is [x, y, z] in metres` };
+    const auto = dynamicPath(kind, label || kind, { centre });
+    const path = given.length ? (given as Vec3[]) : auto.path;
+    const length = path.slice(1).reduce((n, p, i) => n + Math.hypot(p[0] - path[i]![0], p[1] - path[i]![1], p[2] - path[i]![2]), 0);
+    const speed =
+      typeof o.speed === 'number' && o.speed >= 0
+        ? Math.min(o.speed, 120)
+        : given.length
+          ? path.length < 2 || length < 1
+            ? 0
+            : DEFAULT_SPEED[kind]
+          : auto.speed;
+    const taken = new Set(list.map((d) => d.id));
+    let id = typeof o.id === 'string' && o.id.trim() && !taken.has(o.id.trim()) ? o.id.trim() : '';
+    for (let k = 1; !id; k++) if (!taken.has(`s${scene.index + 1}-${kind}-${k}`)) id = `s${scene.index + 1}-${kind}-${k}`;
+    const el = DynamicElement.safeParse({
+      id,
+      kind,
+      label: label || kind,
+      path,
+      speed,
+      loop: typeof o.loop === 'boolean' ? o.loop : true,
+      pauseSeconds: typeof o.pauseSeconds === 'number' && o.pauseSeconds >= 0 ? o.pauseSeconds : given.length ? 2 : auto.pauseSeconds,
+      scale: typeof o.scale === 'number' && o.scale > 0 ? Math.min(10, Math.max(0.1, o.scale)) : 1,
+    });
+    if (!el.success) return { error: `${label || kind}: ${el.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` };
+    list.push(el.data);
+  }
+  return { value: list };
 }
 
 function parseLookValue(field: string, s: string): { value: unknown } | { error: string } {
@@ -397,6 +502,7 @@ export function getValue(plan: ScreenplayPlan, p: Pick<Patch, 'target' | 'field'
         : Math.round((mark.yaw * 1800) / Math.PI) / 10;
   }
   if (p.field === 'worldReference') return scene.worldReference?.file;
+  if (p.field === 'dynamics') return scene.dynamics;
   return scene[p.field as 'heading' | 'action' | 'worldPrompt' | 'timeOfDay' | 'interior'];
 }
 
@@ -431,6 +537,7 @@ export function applyPatch(plan: ScreenplayPlan, p: Patch): { before: unknown; a
       else if (b[2] === 'position') mark.position = v as Vec3;
       else mark.yaw = round3(yawFacing(mark.position, v as Vec3));
     } else if (p.field === 'worldReference') delete scene.worldReference;
+    else if (p.field === 'dynamics') scene.dynamics = v as DynamicElement[];
     else if (p.field === 'interior') scene.interior = v as boolean;
     else scene[p.field as 'heading' | 'action' | 'worldPrompt' | 'timeOfDay'] = v as never;
   }
