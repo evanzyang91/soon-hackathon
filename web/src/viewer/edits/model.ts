@@ -223,8 +223,15 @@ export function pathLength(path: readonly Vec3[]): number {
   return n;
 }
 
-/** A prop whose path is shorter than 10 cm stands still at path[0], facing path[1]. */
+/** A prop whose path is shorter than 10 cm stands still at path[0], facing path[1] (−Z with one point). */
 export const isParked = (el: Pick<DynamicElement, 'path'>) => pathLength(el.path) < 0.1;
+
+/** Yaw of a parked prop: toward path[1] when there is one a little away, else 0 (facing −Z). */
+export function parkedHeading(path: readonly Vec3[]): number {
+  const [a, b] = path;
+  if (!a || !b || Math.hypot(b[0] - a[0], b[2] - a[2]) < 1e-4) return 0;
+  return Math.atan2(-(b[0] - a[0]), -(b[2] - a[2]));
+}
 
 // ---------------------------------------------------------------------------------------------
 // Colour

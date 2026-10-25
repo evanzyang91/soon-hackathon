@@ -463,6 +463,57 @@ the city street and the bus stop, warm interior for the kitchen, golden hour for
 
 ![Every preset on the bus stop](docs/images/genre-presets-bus-stop.png)
 
+### Props: import or generate
+
+Scene › Background › **Add prop** puts the director's own object in the scene, next to the
+planner's background action:
+
+- **Import a 3D model (.glb)**: pick a file, or drop it on the view. It is uploaded to the
+  project (`POST /api/projects/:id/uploads` with `model/gltf-binary`, ≤ 25 MB, stored once per
+  content as `uploads/<sha16>.glb`). The server checks the container ('glTF' magic, version 2,
+  length, JSON chunk) and refuses Draco, meshopt and KTX2-compressed files with the reason (the
+  viewer bundles no decoders). The model keeps its own size when that is plausible (glTF units are
+  metres; 2 cm to 100 m), else it stands 1 m tall.
+- **Generate from a description…**: type "a weathered wooden barrel" and Go. A row shows the job
+  ("Generating: a weathered wooden barrel · meshing on Modal…", polled every 2 s); when it is done
+  the prop is placed with a toast, and a failure shows the error with **Retry**. The server
+  (`server/pipeline/props.ts`, `POST …/props/generate` → 202 `PropJob`, at most two at once per
+  project) draws the object with the OpenAI image API (alone, centred, full view, plain white,
+  studio light, 1024×1024 → `props/<jobId>/reference.png`) and meshes it with **TripoSR on a Modal
+  L4** (`worker/run_prop.py`, see `worker/README.md`) → `props/<jobId>/model.glb`, vertex-coloured,
+  at most 50,000 triangles. It stands at a height given in the prompt ("a 2 m tall statue", "a
+  50 cm vase"), else 1 m. In MOCK, or without an OpenAI or Modal key, the job returns the bundled
+  `fixtures/props/sample.glb` (a procedural textured barrel, `scripts/make-sample-prop.ts`) after
+  about 2 s, and its note says so.
+
+Either way the prop becomes one `prop-add` scene edit of kind `model`: one point on the ground
+(`groundY`) 2 m in front of the camera, speed 0, its front turned to the camera, saved to
+edits.json, so the phone draws it too, and undone with ⌘Z. From then on it is a prop like the
+others: drag, turn, scale and delete it in the view, switch it off in Background. Tools › Objects
+lists it with its source (the file name, or "generated"). The viewer (`web/src/viewer/model-prop.ts`)
+loads each file once with GLTFLoader, centres it, puts its lowest point on the ground, scales its
+bounding box to the height and plays its first animation clip on the scene clock. A file that
+does not load is drawn as the generic marker, with a console warning.
+
+**Measured** (2026-10-25, "a weathered wooden barrel", the kitchen set, MARBLE_DRY_RUN): 263 s
+from Go to placed and about $0.08. The OpenAI picture took 10 s (gpt-image-1.5, medium,
+$0.056). Then about 2.5 min passed waiting for an L4 container, 84 s went to loading TripoSR into
+it, and the work itself took about 6 s (cut-out 0.5 s, reconstruction 2.1 s, surface 3.0 s). L4
+time cost $0.029. The result: 50,000 triangles, 1.5 MB, levelled by 17°. The very first run also
+builds the worker image (about 2 min) and downloads the weights into the Modal Volume. Nearly all
+of the time is cold start; a container kept warm, or the weights baked into the image, would cut
+it (not done).
+
+![A generated barrel in the kitchen](docs/images/prop-generated.png)
+
+![The sample barrel imported, Add prop open](docs/images/prop-import.png)
+
+Limits: TripoSR sees one picture, so the back of the object is a guess. Colours come from the
+picture with its studio lighting baked in, and the set lights them again. There is no texture
+map, so print and fine detail blur. Thin parts (chair legs, railings) can break up. One object per
+description. A job that is running when the server restarts reads back as failed (Retry starts it
+again). Re-prompt's region tools edit the splat world, not a model prop.
+
 ## Laptop layout and direct manipulation
 
 The director page has the script drawer on the left (the project chat above every project and its
@@ -1045,7 +1096,8 @@ a scene's shot list is seeded with coverage the first time it opens, C adds the 
 frame is stored as a JPEG, the list comes back after a reload and the CSV export lists every shot
 (`shots.spec.ts`), and a dinosaur lumbering past and an airplane flying low overhead come out as a
 creature and an airplane that move on the clock with their own bodies, then the chat's hovering
-helicopter reaches the open scene without a reload (`dynamics.spec.ts`). Headless Chromium has no GPU: SwiftShader draws the
+helicopter reaches the open scene without a reload (`dynamics.spec.ts`). A .glb imported through Add prop and a prop generated from "a barrel" (the
+MOCK sample) both land in edits.json, undo and redo, and load on the phone (`props.spec.ts`). Headless Chromium has no GPU: SwiftShader draws the
 33k-splat mock world at about 1 fps at 1280x720 once it is fully loaded (the e2e specs are written
 for that). A real Marble world (500k splats) needs a GPU; full Chromium with
 `--use-angle=metal --enable-gpu` renders it at 60 fps.

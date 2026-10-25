@@ -62,7 +62,7 @@ const manip = mountManipulation(director, look, {
 shell.setUndo(manip);
 shots = mountShotsPanel(director, manip, { toast: (t) => shell.toast(t), showMode: () => shell.show('shots') });
 mountGuideToggle(shots);
-mountSceneTab(director, { projects, look, manip, chat, shots });
+mountSceneTab(director, { projects, look, manip, chat, shots, toast: (t) => shell.toast(t) });
 mountCameraPanel(director);
 mountObjects(director, look, manip);
 mountExport(director, projects, shots, (t, ms) => shell.toast(t, ms));

@@ -10,7 +10,8 @@
 //   Lines       the dialogue, a click plays a line in place (the playing one highlights), Play
 //               scene runs them in order with the background action; the shots covering a line
 //   Background  the moving props (traffic, animals, vehicles) with on / off (a prop-remove edit,
-//               so the phone drops it too)
+//               so the phone drops it too); Add prop imports a .glb or generates one from a
+//               description (props-add.ts), with a row per generation in progress
 //   Location    the world in one line; "Change the location…" opens the chat on this scene
 import { api } from '@shared/api';
 import { shotNumber } from '@shared/shots';
@@ -29,6 +30,7 @@ import { icon } from './icons';
 import type { LookPanel } from './look-panel';
 import type { Manipulation } from './manipulate';
 import { displayName, sceneReady, type ProjectsPanel } from './projects-panel';
+import { mountPropAdder } from './props-add';
 import { characterPhoto, projectPlan } from './references';
 import type { ShotsPanel } from './shots-panel';
 
@@ -40,10 +42,13 @@ export interface SceneTabParts {
   manip: Manipulation;
   chat: ChatPanel;
   shots: ShotsPanel;
+  /** The viewport's one-line message (Add prop reports with it). */
+  toast?(text: string): void;
 }
 
 export function mountSceneTab(director: Director, parts: SceneTabParts) {
   const { projects, look, manip, chat, shots } = parts;
+  const adder = mountPropAdder(director, manip, { toast: (t) => parts.toast?.(t) });
   const heading = byId('st-heading');
   const scenes = byId('st-scenes');
   const mood = byId('st-mood');
@@ -277,10 +282,7 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
     if (!rt) return;
     const doc = rt.edits;
     const props = [...rt.dynamics.items.map((i) => i.element), ...(doc ? effectiveProps(doc.edits).added : [])];
-    if (!props.length) {
-      background.append(h('div', { class: 'empty' }, 'No background action in this scene.'));
-      return;
-    }
+    if (!props.length) background.append(h('div', { class: 'empty' }, 'No background action in this scene.'));
     for (const el of props) {
       const on = !isPropRemoved(doc, el.id);
       const box = h('input', { type: 'checkbox', checked: on, 'data-testid': 'background-toggle', title: on ? 'Switch off (the phone drops it too)' : 'Switch on' });
@@ -298,11 +300,12 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
           'label',
           { class: `list-row bg-row${on ? '' : ' off'}`, 'data-testid': 'background-row', 'data-id': el.id },
           box,
-          h('span', { class: 'bg-name', title: el.label }, el.label || el.kind),
+          h('span', { class: 'bg-name', title: el.model?.source ? `${el.label} (${el.model.source})` : el.label }, el.label || el.kind),
           h('span', { class: 'muted small' }, el.kind),
         ),
       );
     }
+    background.append(...adder.nodes());
   };
 
   // ---- location -------------------------------------------------------------------------------------
@@ -353,6 +356,7 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
   };
   const renderMoodSoon = soon(renderMood);
   const renderBackgroundSoon = soon(renderBackground);
+  adder.onChange(renderBackgroundSoon);
   const renderCastSoon = soon(renderCast);
 
   director.on((c) => {

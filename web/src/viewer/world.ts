@@ -15,6 +15,7 @@ import type { GroundField } from '@shared/ground';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
 import { createDynamics, type DynamicsRuntime } from './dynamics';
+import { projectFileResolver } from './model-prop';
 import { followGround, groundSampler, loadGroundField, markY, onGround, type GroundY } from './ground';
 import { createPlaceholderWorld, disposeObject } from './placeholder';
 import { gazeTargets } from './gaze';
@@ -596,7 +597,7 @@ export async function loadScene(
     if (rt.actors.has(speaker.get(a.lineId) ?? '')) void preloadAudio(rt.resolve(a.url));
   }
 
-  rt.dynamics = createDynamics(manifest.plan.dynamics);
+  rt.dynamics = createDynamics(manifest.plan.dynamics, projectFileResolver(manifestUrl));
   rt.scene.add(rt.dynamics.group);
   rt.colliderReady = colliderLoad.then((gltf) => {
     if (!gltf || rt.isDisposed) return null;
