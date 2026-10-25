@@ -4,7 +4,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { SplatMesh } from '@sparkjsdev/spark';
-import { SceneManifest, type ActorAsset, type Character, type DialogueLine } from '@shared/schema';
+import {
+  SceneManifest,
+  type ActorAsset,
+  type Character,
+  type DialogueLine,
+  type DynamicElement,
+} from '@shared/schema';
 import type { GroundField } from '@shared/ground';
 import { createActor, type ActorHandle } from './actors';
 import { preloadAudio } from './actors/common';
@@ -80,6 +86,12 @@ export interface SceneRuntime {
    * other actor untouched. Resolves with the swapped character ids.
    */
   swapActors(assets: ActorAsset[]): Promise<string[]>;
+  /**
+   * Replaces the background action (the manifest's plan.dynamics) in place when it differs, e.g.
+   * after a chat change rewrote the manifest: the props are rebuilt on the current clock; camera,
+   * actors and edits stay. Resolves with whether anything changed.
+   */
+  swapDynamics(elements: DynamicElement[]): boolean;
   /** Look development (viewer/look/scene-look.ts): grade, lens, lights, compare, per-view looks. */
   readonly look: SceneLook;
   /** The scene's look (applied at render time on every view of this scene). */
@@ -417,6 +429,19 @@ class LoadedScene implements SceneRuntime {
     }
     if (swapped.length) this.sceneEdits?.refresh();
     return swapped;
+  }
+
+  swapDynamics(elements: DynamicElement[]): boolean {
+    if (this.disposed || JSON.stringify(elements) === JSON.stringify(this.manifest.plan.dynamics)) return false;
+    // the scene's prop edits (moves, hides) let go of the old bodies and find the new ones by id
+    for (const item of this.dynamics.items) this.sceneEdits?.release(item.object);
+    this.dynamics.dispose();
+    this.dynamics = createDynamics(elements);
+    this.scene.add(this.dynamics.group);
+    this.dynamics.update(this.time);
+    this.manifest.plan.dynamics = elements;
+    this.sceneEdits?.refresh();
+    return true;
   }
 
   get isDisposed() {

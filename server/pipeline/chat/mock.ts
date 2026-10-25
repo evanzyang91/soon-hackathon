@@ -19,6 +19,11 @@
 //                                             → style genre / era / worldStyle / palette (fountain.ts
 //                                               GENRE_STYLES)
 //   scene N look <preset>                     → scene N-1 look.preset ("golden hour" = golden-hour)
+//   add a dinosaur walking by in scene 1 · an airplane flies low overhead in scene 2 · add a
+//   helicopter hovering over the street in scene 1 → scene N-1 dynamics {add: [{kind, label}]}
+//                                               (the standard path for the label, dynamics.ts)
+//   remove the dinosaur [from scene N]         → dynamics {remove: ["dinosaur"]} in the scene(s)
+//                                               whose background has one
 //   generate | go ahead | build it | start    → generate (a draft; a generated project says so)
 //   anything else                             → MOCK_FALLBACK, no action
 import type { Attachment } from '../../../shared/chat.ts';
@@ -29,13 +34,14 @@ import {
   type ScenePlan,
   type ScreenplayPlan,
 } from '../../../shared/schema.ts';
+import { DYNAMIC_WORDS, kindForWords, MOTION_RE, STAND_RE } from '../dynamics.ts';
 import { GENRE_STYLES, parseHeading, VOICES, type GenreKey } from '../fountain.ts';
 import { castName, listNames } from './plan-card.ts';
 import { emptyDraftAction, type ChatContext, type ChatDraft, type DraftAction } from './draft.ts';
 import { VOICE_CHOICES } from './patch.ts';
 
 export const MOCK_FALLBACK =
-  'I can change characters, lines and scenes, take reference photos, and start generation.';
+  'I can change characters, lines, scenes and their background action, take reference photos, and start generation.';
 export const MOCK_ASK_PHOTO =
   'Who or where is this photo? Say "this is <name>" or "use this for scene <number>".';
 
@@ -170,6 +176,81 @@ function nextVoice(plan: ScreenplayPlan, c: Character): string {
     if (v !== c.voice.id && !taken.has(v)) return v;
   }
   return pool[(start + 1) % pool.length]!;
+}
+
+const BG_ADD = /^(?:(?:please|can you|could you|now|also|and|then)\s+)*(?:add|put|bring in|bring|include|insert|place|there should be|there'?s|let|have|i want|we need)\b\s*/i;
+const BG_REMOVE = /\b(?:remove|delete|drop|lose|get rid of|take out|take away|cut|no more)\b/i;
+const SCENE_REF = /\s*\b(?:in|to|into|for|from|of)\s+scene\s+(\d+)\b/i;
+/** "the bus shelter", "a car park": scenery, not a moving prop. */
+const SCENERY = /\b(?:bus|car|truck|train|taxi|cab|horse|dog|boat|plane|airplane|helicopter|cat)\s+(?:shelter|stop|station|depot|garage|stand|lane|park|parking|track|rank|yard|house|kennel|dock|hangar|seat|pad|wash)\b/i;
+
+/**
+ * Background action in words: one `dynamics` patch per scene the message touches (its adds and
+ * removes), with the director's clause as the label so the viewer builds the right body.
+ */
+function backgroundActions(plan: ScreenplayPlan, bare: string): { actions: DraftAction[]; said: string[] } {
+  const said: string[] = [];
+  const named = SCENE_REF.exec(bare) ?? /\bscene\s+(\d+)\b/i.exec(bare);
+  const perScene = new Map<number, { add: { kind: string; label: string }[]; remove: string[]; words: string[] }>();
+  const at = (n: number) => {
+    let e = perScene.get(n);
+    if (!e) perScene.set(n, (e = { add: [], remove: [], words: [] }));
+    return e;
+  };
+  // "add a dinosaur and an airplane" is two things: split before each article after "and" / ","
+  const clauses = bare
+    .split(/[.;!?\n]+|\s*(?:,|\band\b|\bthen\b)\s*(?=(?:a|an|the|some|two|three|another)\s)/i)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  for (const clause of clauses) {
+    if (SCENERY.test(clause)) continue;
+    const kind = kindForWords(clause);
+    if (!kind) continue;
+    const word = DYNAMIC_WORDS.find((w) => w.kind === kind)!.re.exec(clause)?.[0]?.toLowerCase() ?? kind;
+    const ref = SCENE_REF.exec(clause) ?? /\bscene\s+(\d+)\b/i.exec(clause) ?? named;
+    const sceneN = ref ? Number(ref[1]) - 1 : -1;
+    if (ref && !plan.scenes[sceneN]) {
+      said.push(`There is no scene ${ref[1]}.`);
+      continue;
+    }
+    if (BG_REMOVE.test(clause)) {
+      const one = /[^sui]s$|[^s]es$/.test(word) && !/ops$/.test(word) ? word.slice(0, -1) : word;
+      const re = new RegExp(`\\b${one}`, 'i');
+      const scenes = (sceneN >= 0 ? [plan.scenes[sceneN]!] : plan.scenes).filter((s) =>
+        s.dynamics.some((d) => re.test(d.label) || d.kind === word),
+      );
+      if (!scenes.length) said.push(`There is no ${word} in the background${sceneN >= 0 ? ` of scene ${sceneN + 1}` : ''}.`);
+      for (const s of scenes) {
+        const e = at(s.index);
+        e.remove.push(one);
+        e.words.push(`no more ${word}`);
+      }
+      continue;
+    }
+    if (!BG_ADD.test(clause) && !MOTION_RE.test(clause) && !STAND_RE.test(clause)) continue;
+    const n = sceneN >= 0 ? sceneN : plan.scenes.length === 1 ? 0 : -1;
+    if (n < 0) {
+      said.push(`Which scene should the ${word} be in? Say "… in scene 2".`);
+      continue;
+    }
+    const label = clause.replace(BG_ADD, '').replace(SCENE_REF, '').replace(/^(?:please\s+)/i, '').replace(/[,\s]+$/, '').trim();
+    const e = at(n);
+    e.add.push({ kind, label });
+    e.words.push(label);
+  }
+  const actions: DraftAction[] = [];
+  for (const [n, e] of perScene) {
+    const summary = `Scene ${n + 1}: ${e.words.join('; ')}`;
+    actions.push({
+      ...emptyDraftAction('plan-patch', summary),
+      target: `scene:${n}`,
+      field: 'dynamics',
+      value: JSON.stringify({ add: e.add, remove: e.remove }),
+    });
+    if (e.add.length) said.push(`Added ${e.add.map((a) => `“${a.label}”`).join(' and ')} to scene ${n + 1}.`);
+    if (e.remove.length) said.push(`Removed the ${e.remove.join(' and the ')} from scene ${n + 1}.`);
+  }
+  return { actions, said };
 }
 
 export function mockChatDraft(ctx: ChatContext): ChatDraft {
@@ -397,6 +478,11 @@ export function mockChatDraft(ctx: ChatContext): ChatDraft {
       said.push(`${summary}.`);
     }
   }
+
+  // background action: "add a dinosaur walking by in scene 1", "remove the dinosaur"
+  const bg = backgroundActions(plan, bare);
+  actions.push(...bg.actions);
+  said.push(...bg.said);
 
   // photos: hints first, then "this is <Name>" / "use this for …" for the next unassigned one
   const fresh: Attachment[] = [];
