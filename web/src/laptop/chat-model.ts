@@ -2,7 +2,7 @@
 // options, the plan summary line, before → after text of a plan patch. No DOM, so vitest runs them
 // in node.
 import type { ActionStatus, ChatAction, ChatMessage, ProjectChat } from '@shared/chat';
-import type { Character, ScreenplayPlan } from '@shared/schema';
+import type { Character, ScenePlan, ScreenplayPlan } from '@shared/schema';
 import { displayName } from './projects-panel';
 
 /** Height the actor pipeline assumes when the plan has none (shared/schema.ts Character). */
@@ -116,6 +116,17 @@ export function findCharacter(plan: ScreenplayPlan, name: string): Character | u
   return plan.characters.find((c) => c.id.toLowerCase() === n || c.name.toLowerCase() === n);
 }
 
+/** A scene's background action in a few words: "a red sedan drives past · a night bus rumbles by". */
+export function backgroundSummary(s: Pick<ScenePlan, 'dynamics'>): string {
+  return s.dynamics
+    .map((d) => {
+      const first = (d.label.split(/[,.;:—–(]/)[0] ?? d.label).trim();
+      const t = first.length > 48 ? `${first.slice(0, 48).replace(/\s+\S*$/, '')}…` : first;
+      return t.charAt(0).toLowerCase() + t.slice(1);
+    })
+    .join(' · ');
+}
+
 /** "Planned 3 scenes and 2 characters: Maya, Theo." */
 export function planSummary(plan: ScreenplayPlan): string {
   const n = plan.scenes.length;
@@ -136,6 +147,18 @@ export function excerpt(text: string, max: number): string {
 /** "1.70 m → 1.80 m" / "“Deal.” → “Fine.”" for a plan patch; null when there is nothing short to show. */
 export function patchDiff(a: ChatAction): string | null {
   if (a.type !== 'plan-patch') return null;
+  if (a.field === 'dynamics') {
+    // "+ a dinosaur walking by · − the bus": what the background gained and lost
+    const labels = (v: unknown) =>
+      new Map((Array.isArray(v) ? (v as { id: string; label: string }[]) : []).map((d) => [d.id, d.label]));
+    const was = labels(a.before);
+    const now = labels(a.after);
+    const out = [
+      ...[...now].filter(([id]) => !was.has(id)).map(([, l]) => `+ ${l}`),
+      ...[...was].filter(([id]) => !now.has(id)).map(([, l]) => `− ${l}`),
+    ];
+    return out.length ? excerpt(out.join(' · '), 96) : null;
+  }
   const fmt = (v: unknown): string | null => {
     if (v == null) return null;
     if (typeof v === 'number') return a.field === 'heightMeters' ? `${v.toFixed(2)} m` : String(v);

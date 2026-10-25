@@ -425,6 +425,13 @@ body.chat-docked.chat-wide #left {
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+.plan-bg {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
 .plan-main > .stages {
   margin-top: var(--s1);
 }
@@ -464,6 +471,7 @@ body.chat-docked.chat-wide #left {
     font-size: var(--fs-sm);
   }
   .plan-desc,
+  .plan-bg,
   .plan-foot > .muted {
     display: none;
   }

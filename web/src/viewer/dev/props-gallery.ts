@@ -1,4 +1,4 @@
-// Contact sheet of every procedural prop (web/src/viewer/props.ts): one cell per kind and per
+// Contact sheet of every procedural prop (web/src/viewer/props.ts, props-more.ts): one cell per kind and per
 // label variant, each framed to its own bounds next to a 1.70 m figure for scale. Props animate in
 // place (distance = speed × time), so wheels roll, legs cycle, wings beat and rotors spin without
 // leaving their cell. Flying kinds hover at a small path height with a line down to the ground.
@@ -38,6 +38,22 @@ const CELLS: CellSpec[] = [
   { kind: 'drone', label: 'a maintenance drone hums along the rail', speed: 2, lift: 1.3 },
   { kind: 'spacecraft', label: 'a shuttle drifts past the viewport', speed: 14, lift: 1.4 },
   { kind: 'generic', label: 'something moves', speed: 1 },
+  // props-more.ts: aircraft and creatures (label-driven bodies)
+  { kind: 'airplane', label: 'a jet airliner flies low overhead', speed: 25, lift: 9 },
+  { kind: 'airplane', label: 'a fighter jet screams past', speed: 40, lift: 9 },
+  { kind: 'airplane', label: 'a red biplane buzzes the field', speed: 20, lift: 1.2 },
+  { kind: 'airplane', label: 'a seaplane taxis across the bay', speed: 5, water: true },
+  { kind: 'helicopter', label: 'a police helicopter hovers over the street', speed: 0, lift: 3 },
+  { kind: 'creature', label: 'a dinosaur lumbers past', speed: 3 },
+  { kind: 'creature', label: 'a raptor sprints across the clearing', speed: 7 },
+  { kind: 'creature', label: 'a triceratops grazes', speed: 1 },
+  { kind: 'creature', label: 'a brachiosaurus wanders by', speed: 2 },
+  { kind: 'creature', label: 'an elephant ambles by', speed: 1.5 },
+  { kind: 'creature', label: 'a giraffe walks past', speed: 1.5 },
+  { kind: 'creature', label: 'a brown bear lumbers past', speed: 1.5 },
+  { kind: 'creature', label: 'a wolf pack lopes past', speed: 3 },
+  { kind: 'creature', label: 'a kangaroo hops by', speed: 4 },
+  { kind: 'creature', label: 'a troll stomps through the village', speed: 2 },
 ];
 
 const q = new URLSearchParams(location.search);
@@ -46,9 +62,9 @@ const only = q.has('cell') ? CELLS[Number(q.get('cell'))] : undefined;
 const SPECS = only ? [only] : CELLS;
 
 const COLS = only ? 1 : 5;
-const ROWS = only ? 1 : 4;
+const ROWS = only ? 1 : Math.ceil((CELLS.length + 1) / COLS);
 const W = 1600;
-const H = 960;
+const H = only ? 960 : ROWS * 240;
 const CW = W / COLS;
 const CH = H / ROWS;
 
@@ -212,7 +228,7 @@ if (!only) {
     width: `${CW}px`,
     height: `${CH}px`,
   });
-  el.innerHTML = `<b>props.ts</b><br><span class="label">width × height × length at rest; grey figure = 1.70 m;
+  el.innerHTML = `<b>props.ts · props-more.ts</b><br><span class="label">width × height × length at rest; grey figure = 1.70 m;
     yellow line = path height of a flyer. Each prop faces −Z (its heading) and animates in place:
     wheels roll and legs cycle with distance, wings, rotors, tails and hulls with time.</span>`;
   sheet.appendChild(el);

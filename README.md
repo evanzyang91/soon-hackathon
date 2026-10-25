@@ -352,7 +352,9 @@ is the plan's.
 already generated stay as they are. "scene 2 look candlelit" (or "scene 1 look: golden hour")
 sets that scene's `look.preset`. On a generated scene with an edits.json the grade changes at once
 (the same path as `cli look --write`); otherwise the manifest stage seeds the new look. The plan
-card shows the style line and each scene's look.
+card shows the style line, each scene's look and its background action. "add a dinosaur walking by
+in scene 1", "an airplane flies low overhead in scene 2" and "remove the dinosaur" change a scene's
+background action (see Dynamic scenes below).
 
 **`cli look`.** Prints the scene's look seed and the name it gives. `--write` puts it into an
 existing project: it replaces edits.json's look and keeps the edits, the history (one entry added)
@@ -385,9 +387,12 @@ western and period). The chosen set is in the world caption (`mock set: forest`)
 ![The ten mock sets](docs/images/genre-mock-sets.png)
 
 **Props for any era.** Besides car, bus, bicycle, bird and pedestrian, the planners can now ask for
-`truck`, `motorcycle`, `dog`, `horse`, `wagon`, `boat`, `dragon`, `drone` and `spacecraft`. Each is
-built from primitives in the label's colour (`web/src/viewer/props.ts`, under about 3k triangles).
-Some label words change the model:
+`truck`, `motorcycle`, `dog`, `horse`, `wagon`, `boat`, `dragon`, `drone`, `spacecraft`, `airplane`,
+`helicopter` and `creature`, so any creature or vehicle can be asked for by description: a dinosaur,
+a herd of elephants, a wolf pack or a troll is a `creature`, any fixed-wing aircraft an `airplane`
+(the closest kind otherwise, `generic` only as a last resort). Each is built from primitives in the
+label's colour (`web/src/viewer/props.ts`, `props-more.ts`, under about 3k triangles). Some label
+words change the model:
 
 | Kind | Label words | Variant |
 | --- | --- | --- |
@@ -396,12 +401,41 @@ Some label words change the model:
 | wagon | stagecoach, coach, carriage, landau, hansom … | closed stagecoach cabin |
 | wagon | covered, canvas, conestoga, prairie schooner | canvas cover (else an open bed) |
 | boat | sail, yacht, schooner, sloop, galleon … | sails (else a cabin) |
+| airplane | airliner, jet, fighter, biplane, propeller / light aircraft, seaplane | airliner (~31 m, the default), fighter jet with afterburner, biplane, high-wing prop plane, floats |
+| helicopter | police, news, rescue / medical, military, black hawk | livery colours |
+| creature | the species: dinosaur, t-rex, raptor, triceratops, brachiosaurus, elephant, mammoth, giraffe, rhino, bison, bear, wolf, deer, moose, lion, tiger, cow, bull, sheep, goat, cat, kangaroo, ostrich, crocodile, troll, ogre, giant, yeti, cyclops, monster … | quadruped (body, neck, head, tail, four legs), biped dinosaur (big tail, short arms), hopping kangaroo, ostrich, upright giant; horns, antlers, trunk, frill, plates, stripes, spots, mane by species or label |
+| creature | huge, giant, massive · small, little, baby · herd, pack, two | 2× · 0.5× · three (two) of them |
 
 The wagon is drawn by two harnessed horses with a driver. The motorcycle leans into turns and the
 boat bobs and rolls at its waterline. The dragon's wings flap, its neck and tail wave, and its
-wingspan is about 11.8 m. Flyers (bird, dragon, drone, spacecraft) keep their path's height and
-pitch and bank with their own motion. `web/src/viewer/dev/props-gallery.html` shows every kind and
-variant.
+wingspan is about 11.8 m. Flyers (bird, dragon, drone, spacecraft, airplane, helicopter) keep their
+path's height and pitch and bank with their own motion; an airplane's gear is down only near the
+ground, a helicopter bobs while it hovers (speed 0), and a creature's legs cycle with distance while
+its head, tail and breathing move with time, also when it stands. `web/src/viewer/dev/props-gallery.html`
+shows every kind and variant.
+
+**Dynamic scenes.** Every moving thing in the action lines becomes background action, never
+dropped; an animal that only stands or grazes there is kept too. The offline parser and the Claude
+planner share the words and the paths (`server/pipeline/dynamics.ts`): a creature walks on the
+ground behind the actors, 6-10 m out (a big one ~10 m), across the view at 2.5-4 m/s (a dinosaur
+3), or stands; an airplane flies 20-40 m up at 25 m/s, "overhead" / "low" along the view over the
+actors' heads, else across the sky, take-offs and landings to the ground; a helicopter flies
+10-20 m up at 12 m/s, circles, lands, or hovers (one spot, speed 0). The chat changes a scene's
+background in words: "add a dinosaur walking by in scene 1", "an airplane flies low overhead in
+scene 2", "add a helicopter hovering over the street in scene 1", "remove the dinosaur". That is a
+free `dynamics` plan patch (`server/pipeline/chat/patch.ts`); on a generated scene the manifest is
+rewritten from the plan (world, actors and audio as they are) and an open scene swaps its props
+live, the paired phone reloads it. The plan card lists each scene's background, and Tools ›
+Re-prompt knows the same words ("add a dinosaur walking by").
+
+![A dinosaur lumbers past while an airliner comes in low, 3 s into the scene (MOCK)](docs/images/dynamics-dinosaur-airplane.png)
+
+![The chat adds a helicopter hovering over the street; the open scene shows it](docs/images/dynamics-chat.png)
+
+The Claude planner (`cli parse`, one call, ~$0.07) on "A dinosaur lumbers past. An airplane flies
+low overhead.": `creature` "a huge dinosaur lumbers past down the street" from (-16, 0, -9.5) to
+(16, 0, -9.5) at 3 m/s, and `airplane` "an airliner flies low overhead" from (-40, 22, -150) to
+(20, 22, 60) at 25 m/s.
 
 ![Props gallery](docs/images/genre-props.png)
 
@@ -582,7 +616,7 @@ decides the cost, and the planner must pick the cheapest one that does the job:
 | --- | --- | --- | --- |
 | `look` | warmer, more contrast, night mood, add a key light from the left | instant | a Look patch, baked into the scene look (Tools › Grade keeps editing it) |
 | `transform` | move Leo closer, rotate the bench, make the car bigger | instant | actor / prop transform edit; a moved light is a look patch |
-| `prop` | add a bicycle leaning on the shelter, remove the bus | instant | procedural prop added (drag it to place) or removed |
+| `prop` | add a bicycle leaning on the shelter, add a dinosaur walking by, remove the bus | instant | procedural prop added (drag it to place) or removed |
 | `splat-region` | pillow red, remove the lamp, make the plant taller, shift the chair left | instant, no re-render | a Spark `SplatEdit` region on the world splats only: recolour, hide, move, grow / shrink |
 | `world-regen` | stormy sky, make it winter, turn the kitchen into a diner | ~5 min + 1,580 Marble credits, **asks first** | a confirm card; on **Regenerate** the world's own panorama is edited by an image model (sky-only edits keep the ground pixel-identical) and fed to Marble as an image prompt, or the text prompt is re-run; actors, look and props are kept, region edits dropped with a note |
 | `clarify` | "the thing on the left" | free | the planner asks which object you mean |
@@ -1009,7 +1043,9 @@ style, a look per scene, the forest and hall sets, a seeded edits.json, a dragon
 frame that opens graded (about 10 % mean difference from the same frame with a neutral look), and
 a scene's shot list is seeded with coverage the first time it opens, C adds the view as a shot whose
 frame is stored as a JPEG, the list comes back after a reload and the CSV export lists every shot
-(`shots.spec.ts`). Headless Chromium has no GPU: SwiftShader draws the
+(`shots.spec.ts`), and a dinosaur lumbering past and an airplane flying low overhead come out as a
+creature and an airplane that move on the clock with their own bodies, then the chat's hovering
+helicopter reaches the open scene without a reload (`dynamics.spec.ts`). Headless Chromium has no GPU: SwiftShader draws the
 33k-splat mock world at about 1 fps at 1280x720 once it is fully loaded (the e2e specs are written
 for that). A real Marble world (500k splats) needs a GPU; full Chromium with
 `--use-angle=metal --enable-gpu` renders it at 60 fps.

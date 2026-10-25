@@ -24,6 +24,7 @@ import {
   type Vec3,
 } from '../../shared/schema.ts';
 import { env } from '../env.ts';
+import { DEFAULT_SPEED, DYNAMIC_KINDS_TEXT, DYNAMIC_PATHS_TEXT, kindForWords } from './dynamics.ts';
 import {
   VOICES,
   VOICE_IDS,
@@ -164,10 +165,12 @@ Blocking (world frame)
 - "facing" is the point the character looks toward: usually the other character's position, or the origin when they address no one in particular. "pose" is sitting when the action says they sit, walking when they are described as moving, otherwise standing.
 
 Dynamics
-- Things that move through the scene according to the action lines, never the speaking characters. kind: car, bus, truck, motorcycle, bicycle, pedestrian, bird, dog, horse (the label says "rider" when ridden), wagon (a horse-drawn cart or stagecoach; its horses belong to it), boat, dragon, drone, spacecraft, or generic for anything else.
+- Every thing that moves through the scene in the action lines becomes one entry, in any genre or era: traffic, animals, monsters, aircraft, boats. Leave none out, and never the speaking characters. An animal or a monster that is there without moving (it stands, grazes, sleeps, watches) is an entry too. kind is the closest of: ${DYNAMIC_KINDS_TEXT}. A herd, pack or flock is one entry whose label says so.
+- label: a short description that keeps what the script calls it, with its colour and size words ("a huge green t-rex lumbers past", "a red biplane buzzes the field", "a police helicopter hovers over the river", "a herd of elephants crosses the plain"); the 3D body is built from the label.
 - Ground movers: a straight path across the view on the ground (y = 0), 8-15 m out (z between -8 and -15), x from about -30 to 30 or the reverse, loop true with a 2-4 s pause. Speeds in m/s: car 8, bus 6, truck 7, motorcycle 9, bicycle 5, pedestrian 1.4, dog 2.5, horse 4, wagon 2.5. Boat: straight on the water (y = 0), 20-40 m out, speed 3.
+${DYNAMIC_PATHS_TEXT}
 - Fliers: bird a closed loop of 8-12 points 6-12 m up, speed 6, pause 0. Dragon a closed loop of 10-14 points 15-30 m up and 30-60 m out, speed 10, pause 0. Drone hovering 2-4 m up on a short path near the action, speed 4. Spacecraft high and far (40-80 m up, 80-150 m out; a lift-off rises from the ground), speed 15.
-- scale 1 unless the script implies otherwise. Only include what the script implies; an empty list is fine (interiors usually have none).
+- A path has two or more points, except a thing that stands or hovers: one point, speed 0. scale 1 unless the script implies otherwise. Only include what the script implies; an empty list is fine (interiors usually have none).
 
 Look (per scene: the grade the scene opens with)
 - "preset", from time of day, interior, weather and mood words in the action:
@@ -294,27 +297,6 @@ async function parseWithClaude(text: string, opts: ParseOptions): Promise<Screen
 // ---------------------------------------------------------------------------
 
 const v3 = (p: Point): Vec3 => [round3(p.x), round3(p.y), round3(p.z)];
-const DEFAULT_SPEED: Record<DynamicElement['kind'], number> = {
-  car: 8,
-  bus: 6,
-  truck: 7,
-  motorcycle: 9,
-  bicycle: 5,
-  pedestrian: 1.4,
-  bird: 6,
-  dog: 2.5,
-  horse: 4,
-  wagon: 2.5,
-  boat: 3,
-  dragon: 10,
-  drone: 4,
-  spacecraft: 15,
-  airplane: 25,
-  helicopter: 12,
-  creature: 3,
-  generic: 3,
-  model: 0,
-};
 
 function trimPrompt(s: string): string {
   const t = s.trim().replace(/\s+/g, ' ');
@@ -538,20 +520,25 @@ export function draftToPlan(draft: Draft, screenplay: string, titleOverride?: st
     }
 
     const dynamics: DynamicElement[] = s.dynamics.flatMap((d, k) => {
-      if (d.path.length < 2) {
-        notes.push(`${where}.dynamics[${k}]: path has < 2 points; dropped`);
+      if (!d.path.length) {
+        notes.push(`${where}.dynamics[${k}]: no path; dropped`);
         return [];
       }
+      // an unknown kind is read from its words ("dinosaur" → creature, "jet" → airplane)
       const known = DynamicElementKind.safeParse(name(d.kind));
-      const kind = known.success ? known.data : 'generic';
-      if (!known.success) notes.push(`${where}.dynamics[${k}]: kind "${d.kind}" shown as generic`);
+      const kind = known.success ? known.data : (kindForWords(`${d.kind} ${d.label}`) ?? 'generic');
+      if (!known.success) notes.push(`${where}.dynamics[${k}]: kind "${d.kind}" shown as ${kind}`);
+      const path = d.path.map(v3);
+      // one point (or a path under a metre) stands or hovers there: speed 0
+      const length = path.slice(1).reduce((n, p, i) => n + Math.hypot(p[0] - path[i]![0], p[1] - path[i]![1], p[2] - path[i]![2]), 0);
+      const still = path.length < 2 || length < 1;
       return [
         {
           id: `s${index + 1}-${kind}-${k + 1}`,
           kind,
           label: d.label.trim() || kind,
-          path: d.path.map(v3),
-          speed: d.speed > 0 ? d.speed : DEFAULT_SPEED[kind],
+          path,
+          speed: still ? 0 : d.speed > 0 ? d.speed : DEFAULT_SPEED[kind],
           loop: d.loop,
           pauseSeconds: Math.max(0, d.pauseSeconds),
           scale: d.scale > 0 ? d.scale : 1,
