@@ -111,6 +111,6 @@ chooses from heading + worldPrompt keywords + interior; the chosen set is record
 | --- | --- | --- |
 | G1 planner + seed | style + look + kinds in both planners, `look-seed.ts` + manifest seeding, `cli look`, actor reference style sentence, chat plan-patch `style` / `look`, plan card line, tests | `server/pipeline/screenplay.ts`, `fountain.ts`, `look-seed.ts`, `actors.ts` (referencePrompt), `project.ts` (manifest step only), `cli.ts` (look), `chat/patch.ts`, `chat/plan-card.ts`, `chat/planner.ts` |
 | G2 mock sets | nine procedural sets, `pickMockSet`, `mockWorld(set)`, CLI, fixture README, tests | `server/pipeline/mock-world.ts`, `mock-set.ts`, `marble.ts` (mockWorld), `fixtures/mock-world/**` |
-| G3 looks | preset values + five LUTs tuned on real worlds and mock sets, Look panel groups + Scene's look, phone HUD name, grade tests | `shared/look-presets.ts` (values), `web/src/viewer/look/**`, `web/src/laptop/look-panel.ts` |
+| G3 looks | preset values + five LUTs tuned on real worlds and mock sets, Look panel groups + Scene's look, phone HUD name, preset-distinctness check in `scripts/genre-looks.ts --check` | `shared/look-presets.ts` (values), `web/src/viewer/look/**`, `web/src/laptop/look-panel.ts` |
 | G4 props | nine new procedural props with animation, prop tests, planner prompt list stays in G1 | `web/src/viewer/props.ts`, `dynamics.ts`, `web/src/viewer/actors/dev` harness additions |
 | G5 verify | genres e2e spec, evidence images, README + this document's results | `tests/e2e/genres.spec.ts`, `docs/images/genre-*`, README sections |
