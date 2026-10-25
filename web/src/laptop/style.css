@@ -1879,6 +1879,39 @@ button.line.speaking .line-play {
   color: var(--muted);
   text-decoration: line-through;
 }
+/* a found model's source + licence and its two choices, under its prop row (found-models.ts) */
+.found-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: -4px 0 2px;
+  padding: 0 var(--s2) 0 calc(var(--s2) + 22px);
+  min-width: 0;
+}
+.st-objects .found-line,
+#st-objects .found-line {
+  padding-left: var(--s2);
+}
+.found-src {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.found-btn {
+  flex: none;
+  height: auto;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  background: none;
+  box-shadow: none;
+}
+button.found-btn:hover:not(:disabled) {
+  color: var(--accent);
+  background: none;
+}
 /* Background › Add prop (props-add.ts): an inline menu, the prompt row, a row per generation */
 .prop-add {
   display: flex;

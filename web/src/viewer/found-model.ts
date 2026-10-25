@@ -598,6 +598,18 @@ export function setPrimitiveIds(ids: Iterable<string>) {
 }
 export const usesFoundModel = (id: string) => !primitive.has(id);
 
+const flipped = new Set<string>();
+/** Turns element `id`'s found model around (its facing was guessed wrong) or back. */
+export function setFoundModelFlip(id: string, flip: boolean) {
+  if (flip) flipped.add(id);
+  else flipped.delete(id);
+}
+export function setFlippedIds(ids: Iterable<string>) {
+  flipped.clear();
+  for (const id of ids) flipped.add(id);
+}
+export const isFoundModelFlipped = (id: string) => flipped.has(id);
+
 // ---- the prop --------------------------------------------------------------------------------------
 
 export type FoundStatus = 'loading' | 'ready' | 'failed' | 'skipped';
@@ -844,7 +856,7 @@ function buildRig(
       for (const p of parts) {
         const angle =
           p.how === 'roll'
-            ? -distance / Math.max(1e-4, p.radius * scaleW)
+            ? ((flipped.has(el.id) ? 1 : -1) * distance) / Math.max(1e-4, p.radius * scaleW)
             : p.how === 'spin'
               ? time * (drive === 'ground' || drive === 'boat' ? 20 : 45)
               : 0.35 * Math.sin(time * 0.4);
@@ -864,8 +876,9 @@ function buildRig(
           attitude.rotation.x = probe.pitch + noseDown;
           attitude.rotation.z = probe.bank;
         }
-        if (a.saucer) turn.rotation.y = a.yaw + time * 0.6;
       }
+      // the director's "Turn around" and a saucer's slow spin
+      turn.rotation.y = a.yaw + (flipped.has(el.id) ? Math.PI : 0) + (a.saucer ? time * 0.6 : 0);
     },
     dispose() {
       if (mixer) {

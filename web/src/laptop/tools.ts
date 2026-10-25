@@ -19,6 +19,7 @@ import { lensLabel } from '@shared/lens';
 import type { SplatQuality } from '../viewer/world';
 import type { Director } from './director';
 import { byId, h, isTyping } from './dom';
+import { foundModelLine, whileLoading } from './found-models';
 import { scaleHeadline } from './hud';
 import { icon } from './icons';
 import type { LookPanel } from './look-panel';
@@ -222,8 +223,16 @@ export function mountObjects(director: Director, look: LookPanel, manip: Manipul
     const props = [...rt.dynamics.items.map((i) => i.element), ...(doc ? effectiveProps(doc.edits).added : [])].filter((el) => !isPropRemoved(doc, el.id));
     // an imported / generated model says where it came from (the file name or the prompt)
     const kindOf = (el: (typeof props)[number]) =>
-      el.kind !== 'model' || !el.model ? el.kind : `model · ${el.model.file.startsWith('props/') ? 'generated' : (el.model.source ?? 'imported')}`;
-    groups.push(['Props', props.map((el) => objectRow({ type: 'prop', id: el.id }, el.label || el.kind, kindOf(el)))]);
+      !el.model ? el.kind : el.kind !== 'model' ? `${el.kind} · found model` : `model · ${el.model.file.startsWith('props/') ? 'generated' : (el.model.source ?? 'imported')}`;
+    // a found model adds its source, licence and choices under its row (found-models.ts)
+    groups.push([
+      'Props',
+      props.flatMap((el) => {
+        const found = foundModelLine(director, el, render);
+        return [objectRow({ type: 'prop', id: el.id }, el.label || el.kind, kindOf(el)), ...(found ? [found] : [])];
+      }),
+    ]);
+    whileLoading(director, props, render);
     const lights = look.session.look?.lights ?? [];
     groups.push(['Lights', lights.map((l) => objectRow({ type: 'light', id: l.id }, l.name, `${l.kind}${l.enabled ? '' : ' · off'}`))]);
     groups.push(['Shots', director.cameras.map((c) => objectRow({ type: 'camera', id: c.id }, c.name, c.id === director.activeCameraId ? 'on the phone' : lensLabel(c.fovDeg)))]);
