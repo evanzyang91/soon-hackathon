@@ -7,8 +7,9 @@
 //       Screenplay → ScreenplayPlan with Claude (or the offline parser with --mock); prints a summary.
 //   pnpm tsx server/pipeline/cli.ts run <screenplay.fountain> [--title <title>]
 //       Creates a project under DATA_DIR and runs the whole pipeline (honours MOCK).
-//   pnpm tsx server/pipeline/cli.ts make-mock-world
-//       Regenerates fixtures/mock-world/ (world.spz + thumbnail.png).
+//   pnpm tsx server/pipeline/cli.ts make-mock-world [set|all]
+//       Regenerates fixtures/mock-world/<set>/ (world.spz + thumbnail.png) for one procedural mock
+//       set (street, forest, hall, cave, desert, station, shore, village, room, field) or all.
 //   pnpm tsx server/pipeline/cli.ts calibrate <worldDir> [--write] [--no-vision] [--interior|--exterior]
 //                                  [--before-after out.png] [--views dir] [--reuse]
 //       Measures the world's real scale (collider references + Claude vision with 1.70 m
@@ -67,7 +68,8 @@ import {
   writeStaging,
 } from './staging.ts';
 import { generateWorld, marbleModel } from './marble.ts';
-import { MOCK_WORLD_DIR, writeMockWorld } from './mock-world.ts';
+import { isMockSet, MOCK_SETS } from './mock-set.ts';
+import { MOCK_SPZ_MAX_BYTES, writeMockSets } from './mock-world.ts';
 import { defaultStore } from './project.ts';
 import { parseScreenplay, summarizePlan } from './screenplay.ts';
 
@@ -283,15 +285,18 @@ async function main() {
       return;
     }
     case 'make-mock-world': {
-      const r = await writeMockWorld();
-      log(
-        `wrote ${MOCK_WORLD_DIR}world.spz (${r.splats} splats, ${r.spzBytes} bytes) + thumbnail.png`,
-      );
+      const which = pos[0] ?? 'all';
+      if (which !== 'all' && !isMockSet(which))
+        throw new Error(`usage: make-mock-world [set|all]  (sets: ${MOCK_SETS.join(', ')})`);
+      for (const r of await writeMockSets(which === 'all' ? MOCK_SETS : [which])) {
+        const over = r.spzBytes > MOCK_SPZ_MAX_BYTES ? `  OVER the ${MOCK_SPZ_MAX_BYTES / 1024} KB budget` : '';
+        log(`wrote ${r.dir}/world.spz (${r.splats} splats, ${(r.spzBytes / 1024).toFixed(1)} KB) + thumbnail.png${over}`);
+      }
       return;
     }
     default:
       console.log(
-        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | stage <projectDir> <sceneIndex> | look <projectDir> <sceneIndex> | make-mock-world  (see header of server/pipeline/cli.ts)',
+        'commands: generate-world "<prompt>" <outDir> | parse <file> | run <file> | calibrate <worldDir> | stage <projectDir> <sceneIndex> | look <projectDir> <sceneIndex> | make-mock-world [set|all]  (see header of server/pipeline/cli.ts)',
       );
       process.exitCode = cmd ? 1 : 0;
   }
