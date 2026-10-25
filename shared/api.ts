@@ -52,6 +52,11 @@
 //
 // Manifest URL shape: /projects/<id>/scene-<index>/manifest.json
 // Edits file:         /projects/<id>/scene-<index>/edits.json
+// GET    /api/projects/:id/scenes/:n/shots            → ShotList (shared/shots.ts); 200 with defaults when absent
+// PUT    /api/projects/:id/scenes/:n/shots            body ShotList (revision must match, else 409 with the current list)
+// PUT    /api/projects/:id/scenes/:n/shots/:shotId/frame   raw image/jpeg ≤ 600 KB → ShotList (that shot's `frame` set)
+// GET    /api/projects/:id/shotlist.csv               text/csv of every scene's shot list
+// Shots file:         /projects/<id>/scene-<index>/shots.json · frames /projects/<id>/scene-<index>/shots/<shotId>.jpg
 export const api = {
   projects: '/api/projects',
   project: (id: string) => `/api/projects/${id}`,
@@ -64,6 +69,15 @@ export const api = {
   manifest: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/manifest.json`,
   plan: (id: string) => `/projects/${id}/plan.json`,
   editsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/edits.json`,
+  /** Shot list (shared/shots.ts): GET → ShotList (defaults when absent) · PUT body ShotList (revision-checked, 409 on mismatch). */
+  shots: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/shots`,
+  shotsFile: (id: string, sceneIndex: number) => `/projects/${id}/scene-${sceneIndex}/shots.json`,
+  /** PUT raw image/jpeg ≤ SHOT_FRAME_MAX_BYTES → the ShotList with `frame` set on that shot; the file is served at shotFrameFile. */
+  shotFrame: (id: string, sceneIndex: number, shotId: string) =>
+    `/api/projects/${id}/scenes/${sceneIndex}/shots/${encodeURIComponent(shotId)}/frame`,
+  shotFrameFile: (id: string, sceneIndex: number, shotId: string) => `/projects/${id}/scene-${sceneIndex}/shots/${shotId}.jpg`,
+  /** GET text/csv: every scene's shots (scene, number, name, lens mm, height, note, lines, frame url). */
+  shotlistCsv: (id: string) => `/api/projects/${id}/shotlist.csv`,
   edits: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/edits`,
   reprompt: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/reprompt`,
   regen: (id: string, sceneIndex: number) => `/api/projects/${id}/scenes/${sceneIndex}/regen`,
