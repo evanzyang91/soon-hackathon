@@ -477,6 +477,8 @@
         background: rgba(0, 0, 0, 0.72);
         font-weight: 600;
         text-align: center;
+        /* centred with left 50 %: without max-content it would wrap at half the screen width */
+        width: max-content;
         max-width: 80vw;
       }
       #flash {
