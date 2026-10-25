@@ -2,8 +2,16 @@ import { readFileSync } from 'node:fs';
 import { Quaternion, Vector3, Object3D } from 'three';
 import { describe, expect, it } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { ScreenplayPlan } from '../../shared/schema.ts';
-import { heuristicBlocking, mockHeight, mockPlan, parseFountain, parseHeading } from './fountain.ts';
+import { DynamicElementKind, LookPresetName, ScreenplayPlan } from '../../shared/schema.ts';
+import {
+  heuristicBlocking,
+  heuristicLookSeed,
+  heuristicStyle,
+  mockHeight,
+  mockPlan,
+  parseFountain,
+  parseHeading,
+} from './fountain.ts';
 import { lookAtQuat, yawFacing } from './geometry.ts';
 import { checkDraft, parseScreenplay, type ClaudeCall, type ClaudeRequest } from './screenplay.ts';
 
@@ -207,6 +215,19 @@ function draft(overrides: { badSpeaker?: boolean } = {}) {
     interior,
     worldPrompt:
       'A rain-slick street at night, sodium lights on wet asphalt, shuttered shops. No people.',
+    look: {
+      preset: 'night-street',
+      mood: 'wet, sodium-lit, lonely',
+      exposure: null as number | null,
+      temperature: -0.3 as number | null,
+      saturation: null,
+      contrast: null,
+      bloom: null,
+      vignette: null,
+      fog: null as { color: string; density: number } | null,
+      skyTint: null as { color: string; strength: number } | null,
+      lut: null,
+    },
     characterIds: ['maya', 'theo'],
     dialogue: lines.map(([characterId, text]) => ({ characterId, text, parenthetical: null })),
     blocking: [
@@ -251,6 +272,12 @@ function draft(overrides: { badSpeaker?: boolean } = {}) {
   if (overrides.badSpeaker) s1.dialogue[0]!.characterId = 'ghost';
   return {
     title: 'The Last Bus',
+    style: {
+      genre: 'contemporary drama',
+      era: 'present-day city',
+      worldStyle: 'Photoreal cinematic film still, sodium night light, wet asphalt',
+      palette: 'sodium orange, cold blue shadows',
+    },
     characters: [
       {
         id: 'maya',
@@ -358,5 +385,165 @@ describe('Claude screenplay path (fake client)', () => {
     const plan = await parseScreenplay(FIXTURE, { mock: true, log: noop, call, title: 'Override' });
     expect(plan.title).toBe('Override');
     expect(plan.scenes).toHaveLength(3);
+  });
+});
+
+describe('Claude path: style, looks and the new prop kinds', () => {
+  it('maps the style and each scene look into the plan', () => {
+    const r = checkDraft(JSON.stringify(draft()), FIXTURE);
+    expect(r.problems).toEqual([]);
+    const plan = r.plan!;
+    expect(plan.style).toEqual(draft().style);
+    expect(plan.scenes[0]!.look).toEqual({ preset: 'night-street', mood: 'wet, sodium-lit, lonely', temperature: -0.3 });
+  });
+
+  it('clamps out-of-range adjustments, drops a fog without a hex colour, trims an over-long style', () => {
+    const d = draft();
+    Object.assign(d.scenes[0]!.look, {
+      exposure: 5,
+      fog: { color: 'grey', density: 0.2 },
+      skyTint: { color: '#ABC', strength: 3 },
+    });
+    d.style.worldStyle = `Photoreal ${'very '.repeat(60)}cinematic`;
+    const r = checkDraft(JSON.stringify(d), FIXTURE);
+    expect(r.problems).toEqual([]);
+    const look = r.plan!.scenes[0]!.look!;
+    expect(look.exposure).toBe(3);
+    expect(look.fog).toBeUndefined();
+    expect(look.skyTint).toEqual({ color: '#aabbcc', strength: 1 });
+    expect(r.plan!.style!.worldStyle.length).toBeLessThanOrEqual(200);
+    expect(r.notes).toEqual(
+      expect.arrayContaining([
+        'scenes[0].look.exposure 5 clamped to 3',
+        expect.stringMatching(/scenes\[0\]\.look\.fog dropped/),
+        expect.stringMatching(/^style\.worldStyle trimmed/),
+      ]),
+    );
+  });
+
+  it('a slipped preset, LUT or prop kind is repaired with a note, never a failed plan', () => {
+    const d = draft();
+    Object.assign(d.scenes[0]!.look, { preset: 'Golden Hour', lut: 'sepia-ish' });
+    Object.assign(d.scenes[1]!.look, { preset: 'sunset glow', mood: 'warm' });
+    d.scenes[0]!.dynamics[0]!.kind = 'Stagecoach';
+    const r = checkDraft(JSON.stringify(d), FIXTURE);
+    expect(r.problems).toEqual([]);
+    const [s0, s1] = r.plan!.scenes;
+    expect(s0!.look).toMatchObject({ preset: 'golden-hour' });
+    expect(s0!.look!.lut).toBeUndefined();
+    expect(s1!.look).toEqual({ preset: 'warm-interior', mood: 'warm' }); // INT. KITCHEN, from the heading
+    expect(s0!.dynamics[0]!.kind).toBe('generic');
+    expect(r.notes).toEqual(
+      expect.arrayContaining([
+        'scenes[0].look.lut "sepia-ish" is not a LUT; dropped',
+        'scenes[1].look.preset "sunset glow" is not a preset; derived from the heading',
+        'scenes[0].dynamics[0]: kind "Stagecoach" shown as generic',
+      ]),
+    );
+  });
+
+  it('an empty style is read from the screenplay instead of failing the plan', () => {
+    const d = draft();
+    d.style = { genre: '', era: '', worldStyle: '', palette: '' };
+    const r = checkDraft(JSON.stringify(d), FIXTURE);
+    expect(r.problems).toEqual([]);
+    expect(r.plan!.style!.genre).toBe('contemporary drama');
+    expect(r.notes.some((n) => /style was empty/.test(n))).toBe(true);
+  });
+
+  it('asks for the style first and lists every preset and prop kind', async () => {
+    let req: ClaudeRequest | undefined;
+    const call: ClaudeCall = async (r) => {
+      req = r;
+      return fakeMessage(JSON.stringify(draft()));
+    };
+    await parseScreenplay(FIXTURE, { mock: false, log: noop, call });
+    const props = (req!.schema as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props).slice(0, 2)).toEqual(['title', 'style']);
+    const scene = (props.scenes as { items: { properties: Record<string, { description?: string }> } }).items
+      .properties as Record<string, { description?: string; items?: { properties: Record<string, { description?: string }> }; properties?: Record<string, { description?: string }> }>;
+    const kinds = scene.dynamics!.items!.properties.kind!.description!;
+    const presets = scene.look!.properties!.preset!.description!;
+    expect(kinds).toBe(`one of: ${DynamicElementKind.options.join(', ')}`);
+    expect(presets).toBe(`one of: ${LookPresetName.options.join(', ')}`);
+    for (const p of LookPresetName.options) expect(req!.system).toContain(`  ${p}: `);
+    expect(req!.system).toMatch(/Dragon a closed loop of 10-14 points 15-30 m up/);
+    expect(req!.system).toMatch(/open with the render style from worldStyle/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mock planner on the genre fixtures
+// ---------------------------------------------------------------------------
+
+const genre = (g: string) =>
+  ScreenplayPlan.parse(
+    mockPlan(readFileSync(new URL(`../../fixtures/genres/${g}.fountain`, import.meta.url), 'utf8')),
+  );
+const plan0 = () => ScreenplayPlan.parse(mockPlan(FIXTURE));
+
+describe('mock planner: every genre looks like itself', () => {
+  // per scene, the presets that read right for it
+  const cases: { g: string; genre: RegExp; presets: string[][] }[] = [
+    { g: 'fantasy', genre: /fantasy/, presets: [['enchanted', 'golden-hour'], ['candlelit']] },
+    { g: 'scifi', genre: /science fiction/, presets: [['cold-steel'], ['cold-steel', 'daylight-neutral']] },
+    { g: 'horror', genre: /horror/, presets: [['horror'], ['horror', 'moonlit']] },
+    { g: 'western', genre: /western/, presets: [['western-dust'], ['candlelit', 'golden-hour']] },
+    { g: 'period', genre: /period/, presets: [['period-warm', 'candlelit'], ['snowfall']] },
+  ];
+  for (const c of cases)
+    it(`${c.g}: ${c.genre.source}, a scene-appropriate look per scene, prompts in its register`, () => {
+      const plan = genre(c.g);
+      expect(plan.style!.genre).toMatch(c.genre);
+      plan.scenes.forEach((s, i) => expect(c.presets[i]).toContain(s.look!.preset));
+      for (const s of plan.scenes) {
+        expect(s.worldPrompt.startsWith(plan.style!.worldStyle)).toBe(true);
+        expect(s.worldPrompt).toMatch(/No people, no animals, no vehicles\.$/);
+        expect(s.worldPrompt.length).toBeLessThanOrEqual(600);
+        expect(s.look!.mood.length).toBeLessThanOrEqual(60);
+      }
+    });
+
+  it('the new prop kinds come from the action lines', () => {
+    const kinds = (g: string) => genre(g).scenes.map((s) => s.dynamics.map((d) => d.kind));
+    expect(kinds('fantasy')).toEqual([['dragon'], []]); // "a hall lit by torches … a cart" is not a wagon
+    expect(kinds('western')).toEqual([['wagon'], []]); // its two horses belong to the wagon
+    expect(kinds('scifi')).toEqual([['drone'], ['spacecraft']]);
+    expect(kinds('horror')).toEqual([[], ['dog']]);
+    expect(kinds('period')).toEqual([[], []]); // the carriage waits by the gate
+    const dragon = genre('fantasy').scenes[0]!.dynamics[0]!;
+    expect(dragon.speed).toBe(10);
+    expect(dragon.path[0]).toEqual(dragon.path.at(-1)); // closed loop
+    expect(dragon.path.every((p) => p[1] >= 15 && p[1] <= 30 && p[2] <= -25)).toBe(true);
+    const wagon = genre('western').scenes[0]!.dynamics[0]!;
+    expect(wagon).toMatchObject({ speed: 2.5, label: expect.stringMatching(/wagon drawn by two horses/) });
+    expect(wagon.path.every((p) => p[1] === 0 && p[2] === -10.5)).toBe(true);
+    const ship = genre('scifi').scenes[1]!.dynamics[0]!;
+    expect(ship.speed).toBe(15);
+    expect(ship.path.at(-1)![1]).toBeGreaterThan(40); // a lift-off climbs
+  });
+
+  it('the period era comes from the decade and place in the action', () => {
+    expect(genre('period').style!.era).toBe('1890s Vienna');
+  });
+
+  it('a contemporary script stays contemporary (one stray keyword is not a genre)', () => {
+    expect(heuristicStyle('They wait at the bus station. Rain falls.').genre).toBe('contemporary drama');
+    expect(plan0().style!.genre).toBe('contemporary drama');
+    expect(plan0().scenes.map((s) => s.look!.preset)).toEqual(['night-street', 'warm-interior', 'golden-hour']);
+  });
+
+  it('weather outside wins; interiors keep their own light', () => {
+    const ext = parseHeading('EXT. HARBOUR - DAY');
+    expect(heuristicLookSeed(ext, undefined, 'Thunder rolls. Rain lashes the quay.').preset).toBe('storm');
+    expect(heuristicLookSeed(ext, undefined, 'Snow drifts over the bollards.').preset).toBe('snowfall');
+    const int = parseHeading('INT. CABIN - NIGHT');
+    expect(heuristicLookSeed(int, undefined, 'Snow presses at the window.').preset).toBe('warm-interior');
+    expect(heuristicLookSeed(int, heuristicStyle('dragon sword kingdom'), 'A fire crackles.').preset).toBe(
+      'candlelit',
+    );
+    // a free-text style from Claude reads back into its genre
+    const folk = { genre: 'folk horror', era: '1970s', worldStyle: 'x', palette: 'y' };
+    expect(heuristicLookSeed(int, folk, '').preset).toBe('horror');
   });
 });

@@ -11,7 +11,8 @@
 // Real path (MOCK off, Modal + OpenAI keys present):
 //   1. reference image: OpenAI `gpt-image-1` (then gpt-image-1.5 / gpt-image-2 when the account
 //      no longer serves it), full-body front-facing studio shot of
-//      character.description, 1024x1536 -> <projectDir>/actors/<id>/reference.png (kept/reused)
+//      character.description (+ one wardrobe sentence from plan.style's genre and era when the
+//      plan has a style), 1024x1536 -> <projectDir>/actors/<id>/reference.png (kept/reused)
 //   2. `python3 worker/run_actor.py --image reference.png --out actors/<id>` (LHM on a Modal
 //      L4; receipt-first, so a crashed/timed-out call is recovered, never paid twice)
 //   3. -> { kind: 'splat-sequence', sequenceDir: 'actors/<id>/sequence', fps, nativeHeight
@@ -41,7 +42,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ActorAsset, ActorDetail, Character } from '../../shared/schema.ts';
+import type { ActorAsset, ActorDetail, Character, VisualStyle } from '../../shared/schema.ts';
 import { env } from '../env.ts';
 import { exists, readJson, writeFileAtomic, writeJsonAtomic } from './fsutil.ts';
 import { IMAGE_EDIT_MODELS, openaiImageEdit } from './openai-image.ts';
@@ -58,6 +59,8 @@ export interface BuildActorOptions {
   log: (m: string) => void;
   /** Build quality (default 'standard'); 'high' builds into actors/<id>/high/ and throws on failure. */
   detail?: ActorDetail;
+  /** The screenplay's style (plan.style): a generated reference dresses the character in its genre and era. */
+  style?: VisualStyle;
 }
 
 /** Where a character's build of `detail` lives: actors/<id>/ (standard) or actors/<id>/<detail>/. */
@@ -105,14 +108,24 @@ export function fallbackActor(character: Character): ActorAsset {
   };
 }
 
-export function referencePrompt(character: Character): string {
-  return [
+/**
+ * The image prompt for a character without a photo. With the screenplay's style one sentence keeps
+ * the cast's wardrobe in the same genre and era; without it the prompt is exactly what it was before
+ * styles existed, so a plan without a style never reads as a different reference.
+ */
+export function referencePrompt(character: Character, style?: VisualStyle): string {
+  const parts = [
     'Full-body photograph of one person standing upright, front-facing, looking straight at the camera,',
     'arms relaxed and held slightly away from the body, legs straight, whole body visible from the top of',
     'the head to the shoes with margin around it, neutral expression, plain light-grey seamless studio',
     'background, soft even lighting, no props, no text, photoreal.',
     `The person: ${character.description.trim()}`,
-  ].join(' ');
+  ];
+  if (style) {
+    const where = [style.genre.trim(), style.era.trim()].filter(Boolean).join(', ');
+    if (where) parts.push(`Wardrobe, hair and styling consistent with ${where}.`);
+  }
+  return parts.join(' ');
 }
 
 /** images/edits instruction for a director's photo (the photo is the input image). */
@@ -453,7 +466,7 @@ export async function buildActor(opts: BuildActorOptions, overrides: Partial<Act
       } else if (plan.needsReference) {
         log(`generating reference image (${IMAGE_MODELS.join(' -> ')}, 1024x1536)`);
         await keepAside(baseDir, ref);
-        await deps.generateReference(referencePrompt(character), referencePath, log);
+        await deps.generateReference(referencePrompt(character, opts.style), referencePath, log);
         await writeJsonAtomic(join(baseDir, REFERENCE_FILE), {
           schema: 'previz.actor-reference/1',
           from: 'description',
