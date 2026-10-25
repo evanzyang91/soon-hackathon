@@ -105,6 +105,23 @@ chooses from heading + worldPrompt keywords + interior; the chosen set is record
   Claude planner's style + look + world prompt for two fixtures (`cli parse`, ~$0.05 each). No Marble
   generation: credits stay where they are.
 
+**Results (G5).** `tests/e2e/genres.spec.ts` (two tests) passes: high fantasy, an Enchanted /
+Candlelit look on the two scenes, `mock set: forest` / `mock set: hall`, edits.json revision 1
+named "Enchanted · misty, vast, soft", a dragon. The laptop opens scene 0 (not scene 1 as written
+above) with the badge showing that name, and the graded frame is 9.6 % mean abs away from the same
+frame under a neutral look, against 0.5–0.7 % frame-to-frame noise. The full suite passes with it (`CHAT_E2E=1 pnpm e2e`: 10/10, 1.8 min).
+MOCK before/after for all five genres plus the fantasy throne hall (`genre-<genre>-before-after.png`,
+`genre-fantasy-hall-before-after.png`): every heading lands in a set that reads as its place (forest,
+hall, station, cave, village), the seeded look reads as its name, and the dragon, drone and wagon are
+in frame. The real worlds (`genre-real-worlds-before-after.png`) get night street (city street, bus
+stop), warm interior (kitchen) and golden hour (rooftop). The live bus-stop project was graded with
+`cli look … 0 --write` (night street · "damp, sodium-lit", revision 2). Its laptop before/after was
+captured on a dry-run server (`live-bus-stop-look-before-after.png`), and nothing else in the project
+changed. The Claude planner's scene 0 for fantasy and sci-fi is tabled in the README. Open points:
+Scene's look is hidden for plans without a planned look (the manifest does not carry the derived
+seed); "sodium-lit" names a light the night-street grade cools away; one village / one hall set
+stand in for every era's lane / great room.
+
 ## Work packages
 
 | WP | Scope | Owns |
