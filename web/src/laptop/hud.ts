@@ -157,7 +157,7 @@ export function mountHud(director: Director) {
     const recording = director.recorder.recording;
     rec.hidden = !recording;
     if (recording)
-      rec.textContent = `● REC ${fmtTime((performance.now() - director.recorder.startedAt) / 1000)}`;
+      rec.textContent = `REC ${fmtTime((performance.now() - director.recorder.startedAt) / 1000)}`;
     recBtn.textContent = recording ? 'Stop take' : 'Record take';
     recBtn.classList.toggle('rec', recording);
     recBtn.disabled = !director.recorder.supported;

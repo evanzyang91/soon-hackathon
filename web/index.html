@@ -15,11 +15,12 @@
         class="top-icon"
         data-testid="drawer-toggle"
         aria-expanded="true"
+        aria-label="Projects drawer"
         title="Show / hide the projects drawer: the project chat, every project and its scenes ( [ )"
       >
-        ☰
+        <span data-icon="sidebar"></span>
       </button>
-      <span class="brand">Previz Stage</span>
+      <span class="brand"><span data-icon="brand"></span>Previz Stage</span>
       <span id="health" class="badge" title="Which API keys the server has">…</span>
       <span class="top-sep"></span>
       <span id="hud-title"></span>
@@ -34,15 +35,48 @@
       ></button>
       <span class="spacer"></span>
       <span id="top-clock" class="top-clock" title="Scene clock (moving props, dialogue sync)">0:00.0</span>
-      <button id="top-play" type="button" data-testid="top-play" title="Play / pause the scene clock (Space)">
-        ▶ Play
+      <button
+        id="top-play"
+        type="button"
+        class="top-icon"
+        data-testid="top-play"
+        aria-label="Play"
+        title="Play / pause the scene clock (Space)"
+      >
+        <span data-icon="play"></span>
       </button>
-      <span class="top-sep"></span>
-      <button id="top-undo" type="button" class="top-icon" data-testid="top-undo" title="Undo (⌘Z)">↶</button>
-      <button id="top-redo" type="button" class="top-icon" data-testid="top-redo" title="Redo (⇧⌘Z)">↷</button>
-      <button id="top-help" type="button" class="top-icon" data-testid="help" title="Keyboard and mouse cheatsheet (?)">
-        ?
-      </button>
+      <div class="top-more">
+        <button
+          id="top-more"
+          type="button"
+          class="top-icon"
+          data-testid="top-more"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="More"
+          title="Undo, redo, keyboard and mouse"
+        >
+          <span data-icon="more"></span>
+        </button>
+        <div id="top-menu" class="menu" role="menu" hidden>
+          <button id="top-undo" type="button" role="menuitem" data-testid="top-undo" title="Undo (⌘Z)">
+            <span data-icon="undo"></span>Undo<kbd>⌘Z</kbd>
+          </button>
+          <button id="top-redo" type="button" role="menuitem" data-testid="top-redo" title="Redo (⇧⌘Z)">
+            <span data-icon="redo"></span>Redo<kbd>⇧⌘Z</kbd>
+          </button>
+          <div class="menu-sep" role="separator"></div>
+          <button
+            id="top-help"
+            type="button"
+            role="menuitem"
+            data-testid="help"
+            title="Keyboard and mouse cheatsheet (?)"
+          >
+            <span data-icon="keyboard"></span>Keyboard &amp; mouse<kbd>?</kbd>
+          </button>
+        </div>
+      </div>
     </header>
 
     <aside id="left" class="panel drawer" aria-label="Projects">
@@ -57,16 +91,22 @@
       <canvas id="viewport" data-testid="viewport"></canvas>
       <div id="hud-top">
         <span class="spacer"></span>
-        <button id="hud-grid" type="button" title="Ground grid at y = 0 (G)">Grid</button>
-        <button id="hud-collider" type="button" title="Collider mesh (what keeps dragged actors out of walls)">
-          Collider
-        </button>
-        <button id="hud-pip" type="button" class="on" title="Picture-in-picture of the phone / active camera">PiP</button>
-        <button id="hud-reload" type="button" title="Reload the scene">Reload</button>
+        <div class="seg" role="group" aria-label="View">
+          <button id="hud-grid" type="button" title="Ground grid at y = 0 (G)">Grid</button>
+          <button id="hud-collider" type="button" title="Collider mesh (what keeps dragged actors out of walls)">
+            Collider
+          </button>
+          <button id="hud-pip" type="button" class="on" title="Picture-in-picture of the phone / active camera">
+            PiP
+          </button>
+          <span class="seg-sep"></span>
+          <button id="hud-reload" type="button" class="seg-icon" aria-label="Reload" title="Reload the scene">
+            <span data-icon="reload"></span>
+          </button>
+        </div>
       </div>
       <div id="hud-empty" class="hud-center">
-        <h1>Previz Stage</h1>
-        <p>Open a ready scene from the projects drawer (☰), or start a new project in the chat.</p>
+        <p>Open a scene from the projects drawer, or start a new project in the chat.</p>
       </div>
       <div id="hud-loading" class="hud-center small" hidden></div>
       <div id="pip-frame" hidden><span id="pip-label"></span></div>
@@ -141,7 +181,9 @@
           <h2>Scene clock</h2>
           <div class="row">
             <button id="sc-play" type="button" data-testid="play" title="Play / pause the scene clock (Space)">Play</button>
-            <button id="sc-reset" type="button" title="Back to 0:00">⏮</button>
+            <button id="sc-reset" type="button" class="icon" aria-label="Back to 0:00" title="Back to 0:00">
+              <span data-icon="skip-back"></span>
+            </button>
             <span id="sc-clock" class="clock" data-testid="clock">0:00.0</span>
           </div>
         </section>

@@ -10,12 +10,16 @@ import { Director } from './director';
 import { byId } from './dom';
 import { mountHud } from './hud';
 import * as editPanel from './edit-panel';
+import { mountIcons } from './icons';
 import { mountLookPanel } from './look-panel';
 import { mountManipulation } from './manipulate';
 import { mountProjectsPanel } from './projects-panel';
 import { mountPhoneSection, mountScenePanel } from './scene-panel';
 import { mountSceneTab } from './scene-tab';
 import { mountShell } from './shell';
+
+// index.html asks for its icons by name (<span data-icon>)
+mountIcons();
 
 const canvas = byId<HTMLCanvasElement>('viewport');
 const stage = byId('stage');
