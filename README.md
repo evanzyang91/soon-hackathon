@@ -388,7 +388,12 @@ modes, in the order of the work (Tab steps through them):
   shot the phone was on, duration, a player, download; each take also downloads as WebM when it
   stops).
 
-The top bar reads `brand · Project · Sc 1 · HEADING · look: <name> … clock ▶ · Export · Tools · ⋯`.
+The top bar reads `brand · Project · Sc 1 · HEADING · look: <name> … clock ⏮ ▶ · Export · Tools · ⋯`.
+**Reset** (⏮, `0`; Camera › Scene clock has the same button) puts the scene back at its top: a
+take being recorded stops (it is kept), the clock pauses at 0:00, the dialogue and its captions
+stop, walk-ins and the background props go back to where they start, everyone stands on their
+current mark (your moves stay), and the view flies to the scene's start view; the look, shots,
+edits and takes stay as they are, and the phone follows the clock (`docs/images/reset-scene.png`).
 **Tools** (`T`, or the button) opens a drawer over the right panel with collapsible sections:
 **Grade** (the Look panel: grade, LUT, film, atmosphere, lens / depth of field, lights, presets,
 compare), **Re-prompt** (describe a change in words, regions, history), **Objects** (the outliner
@@ -599,6 +604,7 @@ Setup, certificate pairing, the pose math and the web contract are in `ios/READM
 | `?`, `[` | keyboard and mouse cheatsheet; script drawer |
 | wheel | zoom (changes the lens; leaves the selected shot) |
 | Space | play / pause the scene clock (moving props, dialogue sync) |
+| 0, or the top bar's **Reset** (left of Play) | reset the scene: clock to 0:00 and paused, dialogue stopped, everyone back on their marks, props at their path start, the start view (shots, edits, look and takes stay) |
 | V, or **View** | view through the phone (the PiP then shows the director view) |
 | R, or **Record take** | record the canvas plus dialogue audio as a take (WebM) |
 | G, Tools › Developer › **Grid** / **Collider** | ground grid at y = 0, collider wireframe |

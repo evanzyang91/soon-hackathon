@@ -38,6 +38,16 @@
       <span class="spacer"></span>
       <span id="top-clock" class="top-clock" title="Scene clock (background action, dialogue sync)">0:00.0</span>
       <button
+        id="top-reset"
+        type="button"
+        class="top-icon"
+        data-testid="top-reset"
+        aria-label="Reset the scene"
+        title="Reset the scene: clock to 0:00, everyone back on their marks (0)"
+      >
+        <span data-icon="skip-back"></span>
+      </button>
+      <button
         id="top-play"
         type="button"
         class="top-icon"
@@ -250,7 +260,7 @@
           <h2>Scene clock</h2>
           <div class="row">
             <button id="sc-play" type="button" data-testid="play" title="Play / pause the scene clock (Space)">Play</button>
-            <button id="sc-reset" type="button" class="icon" aria-label="Back to 0:00" title="Back to 0:00">
+            <button id="sc-reset" type="button" class="icon" aria-label="Back to 0:00" title="Reset the scene: clock to 0:00, everyone back on their marks (0)">
               <span data-icon="skip-back"></span>
             </button>
             <span id="sc-clock" class="clock" data-testid="clock">0:00.0</span>

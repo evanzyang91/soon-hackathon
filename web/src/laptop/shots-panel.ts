@@ -791,6 +791,7 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
   director.on((c) => {
     if (c === 'scene' || c === 'loading') void open(director.runtime);
     if (c === 'cameras') reconcile();
+    if (c === 'reset') deselect();
   });
   // the phone's camera popover: picking a shot is clicking its row (the view flies there, unless
   // the director is looking through the phone, which then follows it there); Handheld only lets
