@@ -6,6 +6,7 @@
 //   pnpm tsx scripts/genre-looks.ts <worldDir> --name city-street-night [--title "City street, night"]
 //     [--out docs/images] [--panels <dir>] [--only candlelit,moonlit] [--luts]
 //     [--cam "x,y,z,yawDeg,pitchDeg,hfovDeg"] [--marks "x,z;x,z"] [--size 512x288]
+//   pnpm tsx scripts/genre-looks.ts --check     (no browser: the preset table's rules, below)
 //
 // Writes <out>/genre-presets-<name>.png (with --luts: <out>/genre-luts-<name>.png, every LUT at
 // full strength instead) and prints per panel: mean luma, share of pixels crushed to black / blown
@@ -17,8 +18,23 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { feetY } from '../shared/ground.ts';
 import { defaultLook, Look } from '../shared/look.ts';
-import { LOOK_PRESET_GROUPS, LOOK_PRESET_LABELS, presetLook } from '../shared/look-presets.ts';
-import { LutPreset, WorldAsset } from '../shared/schema.ts';
+import {
+  LOOK_PRESET_GROUPS,
+  LOOK_PRESET_LABELS,
+  LOOK_PRESETS,
+  presetLook,
+  type LookMood,
+} from '../shared/look-presets.ts';
+import { LookPresetName, LutPreset, WorldAsset } from '../shared/schema.ts';
+import {
+  applyLut,
+  gradeParams,
+  gradePixel,
+  hexToRgb,
+  luma,
+  LUT_PRESETS,
+  type Vec3,
+} from '../web/src/viewer/look/grade.ts';
 import { storedGroundField } from '../server/pipeline/calibrate-ground.ts';
 import { openWorldRenderer } from '../server/pipeline/calibrate-render.ts';
 import { calibrationFactor, floorOffset } from '../web/src/viewer/transform.ts';
@@ -155,10 +171,134 @@ function skinMaskOf(withFigs: Img, without: Img): Uint8Array {
   return m;
 }
 
+// ---- --check: the preset table without a browser ------------------------------------------------
+// Distinctness in parameter space, skin under every preset but film noir, mid-tone clipping. Exit
+// code 1 when a rule fails, so a retune can be checked in a second before rendering the sheets.
+
+/**
+ * A preset as a point in parameter space, each axis scaled to about one visible step: 0.25 stop,
+ * 0.1 contrast, 0.15 saturation / temperature, 0.1 tint, 0.2 for the tone and film amounts; the
+ * LUT as its effect at the preset's strength on a few greys and colours (0.05 per channel);
+ * atmosphere as density / strength and the colour they push toward.
+ */
+function presetVector(m: LookMood): number[] {
+  const v = [
+    m.exposure / 0.25,
+    (m.contrast - 1) / 0.1,
+    (m.saturation - 1) / 0.15,
+    m.temperature / 0.15,
+    m.tint / 0.1,
+    m.shadows / 0.2,
+    m.highlights / 0.2,
+    m.vignette / 0.2,
+    m.grain / 0.2,
+    m.bloom / 0.2,
+    (1 - m.ambient) / 0.1,
+  ];
+  const strength = m.lut === 'neutral' ? 0 : m.lutStrength;
+  const samples: Vec3[] = [
+    [0.15, 0.15, 0.15],
+    [0.5, 0.5, 0.5],
+    [0.85, 0.85, 0.85],
+    [0.8, 0.55, 0.4],
+    [0.2, 0.3, 0.6],
+    [0.1, 0.6, 0.2],
+  ];
+  for (const c of samples) {
+    const out = applyLut(c, LUT_PRESETS[m.lut]);
+    for (let i = 0; i < 3; i++) v.push(((out[i]! - c[i]!) * strength) / 0.05);
+  }
+  const fog = hexToRgb(m.fog.color);
+  const sky = hexToRgb(m.skyTint.color);
+  v.push(m.fog.density / 0.1, m.skyTint.strength / 0.2);
+  for (let i = 0; i < 3; i++)
+    v.push((fog[i]! * m.fog.density) / 0.05, ((sky[i]! - 1) * m.skyTint.strength) / 0.1);
+  return v;
+}
+
+/**
+ * The nearest two presets must stay this far apart. The first draft's near-twins (daylight
+ * neutral / warm interior 3.32, night street / moonlit 3.47) rendered within 2–4 % of each other
+ * on the real worlds; at ≥ 3.5 every pair is ≥ 3.5 % mean abs apart on all five test worlds.
+ */
+const MIN_PRESET_DISTANCE = 3.5;
+const SKIN_TONES: Record<string, string> = {
+  light: '#e3bfa3',
+  medium: '#c68e6a',
+  deep: '#8d5a3c',
+  mannequin: '#d9b08c',
+};
+
+function check(): boolean {
+  const names = LookPresetName.options;
+  let ok = true;
+  // distinctness
+  const vs = names.map((n) => presetVector(LOOK_PRESETS[n]));
+  const pairs: { d: number; pair: string }[] = [];
+  for (let i = 0; i < names.length; i++)
+    for (let j = i + 1; j < names.length; j++)
+      pairs.push({
+        d: Math.hypot(...vs[i]!.map((x, k) => x - vs[j]![k]!)),
+        pair: `${names[i]} / ${names[j]}`,
+      });
+  pairs.sort((a, b) => a.d - b.d);
+  const near = pairs.filter((p) => p.d < MIN_PRESET_DISTANCE);
+  console.log(`distinctness (parameter space, min ${MIN_PRESET_DISTANCE}): nearest pairs`);
+  for (const p of pairs.slice(0, 6)) console.log(`  ${p.d.toFixed(2)}  ${p.pair}`);
+  if (near.length) ok = false;
+  // skin: a face may go pink under neon, amber by fire and silver-grey by moonlight, but never
+  // blue, green or yellow, never a black hole, a blown-out patch or neon orange
+  const bad: string[] = [];
+  const rows: Record<string, string>[] = [];
+  for (const n of names) {
+    const p = gradeParams(presetLook(n));
+    const row: Record<string, string> = { preset: n };
+    for (const [tone, hex] of Object.entries(SKIN_TONES)) {
+      const out = gradePixel(hexToRgb(hex), p);
+      const x = hsv(...out);
+      const hue = x.h > 180 ? x.h - 360 : x.h;
+      const L = luma(out);
+      row[tone] = `${hue.toFixed(0)}° s${x.s.toFixed(2)} L${L.toFixed(2)}`;
+      const fine = L > 0.15 && L < 0.95 && x.s < 0.9 && (x.s <= 0.12 || (hue >= -25 && hue <= 50));
+      if (!fine && n !== 'film-noir') bad.push(`${n} ${tone}: ${row[tone]}`);
+    }
+    rows.push(row);
+  }
+  console.log('skin (grade only; film noir exempt):');
+  console.table(rows);
+  if (bad.length) {
+    ok = false;
+    console.log(`  implausible skin: ${bad.join('; ')}`);
+  }
+  // mid tones (grey 0.15–0.80) never crushed to black or blown to white by the grade
+  const clipped: string[] = [];
+  for (const n of names) {
+    const p = gradeParams(presetLook(n));
+    for (let v = 0.15; v <= 0.801; v += 0.05) {
+      const out = gradePixel([v, v, v], p);
+      if (Math.max(...out) <= 3 / 255 || Math.min(...out) >= 252 / 255)
+        clipped.push(`${n} grey ${v.toFixed(2)}`);
+    }
+  }
+  if (clipped.length) {
+    ok = false;
+    console.log(`  clipped mid tones: ${clipped.join(', ')}`);
+  }
+  console.log(
+    `${ok ? 'PASS' : 'FAIL'}: nearest ${pairs[0]!.d.toFixed(2)} (${pairs[0]!.pair}), ` +
+      `${bad.length} implausible skin, ${clipped.length} clipped mid tones`,
+  );
+  return ok;
+}
+
 // ---- main ----------------------------------------------------------------------------------------
 
 async function main() {
   const { pos, o } = args(process.argv.slice(2));
+  if (o.check) {
+    if (!check()) process.exitCode = 1;
+    return;
+  }
   const dir = pos[0];
   const name = o.name;
   if (!dir || !name)

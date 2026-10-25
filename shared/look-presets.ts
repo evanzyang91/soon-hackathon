@@ -45,9 +45,10 @@ export const LOOK_PRESET_GROUPS: { label: string; presets: LookPresetName[] }[] 
 // stop) and the MOCK street with scripts/genre-looks.ts (docs/images/genre-presets-*.png): every
 // preset reads as its name and sits a clear step away from its nearest neighbour; skin stays skin
 // (except in film noir), so cold looks put their blue in the shadows, the fog and the sky rather
-// than in a white-balance shift that would turn faces blue (grade.test.ts checks distances, skin
-// and clipping). Fog and sky tint are per splat: fog density 0.3 hazes the far side of a street,
-// 0.5 swallows it; a sky tint keeps luminance, so a dark sky comes from a dark fog colour.
+// than in a white-balance shift that would turn faces blue. `scripts/genre-looks.ts --check`
+// checks distances, skin and clipping without a browser. Fog and sky tint are per splat: fog
+// density 0.3 hazes the far side of a street, 0.5 swallows it; a sky tint keeps luminance, so a
+// dark sky comes from a dark fog colour.
 export const LOOK_PRESETS: Record<LookPresetName, LookMood> = {
   // ---- daylight ------------------------------------------------------------------------------
   'daylight-neutral': mood({
