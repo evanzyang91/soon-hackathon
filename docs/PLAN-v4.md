@@ -61,6 +61,19 @@ breakdown, add photos → Generate), nothing else.
 **Keys**: 1–9 shots · C add shot · F frame · Space play · R record · V phone view · Tab next mode ·
 T tools · [ drawer · ? help.
 
+## The phone (2026-10-25)
+
+The phone is the handheld camera and nothing else. Its HUD keeps only what an operator needs while
+shooting: the shot name + lens as one quiet label, a connection dot, the shutter, record, a camera
+button, recenter as an icon, the joystick and height slider without captions, captions for lines, and
+the rotate prompt. Gone from the frame: the room code (start screen only), "live · director
+connected", heading/tilt/roll readouts, the drag/pinch hint (one toast on first run), "walk · 2× tap",
+the fps readout (`?perf=1`), the ACTION / Line › text buttons (one play/pause icon). The **camera
+button opens a small popover** listing the scene's shots (number · name · lens, the attached one
+marked), "Free (handheld)", and **"Add shot from here"**, which places the phone's current perspective
+as a new shot on both the laptop's shot list and the phone (`PhoneCommand` `select-camera` /
+`add-shot`; the laptop owns the list and broadcasts `SceneState.cameras`).
+
 ## Contracts (lead-owned, `shared/`)
 
 - `shared/shots.ts`: `Shot` { id, name, position, quaternion, fovDeg, heightM?, note?, frame?
