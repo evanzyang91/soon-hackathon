@@ -204,6 +204,11 @@ undo / redo and `?`, which opens a keyboard and mouse cheatsheet. A three-step t
 camera → pair the phone) shows once on first run; the cheatsheet can replay it. Every button has
 a hover hint.
 
+Suggested shots (Wide master, Two-shot, Over X's shoulder on Y, a Close-up per actor) are framed
+on the actors where they stand when the shot is used (`web/src/viewer/shots.ts`: after staging,
+drags and chat moves), not on the planner's blind marks (`plan.shots`, listed only for a scene
+without actors). A scene whose start camera is the server default opens on the Wide master.
+
 Everything in the viewport can be grabbed (`web/src/viewer/manipulate/`):
 
 - **Hover** outlines an actor, prop, light or dropped camera; **click** selects it: a ring on the

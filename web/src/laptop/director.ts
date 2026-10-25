@@ -6,7 +6,9 @@ import { SceneManifest, type Quat, type SuggestedShot, type Vec3 } from '@shared
 import type { RegionSelection } from '../viewer/edits/select';
 import type { TargetRef } from '../viewer/manipulate/edits';
 import { UndoStack } from '../viewer/manipulate/undo';
+import { colliderTriangles, rayHit, TriGrid } from '../viewer/placement';
 import { ViewportRenderer, type PipRect } from '../viewer/render';
+import { sceneShotActors, suggestShots } from '../viewer/shots';
 import { loadScene, type SceneRuntime, type SplatQuality } from '../viewer/world';
 import { downloadBlob } from './dom';
 import { FlyControls } from './fly-controls';
@@ -60,6 +62,12 @@ const q4 = (q: Quat) => new THREE.Quaternion(q[0], q[1], q[2], q[3]);
 const toVec3 = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
 const toQuat = (q: THREE.Quaternion): Quat => [q.x, q.y, q.z, q.w];
 const uid = () => Math.random().toString(36).slice(2, 10);
+/** The server's start camera (server/pipeline/project.ts START_CAMERA): nobody chose it. */
+const isDefaultStart = (c: { position: Vec3; quaternion: Quat }) =>
+  [0, 1.6, 0].every((v, i) => Math.abs(c.position[i]! - v) < 1e-6) &&
+  [0, 0, 0, 1].every((v, i) => Math.abs(c.quaternion[i]! - v) < 1e-6);
+/** How long after a scene opens its start view keeps re-framing the cast as it settles (ms). */
+const FRAME_CAST_MS = 10_000;
 
 export class Director {
   readonly view: ViewportRenderer;
@@ -123,6 +131,14 @@ export class Director {
   private hadPhone = false;
   private readonly frameHooks = new Set<(t: number) => void>();
   private lastLiveCamera = 0;
+  /** Collider grids for the suggested shots' line-of-sight checks, built once per scene. */
+  private readonly shotGrids = new WeakMap<SceneRuntime, TriGrid>();
+  /**
+   * The start view framing the cast (a scene with the default start camera): while the scene
+   * settles (collider placement, edits moving actors) it follows the cast, until the director
+   * moves the camera or selects something. `pose` is where it put the camera.
+   */
+  private castAim: { until: number; key: string; pose: number[] } | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.view = new ViewportRenderer(canvas);
@@ -206,8 +222,18 @@ export class Director {
       prev?.dispose();
       // the collider arrives after the scene opens: refresh the HUD (Collider button) then
       void rt.colliderReady.then((c) => c && this.runtime === rt && this.emit('scene'));
+      // the server's default start camera knows nothing of the cast: open on the Wide master
       const sc = rt.manifest.startCamera;
-      this.controls.flyTo(v3(sc.position), q4(sc.quaternion), sc.fovDeg, 0);
+      const wide = isDefaultStart(sc) ? this.suggestedShots()[0] : undefined;
+      const start = wide ?? sc;
+      this.controls.flyTo(v3(start.position), q4(start.quaternion), start.fovDeg, 0);
+      this.castAim = wide
+        ? { until: performance.now() + FRAME_CAST_MS, key: castKey(rt), pose: this.cameraPose() }
+        : null;
+      void rt.colliderReady.then(() => {
+        if (this.castAim && this.runtime === rt)
+          this.castAim.until = Math.max(this.castAim.until, performance.now() + 3000);
+      });
       const saved = storageGet<{ cameras: DropCamera[]; activeCameraId: string | null }>(
         this.storageKey(),
       );
@@ -310,8 +336,75 @@ export class Director {
     return cam;
   }
 
+  /**
+   * Suggested shots of the open scene from where its actors stand now (viewer/shots.ts): Wide
+   * master, Two-shot, Over X's shoulder on Y, a Close-up each. Framed for the narrower of this
+   * viewport and the phone's 16:9; camera spots behind a wall of the set are moved (collider).
+   * Empty without actors.
+   */
+  suggestedShots(): SuggestedShot[] {
+    const rt = this.runtime;
+    if (!rt) return [];
+    const { width, height } = this.view.size;
+    const sc = rt.manifest.startCamera.position;
+    return suggestShots(sceneShotActors(rt), (x, z) => rt.groundY(x, z), {
+      aspect: Math.min(PHONE_ASPECT, width > 0 && height > 0 ? width / height : PHONE_ASPECT),
+      audience: [sc[0], sc[2]],
+      hit: this.colliderHit(rt),
+    });
+  }
+
+  /** Distance from `from` toward `to` to the first collider surface (null: clear; no collider: none). */
+  private colliderHit(rt: SceneRuntime) {
+    const collider = rt.collider;
+    if (!collider) return undefined;
+    let grid = this.shotGrids.get(rt);
+    if (!grid) {
+      grid = new TriGrid(colliderTriangles(collider));
+      this.shotGrids.set(rt, grid);
+    }
+    const g = grid;
+    return (from: Vec3, to: Vec3): number | null => {
+      const d: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+      const len = Math.hypot(d[0], d[1], d[2]);
+      if (len < 1e-6) return null;
+      const near = g.query(
+        Math.min(from[0], to[0]) - 0.1,
+        Math.min(from[2], to[2]) - 0.1,
+        Math.max(from[0], to[0]) + 0.1,
+        Math.max(from[2], to[2]) + 0.1,
+      );
+      return rayHit(near, from, [d[0] / len, d[1] / len, d[2] / len], len);
+    };
+  }
+
+  private cameraPose(): number[] {
+    return [...this.camera.position.toArray(), ...this.camera.quaternion.toArray()];
+  }
+
+  /** Keeps the cast-framing start view on the cast while the scene settles (see `castAim`). */
+  private followCast(now: number) {
+    const aim = this.castAim;
+    const rt = this.runtime;
+    if (!aim || !rt) return;
+    const pose = this.cameraPose();
+    const moved = pose.some((v, i) => Math.abs(v - aim.pose[i]!) > 1e-5);
+    if (now > aim.until || moved || this.viewFromPhone || this.selection) {
+      this.castAim = null;
+      return;
+    }
+    const key = castKey(rt);
+    if (key === aim.key) return;
+    aim.key = key;
+    const wide = this.suggestedShots()[0];
+    if (!wide) return;
+    this.controls.flyTo(v3(wide.position), q4(wide.quaternion), wide.fovDeg, 0);
+    aim.pose = this.cameraPose();
+  }
+
   addShotAsCamera(shot: SuggestedShot) {
-    const cam: DropCamera = { id: uid(), ...shot, name: shot.name.slice(0, 40) };
+    const { position, quaternion, fovDeg } = shot;
+    const cam: DropCamera = { id: uid(), name: shot.name.slice(0, 40), position, quaternion, fovDeg };
     this.cameras = [...this.cameras, cam];
     if (!this.activeCameraId) this.activeCameraId = cam.id;
     this.camerasChanged();
@@ -658,6 +751,7 @@ export class Director {
     this.controls.update(Math.min(0.1, raw));
     const rt = this.runtime;
     rt?.update(Math.min(1, raw));
+    this.followCast(t);
     this.markers.sync(this.cameras, this.activeCameraId);
     this.updatePhone(t);
     for (const fn of this.frameHooks) {
@@ -754,4 +848,13 @@ export class Director {
     this.phoneGizmo.dispose();
     this.view.dispose();
   }
+}
+
+/** Where the cast stands (cm) and whether the collider is in: a change re-frames the start view. */
+function castKey(rt: SceneRuntime): string {
+  const spots = [...rt.actors.values()].map(
+    (a) =>
+      `${a.characterId}:${[a.object.position.x, a.object.position.z, a.object.rotation.y].map((v) => v.toFixed(2)).join(',')}`,
+  );
+  return `${rt.collider ? 1 : 0}|${spots.join('|')}`;
 }
