@@ -11,6 +11,7 @@ import { floorOffset } from '../viewer/transform';
 import type { Director } from './director';
 import { byId, h } from './dom';
 import { scaleHeadline } from './hud';
+import { icon } from './icons';
 import type { LookPanel } from './look-panel';
 import type { Manipulation } from './manipulate';
 import { sceneReady, type ProjectsPanel } from './projects-panel';
@@ -43,7 +44,7 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
     const p = projects.current();
     scenes.replaceChildren();
     if (!director.runtime && !p) {
-      scenes.append(h('div', { class: 'muted small' }, 'Open a scene from the projects drawer (☰).'));
+      scenes.append(h('div', { class: 'empty' }, 'Open a scene from the projects drawer.'));
       return;
     }
     const title = p?.title || director.runtime?.manifest.plan.slug || '';
@@ -116,7 +117,7 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
     const rt = director.runtime;
     cast.replaceChildren();
     if (!rt) {
-      cast.append(h('div', { class: 'muted small' }, 'No scene open.'));
+      cast.append(h('div', { class: 'empty' }, 'No scene open.'));
       return;
     }
     const builds = new Map((p?.actors ?? []).map((a) => [a.characterId, a]));
@@ -168,7 +169,7 @@ export function mountSceneTab(director: Director, projects: ProjectsPanel, look:
       { class: `st-object${selected(r) ? ' selected' : ''}`, 'data-testid': 'object-row', 'data-type': r.type, 'data-id': r.id },
       h('button', { type: 'button', class: 'link', title: 'Select in the view', onclick: () => director.select(selected(r) ? null : r) }, name),
       h('span', { class: 'muted small' }, kind),
-      deletable ? h('button', { type: 'button', class: 'icon', title: `Delete (⌫ in the view; ⌘Z brings it back)`, onclick: () => manip.manipulator.remove(r) }, '×') : null,
+      deletable ? h('button', { type: 'button', class: 'icon', title: `Delete (⌫ in the view; ⌘Z brings it back)`, 'aria-label': 'Delete', onclick: () => manip.manipulator.remove(r) }, icon('close')) : null,
     );
 
   const renderObjects = () => {

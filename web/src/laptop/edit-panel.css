@@ -1,123 +1,119 @@
-/* Edit tab (edit-panel.ts): scoped re-prompting */
+/* Edit tab (edit-panel.ts): scoped re-prompting. Tokens and controls come from style.css. */
 .edit-panel {
-  gap: 8px;
-}
-.edit-panel h2 .on {
-  background: #4a3a12;
-  border-color: var(--warn);
+  gap: var(--s3);
 }
 .edit-input {
   display: flex;
-  gap: 6px;
   align-items: stretch;
+  gap: var(--s2);
 }
 .edit-prompt {
   flex: 1;
+  min-height: 56px;
   resize: vertical;
-  min-height: 40px;
+}
+.edit-input > button {
+  align-self: flex-end;
 }
 .edit-selrow {
-  gap: 4px;
-  align-items: center;
+  gap: 2px;
+}
+.edit-selinfo {
+  margin-right: auto;
 }
 .edit-result {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s1);
 }
-.edit-summary {
-  line-height: 1.45;
+.edit-result:empty {
+  display: none;
 }
 .edit-question {
-  color: var(--accent-2);
+  color: var(--warn);
 }
-.chip {
-  display: inline-block;
-  padding: 0 6px;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  border: 1px solid var(--line);
-  background: #222a35;
-  color: var(--text);
-  vertical-align: 1px;
-}
-.chip.scope-look {
-  background: #1f3550;
-  border-color: #2f5f93;
-}
-.chip.scope-transform {
-  background: #24402f;
-  border-color: #3a7a52;
-}
-.chip.scope-prop {
-  background: #3a2f4f;
-  border-color: #6a54a0;
-}
-.chip.scope-region {
-  background: #4a3a12;
-  border-color: var(--warn);
+/* the planner's scope: a .tag (style.css); a world regen (minutes and credits) in warn */
+.chip[class*='scope-'] {
+  margin-right: 2px;
 }
 .chip.scope-regen {
-  background: #4f1f24;
-  border-color: var(--bad);
+  color: var(--warn);
 }
-.chip.scope-clarify {
-  background: #333a44;
-}
+/* a regen to confirm, or a region awaiting Apply: a thin left rule */
 .edit-card {
-  border: 1px solid var(--warn);
-  border-radius: 6px;
-  padding: 8px;
-  background: #241f12;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s2);
+  padding: 2px 0 2px var(--s3);
+  box-shadow: inset 2px 0 0 var(--warn);
 }
 .edit-h3 {
   display: flex;
   align-items: center;
-  margin: 4px 0 0;
-  font-size: 12px;
-  text-transform: uppercase;
+  gap: var(--s2);
+  min-height: var(--ctl-sm);
+  margin: var(--s3) 0 0;
+  font-size: var(--fs-xs);
+  font-weight: 500;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
+}
+.edit-h3 button {
+  box-shadow: none;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.edit-h3 button:hover:not(:disabled) {
+  color: var(--text);
 }
 .edit-history {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow: auto;
+  gap: var(--s4);
   min-height: 0;
+  overflow: auto;
+}
+.edit-history > .muted:only-child {
+  padding: var(--s3) var(--s2);
+  text-align: center;
 }
 .edit-entry {
-  border-top: 1px solid var(--line);
-  padding-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.edit-entry-head b {
+  font-weight: 500;
 }
 .edit-op {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--s2);
+  min-height: var(--ctl-sm);
+  font-size: var(--fs-sm);
 }
 .edit-banner {
   position: absolute;
-  top: 44px;
+  top: 52px;
   left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: rgba(36, 31, 18, 0.92);
-  border: 1px solid var(--warn);
-  color: var(--accent-2);
-  font-weight: 600;
-  pointer-events: none;
   z-index: 5;
+  padding: var(--s2) var(--s3);
+  transform: translateX(-50%);
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+  background: var(--scrim);
+  box-shadow: inset 2px 0 0 var(--warn);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 #stage.edit-target {
-  outline: 2px solid var(--warn);
-  outline-offset: -2px;
+  outline: 1.5px solid var(--warn);
+  outline-offset: -1.5px;
 }
 canvas.edit-picking {
   cursor: crosshair;
@@ -125,13 +121,13 @@ canvas.edit-picking {
 .edit-rect,
 .edit-target-box {
   position: absolute;
-  border: 1.5px dashed var(--accent-2);
-  background: rgba(255, 210, 63, 0.08);
-  pointer-events: none;
   z-index: 4;
+  border: 1.5px dashed var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  pointer-events: none;
 }
 .edit-target-box {
   border-style: solid;
-  border-color: #4fe0ff;
-  background: rgba(79, 224, 255, 0.06);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }

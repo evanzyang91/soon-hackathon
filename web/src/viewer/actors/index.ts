@@ -244,7 +244,8 @@ export async function createActor(
   object.userData.actorKind = body.kind;
   object.add(body.root);
 
-  const label = textSprite(character.name, { h: 0.11, bg: 'rgba(15,18,24,0.72)', fg: '#ffffff' });
+  // the name: small and thin on a translucent pill
+  const label = textSprite(character.name, { h: 0.075, bg: 'rgba(12,13,15,0.5)', fg: 'rgba(255,255,255,0.88)', weight: 500, tracking: 0.08 });
   object.add(label.sprite);
   const caption = textSprite(`${character.name} ▸`, {
     h: 0.1,

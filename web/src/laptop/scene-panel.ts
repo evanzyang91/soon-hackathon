@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { newRoom } from './api';
 import type { Director } from './director';
 import { byId, fmtTime, h } from './dom';
+import { icon } from './icons';
 import { storageDel, storageGet, storageSet } from './storage';
 
 function isLocalHost(url: string) {
@@ -152,8 +153,8 @@ export function mountScenePanel(director: Director) {
           h('span', { class: 'muted small' }, `${Math.round(c.fovDeg)}°`),
           h(
             'button',
-            { class: 'icon', title: 'Delete', onclick: () => director.removeCamera(c.id) },
-            '×',
+            { class: 'icon', title: 'Delete', 'aria-label': 'Delete', onclick: () => director.removeCamera(c.id) },
+            icon('close'),
           ),
         ),
       );
@@ -181,8 +182,8 @@ export function mountScenePanel(director: Director) {
           h('span', { class: 'muted small' }, `${Math.round(s.fovDeg)}°`),
           h(
             'button',
-            { class: 'icon', 'data-testid': 'shot-add', title: 'Add as camera', onclick: () => director.addShotAsCamera(now()) },
-            '+',
+            { class: 'icon', 'data-testid': 'shot-add', title: 'Add as camera', 'aria-label': 'Add as camera', onclick: () => director.addShotAsCamera(now()) },
+            icon('plus'),
           ),
         ),
       );
