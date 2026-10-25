@@ -72,7 +72,8 @@ export type Blocking = z.infer<typeof Blocking>;
  * the label). Modern traffic: car, bus, truck, motorcycle, bicycle, pedestrian. Any era: bird, dog,
  * horse (ridden when the label says so), wagon (a horse-drawn cart or stagecoach), boat (on water).
  * Fantasy / sci-fi: dragon (a large winged creature, flies), drone (a small hovering machine),
- * spacecraft (a flying ship). generic = a plain marker for anything else.
+ * spacecraft (a flying ship). generic = a plain marker for anything else. model = a glTF binary
+ * the director imported or had generated (`DynamicElement.model`), drawn as is.
  */
 export const DynamicElementKind = z.enum([
   'car',
@@ -90,16 +91,35 @@ export const DynamicElementKind = z.enum([
   'drone',
   'spacecraft',
   'generic',
+  'model',
 ]);
 export type DynamicElementKind = z.infer<typeof DynamicElementKind>;
+
+/** A prop's own 3D model (kind 'model'): a .glb in the project (imported or generated). */
+export const PropModel = z.object({
+  /** Project-root relative path of the glTF binary: "uploads/<sha16>.glb" or "props/<jobId>/model.glb". */
+  file: z.string(),
+  /** Standing height in metres the model is scaled to (its bounding box); absent = 1 m. */
+  heightM: z.number().positive().max(100).optional(),
+  /** Radians added to the heading so the model's front faces its direction of travel (models differ). */
+  yawOffset: z.number().optional(),
+  /** Where it came from, for the UI: the file name, or the generation prompt. */
+  source: z.string().max(200).optional(),
+});
+export type PropModel = z.infer<typeof PropModel>;
 export const DynamicElement = z.object({
   id: z.string(),
   kind: DynamicElementKind,
   label: z.string(), // "a red sedan drives past"
-  /** Looped path in world meters; the prop faces its direction of travel. */
-  path: z.array(Vec3).min(2),
-  /** Meters per second. */
-  speed: z.number().positive(),
+  /**
+   * Looped path in world meters; the prop faces its direction of travel. One point (or speed 0)
+   * = a static prop standing there, facing -Z plus its yaw… the viewer treats it as parked.
+   */
+  path: z.array(Vec3).min(1),
+  /** Meters per second; 0 = static. */
+  speed: z.number().nonnegative(),
+  /** kind 'model' only: the glTF binary to draw. */
+  model: PropModel.optional(),
   loop: z.boolean().default(true),
   /** Seconds of pause at the end of the path before looping. */
   pauseSeconds: z.number().nonnegative().default(2),
@@ -414,3 +434,27 @@ export const ProjectStatus = z.object({
   chatRevision: z.number().int().nonnegative().optional(),
 });
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
+
+// ---------------------------------------------------------------------------
+// Prop generation (docs/PLAN-v4.md "Props by import or by prompt")
+// ---------------------------------------------------------------------------
+
+export const PropJob = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sceneIndex: z.number().int().nonnegative(),
+  prompt: z.string().max(300),
+  status: z.enum(['pending', 'running', 'done', 'failed']),
+  /** What is happening now: "drawing the reference image", "meshing on Modal (cold start)". */
+  note: z.string().optional(),
+  startedAt: z.string(),
+  finishedAt: z.string().optional(),
+  /** The reference image used, project-root relative, once drawn. */
+  image: z.string().optional(),
+  /** The result, once done (file is project-root relative). */
+  model: PropModel.optional(),
+  /** Spend for this job, USD (image + GPU seconds), best effort. */
+  costUsd: z.number().optional(),
+  error: z.string().optional(),
+});
+export type PropJob = z.infer<typeof PropJob>;
