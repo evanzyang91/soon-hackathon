@@ -214,6 +214,9 @@ const DEFAULT_SPEED: Record<DynamicElement['kind'], number> = {
   dragon: 10,
   drone: 4,
   spacecraft: 15,
+  airplane: 25,
+  helicopter: 12,
+  creature: 3,
   generic: 3,
   model: 0,
 };
