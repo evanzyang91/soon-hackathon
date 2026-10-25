@@ -8,6 +8,8 @@ import { editsRoute, editsStoreFor, handleEditsRequest } from './edits.ts';
 import { handleShotsRequest, shotsRoute, shotsStoreFor } from './shots.ts';
 import { handleRepromptRequest, repromptRoute } from './reprompt/routes.ts';
 import { chatRoute, handleChatRequest, type ChatRouteOptions } from './chat/routes.ts';
+import { handlePropsRequest, propJobsFor, propsRoute } from './props.ts';
+import { handleModelUpload, isModelUpload } from './prop-upload.ts';
 
 export const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -105,6 +107,10 @@ export function createPipelineHandler(
     if (shotsRoute(parts)) return handleShotsRequest(req, res, parts, shotsStoreFor(getStore()));
     // POST /api/projects/:id/scenes/:n/reprompt | regen (scoped re-prompting, server/pipeline/reprompt/)
     if (repromptRoute(parts)) return handleRepromptRequest(req, res, parts, getStore());
+    // POST …/props/generate, GET …/props/:jobId (props by prompt, server/pipeline/props.ts)
+    if (propsRoute(parts)) return handlePropsRequest(req, res, parts, propJobsFor(getStore()));
+    // POST …/uploads with a .glb (a prop's model, server/pipeline/prop-upload.ts); images go on to chat/
+    if (isModelUpload(parts, req, url)) return handleModelUpload(req, res, parts, url, getStore());
     // uploads, chat, chat/confirm, generate (project chat, server/pipeline/chat/)
     if (chatRoute(parts)) return handleChatRequest(req, res, parts, url, getStore(), opts.chat);
     const rebuild = parts.length === 6 && parts[3] === 'actors' && parts[5] === 'rebuild';

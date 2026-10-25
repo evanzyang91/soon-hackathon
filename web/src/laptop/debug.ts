@@ -45,7 +45,11 @@ export interface PrevizDebugState {
     placementCorrected: boolean;
     placement: { status: string; from: number[]; to: number[] } | null;
   }[];
-  dynamics: { id: string; position: number[]; phase: string }[];
+  /**
+   * The screenplay's background action, then the props prop-add edits added (imported /
+   * generated models among them: `model` = 'loading' | 'ready' | 'failed' while their .glb loads).
+   */
+  dynamics: { id: string; position: number[]; phase: string; kind?: string; added?: boolean; visible?: boolean; model?: string }[];
   /**
    * Dialogue audio: WebAudio context state, actors whose voice is playing, loudest level now
    * (0..1); `heard` / `peak`: who played and how loud during the current / last line (sampled
@@ -143,7 +147,10 @@ export function installDebugHook(director: Director) {
           placement,
         };
       }),
-      dynamics: rt?.dynamics.positions() ?? [],
+      dynamics: [
+        ...(rt?.dynamics.positions() ?? []),
+        ...(rt?.sceneEdits?.addedProps().map((p) => ({ ...p, added: true })) ?? []),
+      ],
       voice: voice(),
     };
   };

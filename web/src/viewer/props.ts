@@ -1441,7 +1441,7 @@ export const DEFAULT_COLOR: Record<DynamicElement['kind'], string> = {
 };
 
 const BUILDERS: Record<DynamicElement['kind'], (color: string, label: string) => Prop> = {
-  // kind 'model' draws DynamicElement.model (a glTF binary); until the props package lands it is the marker
+  // kind 'model' with its DynamicElement.model is drawn by model-prop.ts (createElementProp); this marker is for one without
   model: generic,
   // label-driven bodies in props-more.ts
   airplane,
