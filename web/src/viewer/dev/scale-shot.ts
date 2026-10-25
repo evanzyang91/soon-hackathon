@@ -1,5 +1,6 @@
 // What server/pipeline/calibrate-render.ts asks the scale harness (scale-harness.ts) to draw.
 // Types only, shared by the Node side and the browser page.
+import type { Look } from '@shared/look';
 
 export interface ScaleWorld {
   /** URL of the SPZ (served by the render server). */
@@ -60,6 +61,12 @@ export interface ScaleShot {
   marks?: ScaleMark[];
   /** default png; jpeg (q 0.9) keeps vision requests small */
   format?: 'png' | 'jpeg';
+  /**
+   * Grade the frame with this look exactly as the laptop does: the scene's SceneLook (splat fog,
+   * sky tint, lights on splats and mannequins) and the look post pass (grade, LUT, film). Absent =
+   * the raw frame, as before.
+   */
+  look?: Look;
 }
 
 export interface ScalePanel {
@@ -69,9 +76,16 @@ export interface ScalePanel {
   subtitle?: string;
 }
 
+export interface ComposeOptions {
+  /** Panels per row (default: all in one row). A grid uses smaller titles sized to the panels. */
+  columns?: number;
+  /** A heading line over the whole sheet. */
+  heading?: string;
+}
+
 export interface ScaleHarness {
   load(world: ScaleWorld): Promise<{ splats: number }>;
   render(shot: ScaleShot): Promise<string>;
-  /** Panels side by side with a title strip each and footer lines under all of them. */
-  compose(panels: ScalePanel[], footer: string[]): Promise<string>;
+  /** Panels side by side (or in rows of `columns`) with a title strip each and footer lines under all of them. */
+  compose(panels: ScalePanel[], footer: string[], opts?: ComposeOptions): Promise<string>;
 }

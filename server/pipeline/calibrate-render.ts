@@ -8,7 +8,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WorldAsset } from '../../shared/schema.ts';
-import type { ScaleHarness, ScalePanel, ScaleShot } from '../../web/src/viewer/dev/scale-shot.ts';
+import type { ComposeOptions, ScaleHarness, ScalePanel, ScaleShot } from '../../web/src/viewer/dev/scale-shot.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const plainFile = (f: string) => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(f);
@@ -16,7 +16,11 @@ export const GPU_ARGS = ['--ignore-certificate-errors', '--use-angle=metal', '--
 
 export interface WorldRenderer {
   shot(s: ScaleShot): Promise<Buffer>;
-  compose(panels: { image: Buffer; title: string; subtitle?: string }[], footer: string[]): Promise<Buffer>;
+  compose(
+    panels: { image: Buffer; title: string; subtitle?: string }[],
+    footer: string[],
+    opts?: ComposeOptions,
+  ): Promise<Buffer>;
   close(): Promise<void>;
 }
 
@@ -45,8 +49,10 @@ export async function openWorldRenderer(
     cacheDir: join(repo, 'node_modules/.vite-calibrate'),
     resolve: { alias: { '@shared': join(repo, 'shared') } },
     server: { port: 0, host: '127.0.0.1', hmr: false, watch: null },
+    // pre-bundled up front: a dependency found while the page runs makes Vite reload it mid-shot
+    // (zod comes in with @shared/look for graded shots)
     optimizeDeps: {
-      include: ['three', 'three/addons/loaders/GLTFLoader.js', '@sparkjsdev/spark'],
+      include: ['three', 'three/addons/loaders/GLTFLoader.js', '@sparkjsdev/spark', 'zod'],
     },
     plugins: [
       {
@@ -105,15 +111,15 @@ export async function openWorldRenderer(
         if (errors.length) throw new Error(`render page error: ${errors[0]}`);
         return dataUrlToPng(png);
       },
-      async compose(panels, footer) {
+      async compose(panels, footer, opts) {
         const p: ScalePanel[] = panels.map((x) => ({
           image: `data:image/png;base64,${x.image.toString('base64')}`,
           title: x.title,
           subtitle: x.subtitle,
         }));
         const png = await page.evaluate(
-          ([ps, f]) => (window as unknown as { __scale: ScaleHarness }).__scale.compose(ps, f),
-          [p, footer] as const,
+          ([ps, f, o]) => (window as unknown as { __scale: ScaleHarness }).__scale.compose(ps, f, o),
+          [p, footer, opts ?? {}] as const,
         );
         return dataUrlToPng(png);
       },
