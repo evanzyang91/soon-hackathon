@@ -129,29 +129,7 @@ body.chat-docked.chat-wide #left {
 }
 .chat-hero p {
   max-width: 520px;
-  margin: 0 auto var(--s4);
-}
-.chat-examples {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--s2);
-}
-.chat-example {
-  display: inline-flex;
-  align-items: center;
-  height: var(--ctl-sm);
-  padding: 0 var(--s2);
-  border: none;
-  border-radius: var(--radius);
-  font: 400 var(--fs-sm) / 1 var(--font);
-  color: var(--muted);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--hairline);
-}
-button.chat-example:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--hover);
+  margin: 0 auto var(--s2);
 }
 #left .chat-hero h1 {
   display: none;
@@ -163,9 +141,6 @@ button.chat-example:hover:not(:disabled) {
   margin-bottom: var(--s2);
   font-size: var(--fs-sm);
   text-align: left;
-}
-#left .chat-examples {
-  justify-content: flex-start;
 }
 
 /* ---- messages ----------------------------------------------------------------------------------- */

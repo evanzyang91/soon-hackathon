@@ -20,6 +20,19 @@ const PATHS = {
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   minus: '<path d="M3.5 8h9"/>',
   'chevron-down': '<path d="m4.5 6.25 3.5 3.5 3.5-3.5"/>',
+  // for the v4 structure (docs/PLAN-v4.md): Export, Tools, Camera mode, help, reorder, delete
+  export:
+    '<path d="M8 10V2.75M5.25 5.5 8 2.75l2.75 2.75"/><path d="M3 9.5v2.75c0 .55.45 1 1 1h8c.55 0 1-.45 1-1V9.5"/>',
+  download:
+    '<path d="M8 2.75V10M5.25 7.25 8 10l2.75-2.75"/><path d="M3 9.5v2.75c0 .55.45 1 1 1h8c.55 0 1-.45 1-1V9.5"/>',
+  tools:
+    '<path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/>',
+  camera:
+    '<rect x="1.75" y="4.25" width="9" height="7.5" rx="1.5"/><path d="m10.75 7 3.5-2v6l-3.5-2"/>',
+  help: '<circle cx="8" cy="8" r="6"/><path d="M6.4 6.3a1.65 1.65 0 1 1 2.3 1.5c-.45.2-.7.55-.7 1.05v.35"/><path d="M8 11.1v.05"/>',
+  grip: '<path d="M6 4h.01M10 4h.01M6 8h.01M10 8h.01M6 12h.01M10 12h.01" stroke-width="2"/>',
+  trash:
+    '<path d="M3 4.5h10M6.5 4.5V3h3v1.5"/><path d="m4.5 4.5.6 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;
