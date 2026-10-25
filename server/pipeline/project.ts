@@ -1455,6 +1455,8 @@ export class ProjectStore {
           name: `${st.title} · ${scene.heading}`,
           regen,
           mock: st.mock || !this.keys.marble,
+          // MOCK / dry run: the regenerated stand-in is the set that fits the scene, like a first build
+          mockSet: pickMockSet(scene, (await this.plan(id))?.style),
           log: stageLog,
           model: this.model,
           ...(imagePrompt ? { photo: { file: imagePrompt.file, isPano: imagePrompt.isPano, source: photo!.source } } : {}),
