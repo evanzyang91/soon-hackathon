@@ -23,6 +23,13 @@ export default defineConfig({
   cacheDir: process.env.VITE_CACHE_DIR || undefined,
   // Every browser dependency, so a cold start never discovers one late and full-reloads the page.
   optimizeDeps: {
-    include: ['three', 'three/addons/loaders/GLTFLoader.js', '@sparkjsdev/spark', 'qrcode', 'zod'],
+    include: [
+      'three',
+      'three/addons/loaders/GLTFLoader.js',
+      'three/addons/utils/SkeletonUtils.js', // props of kind 'model' (viewer/model-prop.ts)
+      '@sparkjsdev/spark',
+      'qrcode',
+      'zod',
+    ],
   },
 });
