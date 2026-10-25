@@ -3,12 +3,50 @@
 Paste a short-film screenplay and get one walkable 3D scene per screenplay scene: a World Labs
 Marble gaussian-splat world, the characters standing in it as LHM gaussian avatars (or a tinted
 mannequin), their dialogue voiced with TTS, and moving props for the action lines ("a red sedan
-drives past"). Fly around the scene on the laptop, drop virtual cameras, then pair a phone in its
-browser and use it as the handheld camera: its orientation sensors pan, tilt and roll
-the shot, its accelerometer adds handheld sway, and its frustum and live view appear on the
-laptop while the actors speak their lines.
+drives past"). Block the scene on the laptop, plan its coverage as a numbered shot list with
+frame grabs and lenses, then pair a phone in its browser and use it as the handheld
+camera: its orientation sensors pan, tilt and roll the shot, its accelerometer adds handheld sway,
+and its frustum and live view appear on the laptop while the actors speak their lines. Export a
+storyboard and a shot list for the crew.
 
 ![Real pipeline, scene 0: a Marble street, the LHM avatar for MAYA and the THEO mannequin](docs/images/real-pipeline-scene-0.png)
+
+## How a filmmaker uses it
+
+A director, a DP or a student with a script and a shoot coming up wants to know, before anyone
+builds a set or books a location: does the scene work on its feet, where does everyone stand, what
+are the shots, and how do I show the crew. The laptop follows that order, **Script → Scenes →
+Blocking → Coverage → Shoot → Share**, in three modes on the right (**Scene · Shots · Camera**, Tab
+steps through them) and an **Export** menu; everything else is a tool under **Tools** (`T`).
+
+1. **Script.** Paste the screenplay into the chat and press Send: the breakdown comes back as a
+   plan card with the cast, the locations, day or night and the lines. Change it in words, attach
+   photos of the people and places, and press Generate.
+2. **Scenes.** Each scene opens in the viewport already graded with the planner's look, and the
+   **Scene** mode names it (`Sc 1 · EXT. FRONTIER TOWN MAIN STREET - DAY` in the top bar too). The
+   moods are a row of named swatches with the planner's choice marked; one click tries another.
+3. **Blocking.** The cast stands on marks you can drag in the view, with each actor's height, pose
+   and eye line, and Back to mark when you went too far. Click a line to hear it in place, or Play
+   scene to run the dialogue with the background action (each moving prop can be switched off).
+4. **Coverage.** The **Shots** mode is a numbered shot list (1A, 1B…) seeded with coverage framed on
+   where the cast stands: a wide master, a two-shot, over-the-shoulders and close-ups, each with a
+   frame grab, a lens in mm, the camera height, a note and the lines it covers. **C** adds the view
+   as a shot, **1–9** jump between shots behind a 16:9 or 2.39 frame guide, and the list is saved
+   with the project.
+5. **Shoot.** In **Camera** mode a phone scans the QR and becomes the handheld camera on the
+   selected shot. Takes are recorded with the dialogue and land in the Takes list to play back or
+   download.
+6. **Share.** **Export** composes a storyboard sheet of the scene's frames with numbers, lenses,
+   heights and lines (PNG, or a print page to save as PDF). The shot list of every scene downloads
+   as CSV for the schedule.
+
+| | |
+| --- | --- |
+| ![1 · Script: the empty chat says the three steps](docs/images/flow-1-script.png) | ![2 · Scenes: the Scene mode with the mood swatches](docs/images/flow-2-scenes.png) |
+| ![3 · Blocking: an actor on their mark, a line playing](docs/images/flow-3-blocking.png) | ![4 · Coverage: the shot list with frames, 1B selected behind its frame guide](docs/images/flow-4-coverage.png) |
+| ![5 · Shoot: the Camera mode with a take open](docs/images/flow-5-camera.png) | ![Tools: grade, re-prompt, objects, developer](docs/images/flow-tools.png) |
+
+![6 · Share: the storyboard sheet Export composes (PNG)](docs/images/flow-6-export.png)
 
 ## Architecture
 
@@ -33,8 +71,9 @@ laptop while the actors speak their lines.
         │                         ▲ PhonePose ≤ 30 Hz (relay stamps phoneId)
         ▼                         │ SceneState (scene, clock, cameras, speaking line), commands
  web/  (three.js + Spark)         │
-   /              laptop director: project chat, scene list + pipeline bars, fly, drop cameras, phone frustum
-                  gizmo + picture-in-picture of the phone view, dialogue playback, take recorder
+   /              laptop director: project chat, scene list + pipeline bars, Scene / Shots / Camera
+                  modes, shot list with frames, phone frustum + picture-in-picture, dialogue
+                  playback, take recorder, storyboard / CSV export, Tools drawer
    /phone.html    phone camera: sensors → pose, renders the same scene from the phone's pose
    viewer/        shared loader: SPZ world (Marble OpenCV → metric, floor at y = 0), collider,
                   actors (rigged LHM avatars performing shared HY-Motion clips, skinned on the
@@ -81,19 +120,19 @@ The header badge says `MOCK` or `LIVE`; hover it to see which keys are set.
    segment for the detail; a red (failed) or amber (fallback) segment, or the "… failed · retry"
    label, can be clicked to retry.
 3. The first ready scene opens on its own; click any ready row to switch.
-4. The **Scene** tab (right panel) lists the open project's scenes, the world (splat quality,
-   measured scale, floor offset) and the cast: one row per character with its height (`1.80 m`,
-   see [Actor heights](#actor-heights)), build detail
-   (`standard` / `high`), kind (`splat` / `mannequin`) and a `fallback` flag. **High detail (~5 min
-   per actor)** rebuilds that character with LHM-1B plus a fine-tune against its reference image
-   (see below).
+4. The **Scene** mode (right panel) names the scene, steps through the project's scenes, offers the
+   moods, and lists the cast: one row per character with its height (`1.80 m`, see
+   [Actor heights](#actor-heights)), build detail (`standard` / `high`), kind (`avatar` /
+   `mannequin`), a `fallback` flag, pose and eye line. **High detail (~5 min per actor)** rebuilds
+   that character with LHM-1B plus a fine-tune against its reference image (see below). The world's
+   splat quality, measured scale and floor offset are in **Tools › Developer**.
 
 ## High detail actors
 
 The standard actor is LHM-500M from one generated reference photo: right silhouette, soft face
 and clothing. **High detail (~5 min per actor)** in the project panel (tooltip: "LHM-1B +
 fine-tune against the reference. About 5 minutes and ~$0.20 per actor on Modal; the current build
-stays until the new one lands.") in the Scene tab's cast calls `POST /api/projects/:id/actors/:characterId/rebuild
+stays until the new one lands.") in the Scene mode's cast calls `POST /api/projects/:id/actors/:characterId/rebuild
 {detail: 'high'}` (202). The server runs `worker/run_actor.py --detail high` in the background into
 `<project>/actors/<id>/high/`; the cast row's status reads `rebuilding Leo · ~5 min · 1:23` with the elapsed
 time. When the build lands, every scene manifest showing the character is rewritten to it
@@ -142,7 +181,7 @@ A photo attached in the project chat becomes `Character.referenceImage` (a perso
   change just rescales the same person, no GPU). Both show progress on the world stage / the
   cast's rebuild status, are idempotent while running and resume after a restart.
 
-The laptop shows the photo next to the character in the Scene tab's cast and next to the Marble
+The laptop shows the photo next to the character in the Scene mode's cast and next to the Marble
 thumbnail in the projects drawer. One live run on `fixtures/real-samples/reference-512.jpg` (a
 generated person standing in for the director's photo): about $0.10 for the image edit and $0.036
 of L4 (87 s), 330 s wall clock.
@@ -196,7 +235,8 @@ turns it into a `clip` the actor plays once from the beat's start, locked to the
 
 ## Look development
 
-The right panel's **Look** tab grades the open scene, and the paired phone renders the same frame.
+**Tools › Grade** grades the open scene, and the paired phone renders the same frame (the Scene
+mode's mood swatches apply the full-look presets in one click).
 Groups: **Exposure & grade** (exposure in stops, contrast about mid grey, saturation, white-balance
 temperature / tint, shadows, highlights), **Film** (LUT preset + strength, vignette, animated
 grain, bloom), **Atmosphere** (fog colour + density, sky tint), **Lens** (depth of field: focus
@@ -205,8 +245,8 @@ distance, f-stop; **Pick focus** or Alt+click the view focuses on the splat unde
 **Place at camera**; "Scene light" scales the captured lighting). The header has a name, presets
 (twelve LUTs and eighteen looks in three groups, plus **Scene's look**, the planner's suggestion), undo / redo
 (⌘Z / ⇧⌘Z, 50 steps), per-group **Reset** and a **Compare** button that shows the ungraded frame
-while held. A dropped camera can get its own lens ("Own lens for camera …"); the phone attached
-to it uses that lens.
+while held. A shot can get its own lens ("Own lens for shot …"); the phone attached to it uses
+that lens.
 
 Every change renders on the next frame and is saved to `scene-<n>/edits.json` 300 ms after the
 last one (`GET / PUT /api/projects/:id/scenes/:n/edits`, revision-checked). While a change is
@@ -267,8 +307,8 @@ airless sky.
 does not exist yet, it writes one with the seeded look, `revision 1`, and the history entry
 "suggested look from the plan". An existing edits.json is never touched: the director's grade
 always wins. The laptop's top bar shows the name (`look: Enchanted · misty, vast, soft`), and the
-phone shows it as a toast. In the Look tab, the eighteen looks are grouped Daylight / Night &
-interiors / Genre. **Scene's look** (a button, and the first entry of the presets list) goes back to
+phone shows it as a toast. The Scene mode shows the eighteen looks as swatches (the planner's
+marked); in Tools › Grade they are grouped Daylight / Night & interiors / Genre. **Scene's look** (a button, and the first entry of the presets list) goes back to
 the plan's suggestion and keeps the director's lights and lens. It is lit while the look on screen
 is the plan's.
 
@@ -358,21 +398,76 @@ the city street and the bus stop, warm interior for the kitchen, golden hour for
 
 ## Laptop layout and direct manipulation
 
-The director page has a slim projects drawer on the left (the project chat above every project
-and its scenes; the top bar's drawer button or `[` collapses it), the viewport, and a right panel
-with four tabs: **Scene** (the
-project's scenes, world quality and scale, cast with High detail, and an outliner of the props,
-lights and cameras), **Look** (grade / lens / lights), **Edit** (re-prompting: describe a change in
-words) and **Shoot** (phone pairing, scene clock, takes, cameras, suggested shots, dialogue). The
-top bar shows the scene title with its scale badge, the look's name, the clock with Play / Pause,
-and a ⋯ menu with undo / redo and the keyboard and mouse cheatsheet (also `?`). A three-step tour (fly → drop a
-camera → pair the phone) shows once on first run; the cheatsheet can replay it. Every button has
-a hover hint.
+The director page has the script drawer on the left (the project chat above every project and its
+scenes; the top bar's drawer button or `[` collapses it), the viewport, and the right panel's three
+modes, in the order of the work (Tab steps through them):
 
-Suggested shots (Wide master, Two-shot, Over X's shoulder on Y, a Close-up per actor) are framed
-on the actors where they stand when the shot is used (`web/src/viewer/shots.ts`: after staging,
-drags and chat moves), not on the planner's blind marks (`plan.shots`, listed only for a scene
-without actors). A scene whose start camera is the server default opens on the Wide master.
+- **Scene**: the heading with interior / exterior and time of day, the project's scenes as a
+  strip (`Sc 1`, `Sc 2`), **Mood** (the eighteen full-look presets as named swatches you can scroll,
+  the planner's choice marked with a dot, **Scene's look** first; a click applies the preset and
+  keeps the lights and lens, as the preset list in Tools › Grade does), **Cast** (photo, name,
+  height, pose, eye line, the staged mark's note, Select and Back to mark, High detail), **Lines**
+  (click to play one in place, Play scene runs them in order with the background action; the shot
+  numbers that cover each line), **Background** (the moving props, each with on / off, a
+  `prop-remove` edit the phone follows) and **Location** (the world in one line; **Change the
+  location…** opens the chat on this scene with the composer focused and `Scene 1: ` typed, and a
+  photo attached next is aimed at the scene).
+- **Shots**: the shot list (below).
+- **Camera**: the phone (QR, status, the shot it is on, Re-center, View through the phone, new
+  room), Record take and Save frame, the scene clock, and this session's **Takes** (name with the
+  shot the phone was on, duration, a player, download; each take also downloads as WebM when it
+  stops).
+
+The top bar reads `brand · Project · Sc 1 · HEADING · look: <name> … clock ▶ · Export · Tools · ⋯`.
+**Tools** (`T`, or the button) opens a drawer over the right panel with collapsible sections:
+**Grade** (the Look panel: grade, LUT, film, atmosphere, lens / depth of field, lights, presets,
+compare), **Re-prompt** (describe a change in words, regions, history), **Objects** (the outliner
+of props, lights and shots) and **Developer** (splat quality, Grid, Collider, Reload, the world's
+scale / floor / ground field / collider details and which API keys the server has). Nothing moved
+out changed its behaviour. The viewport's segmented control keeps the frame guide's aspect
+(16:9 / 2.39) and PiP. A three-step tour (fly → add a shot → pair the phone) shows once on first
+run; the cheatsheet (`?`) can replay it. Every button has a hover hint. The UI never shows a field
+of view in degrees (lenses are in mm), and splats, the collider and revisions only appear under
+Tools › Developer.
+
+**Shots.** Each scene's shot list is numbered as a filmmaker writes it (scene 1, third shot: `1C`)
+and stored in `scene-<n>/shots.json` (`shared/shots.ts`; 300 ms after the last change, a
+revision-checked PUT; on a 409 the stored list comes back and the changes not yet stored are
+replayed onto it). A row shows the number, the frame grab, the name and note (both editable in
+place), the lens (`35 mm`, the nearest prime to the stored vertical field of view, full-frame
+equivalent: f = 12 / tan(vfov / 2)), the camera height above the ground, a dot for coverage
+(hollow) or your own shot (filled) and a phone mark on the shot the phone is on; hover shows move
+up / down, duplicate and delete (drag the grip to reorder). The selected shot opens a lens picker
+(18 … 135 mm), Re-grab frame and the lines it covers (toggles).
+
+- The first time a scene without a shot list opens, it is seeded with suggested coverage (Wide
+  master, Two-shot, Over X's shoulder on Y, a Close-up per actor) framed on the actors where they
+  stand once the scene has settled (`web/src/viewer/shots.ts`: after staging, drags and chat
+  moves), each covering the lines of the actor it is on (wides cover every line). **Refresh
+  coverage** frames them again (the director's shots stay, and a suggested shot you rename, re-lens
+  or move becomes yours); the panel says so when the cast has moved since. A scene whose start
+  camera is the server default opens on the Wide master.
+- **Selecting** a shot (click, or `1`–`9`) flies the view there and puts the phone on it: the
+  shot list is the phone's camera list (`SceneState.cameras`, one `DropCamera` per shot with the
+  same id, named `1B · Two-shot`, `activeCameraId` = the selected shot). While selected, a frame
+  guide (16:9, or 2.39 from the segmented control) mattes the view and a label reads
+  `1B · Two-shot · 35 mm`; the viewport camera opens just wide enough that the guide is exactly the
+  shot's frame. Moving or zooming the view leaves the shot (guide and label go; the phone stays).
+- **C** adds the current view as the next shot (`Shot 1F` until renamed; the guide's crop of the
+  view, so the frame is what you saw) and grabs its frame; **F** grabs the selected shot's frame
+  again. A frame is the guide's part of the next rendered frame without the gizmos, ≤ 960 px wide,
+  JPEG ≤ 600 KB, uploaded to `PUT …/shots/:shotId/frame`. Shots without a frame get one when the
+  Shots mode first shows them (the view visits each and comes back; a key or click stops it), from
+  **Grab N frames**, or before an export.
+- Dragging a shot's frustum in the viewport moves the shot, ⌫ deletes it and ⌘Z brings it back
+  with its frame and note (the panel's delete goes through the same undo).
+
+**Export** (top bar) has **Storyboard (PNG)** — the project title, the scene heading, then the
+scene's frames three to a row, each with its number, name, lens, height, note and the lines it
+covers (or —), composed on a 2400 px canvas and saved as `<title>-sc<n>-storyboard.png` —,
+**Storyboard (print / PDF)** — the same sheet as a print page in a new window (A4 landscape, rows
+kept whole) that opens the print dialog — and **Shot list (CSV)** (`GET
+/api/projects/:id/shotlist.csv`, every scene).
 
 **Design.** The laptop and the phone share one small design system (the `:root` tokens of
 `web/src/laptop/style.css`, repeated at the top of `web/phone.html`). A near-black canvas
@@ -386,7 +481,7 @@ Inter`) at 13 px body, 12 px secondary, 11 px uppercase section labels (0.06 em 
 20 px for the one title, weights 400 / 500 / 600, tabular numerals for clocks and values; the
 screenplay box and plan diffs keep a monospace. Sections are a label and space, not boxes;
 buttons are ghosts (a hairline ring) except that one primary; tabs are text with an underline;
-the viewport's Grid / Collider / PiP / Reload are one low-contrast segmented control; a scene's
+the viewport's frame guide and PiP toggles are one low-contrast segmented control; a scene's
 pipeline is a five-segment bar; chat actions are a thin left rule and plain text. Icons are
 16 px inline SVG with 1.5 px strokes (`web/src/laptop/icons.ts`; `index.html` asks for one with
 `<span data-icon>`), no icon font or CDN. Empty, loading and error states are one muted, centred
@@ -396,50 +491,50 @@ segmented progress bar, ruled blocks, menus, dialogs, toasts, viewport labels) h
 
 ![Before / after: the chat docked next to an open scene](docs/images/ui-chat-docked-before-after.png)
 
-More before / after: [empty chat](docs/images/ui-chat-empty-before-after.png),
-[Scene](docs/images/ui-scene-before-after.png), [Look](docs/images/ui-look-before-after.png),
-[Edit](docs/images/ui-edit-before-after.png), [Shoot](docs/images/ui-shoot-before-after.png),
-[phone](docs/images/ui-phone-before-after.png).
+More before / after of the design pass (on the earlier four-tab layout): [empty
+chat](docs/images/ui-chat-empty-before-after.png), [Scene](docs/images/ui-scene-before-after.png),
+[Look](docs/images/ui-look-before-after.png), [Edit](docs/images/ui-edit-before-after.png),
+[Shoot](docs/images/ui-shoot-before-after.png), [phone](docs/images/ui-phone-before-after.png).
 
 Everything in the viewport can be grabbed (`web/src/viewer/manipulate/`):
 
-- **Hover** outlines an actor, prop, light or dropped camera; **click** selects it: a ring on the
-  floor, a yellow rotate ring, an orange knob (a prop's scale, a light's radius), a green focus
-  point on a camera's view axis when depth of field is on, and a small toolbar over it (Reset to
-  blocking, Delete, Make active, Look through).
+- **Hover** outlines an actor, prop, light or shot (its frustum, labelled with its number);
+  **click** selects it: a ring on the floor, a yellow rotate ring, an orange knob (a prop's scale,
+  a light's radius), a green focus point on a shot's view axis when depth of field is on, and a
+  small toolbar over it (Reset to blocking, Delete, Phone here, Go to shot).
 - **Drag** moves it on a floor-parallel plane through the point you grabbed, so it stays under
   the cursor; **Shift+drag** raises / lowers; the ring turns (Shift snaps to 15°); arrow keys nudge
   5 cm (Shift 50 cm) along the world axis the view faces most. Actors cannot be dragged into walls:
   the collider's body probe (the same test that fixes LLM blocking at load) stops them at the last
-  free spot. **Delete** removes props, lights and cameras; actors are reset to their blocking
+  free spot. **Delete** removes props, lights and shots; actors are reset to their blocking
   instead. **Esc** deselects. Left-drag on empty space looks around (as does right-drag), so the
   fly controls and the manipulator never fight.
-- **Click the world** (nothing under the cursor) to select a region of splats: a sphere at the hit
-  with an auto radius from the splats around it (the Edit tab's selection code), resized by
+- **Click the set** (nothing under the cursor) to select a region of it: a sphere at the hit
+  with an auto radius from the splats around it (Re-prompt's selection code), resized by
   dragging its outline. Its toolbar recolours the region (luminance-keeping hue), hides it, moves
-  its splats (Move, then drag inside), hands it to the Edit tab as the selection for a prompt
+  its splats (Move, then drag inside), hands it to Tools › Re-prompt as the selection for a prompt
   (`director.pendingRegion`), or deletes the region's edit. Clicking an object already edited
   selects that edit again.
 - Where changes go: actors and props become `transform` / `prop-remove` scene edits and regions
   `splat-region` edits in `edits.json` (one director edit per target, kept last so it wins; live
   while dragging, saved on release), which the viewer's edit applier renders on the laptop and the
-  phone; lights and focus go into the look; cameras stay in the laptop's camera list, and a phone
-  attached to a dragged camera follows it live (≤ 20 Hz). Every change is one undo step: ⌘Z / ⇧⌘Z
-  undo / redo whichever changed last, the director's stack or the Look panel's own history.
+  phone; lights and focus go into the look; shots go into the shot list, and a phone attached to
+  a dragged shot follows it live (≤ 20 Hz). Every change is one undo step: ⌘Z / ⇧⌘Z undo / redo
+  whichever changed last, the director's stack or Tools › Grade's own history.
 
-![The four tabs: Scene, Look, Edit, Shoot](docs/images/ux-scene.png)
+Earlier layout (four tabs): [Scene](docs/images/ux-scene.png).
 
 ![A selected actor: floor ring, rotate ring, toolbar](docs/images/ux-manipulate.png)
 
 ![A region on the shelter's ad panel, recoloured from its toolbar](docs/images/ux-region-recoloured.png)
 
-More: [Look tab](docs/images/ux-look.png), [Edit tab](docs/images/ux-edit.png),
+More (earlier layout): [Look tab](docs/images/ux-look.png), [Edit tab](docs/images/ux-edit.png),
 [Shoot tab](docs/images/ux-shoot.png), [region selected](docs/images/ux-region.png),
 [cheatsheet](docs/images/ux-cheatsheet.png), [first-run tour](docs/images/ux-tour.png).
 
-## Re-prompting (Edit tab): change only what the prompt touches
+## Re-prompting (Tools › Re-prompt): change only what the prompt touches
 
-Type a change in the **Edit** tab ("make the pillow on the left red", "move Leo a metre closer to
+Type a change in **Tools › Re-prompt** ("make the pillow on the left red", "move Leo a metre closer to
 Maya", "warmer and more contrast", "make the sky stormy") and press **Send**. The current view
 (a ≤ 300 KB JPEG plus its camera) goes with the prompt, so "left" and "right" mean what you see.
 The server asks Claude for an **EditPlan**: a scope and typed ops (`shared/look.ts`). The scope
@@ -447,7 +542,7 @@ decides the cost, and the planner must pick the cheapest one that does the job:
 
 | Scope | Examples | Cost | What happens |
 | --- | --- | --- | --- |
-| `look` | warmer, more contrast, night mood, add a key light from the left | instant | a Look patch, baked into the scene look (the Look tab keeps editing it) |
+| `look` | warmer, more contrast, night mood, add a key light from the left | instant | a Look patch, baked into the scene look (Tools › Grade keeps editing it) |
 | `transform` | move Leo closer, rotate the bench, make the car bigger | instant | actor / prop transform edit; a moved light is a look patch |
 | `prop` | add a bicycle leaning on the shelter, remove the bus | instant | procedural prop added (drag it to place) or removed |
 | `splat-region` | pillow red, remove the lamp, make the plant taller, shift the chair left | instant, no re-render | a Spark `SplatEdit` region on the world splats only: recolour, hide, move, grow / shrink |
@@ -455,7 +550,7 @@ decides the cost, and the planner must pick the cheapest one that does the job:
 | `clarify` | "the thing on the left" | free | the planner asks which object you mean |
 
 A region op needs a 3D target and is never guessed: the planner uses the region you selected in
-the viewport (click the world, or **Select** in the Edit tab; Shift+drag for a box), else Claude
+the viewport (click the set, or **Select** in Re-prompt; Shift+drag for a box), else Claude
 vision boxes the named object in the view you sent (`needsTarget[].box`), which is raycast into a
 3D region and previewed before **Apply**; if neither works a banner asks you to click the object.
 Every applied edit lands in `scene-<n>/edits.json` with the prompt that produced it and shows in
@@ -479,7 +574,7 @@ edit](docs/images/reprompt-phone-parity.png), [the snow caveat](docs/images/repr
 
 ## Pair the phone
 
-1. Phone and laptop on the same Wi-Fi. The laptop's right panel shows a room code, a QR code and
+1. Phone and laptop on the same Wi-Fi. The laptop's **Camera** mode shows a room code, a QR code and
    the phone URL (`https://<laptop LAN IP>:5173/phone.html?room=ABCD`); the terminal prints the
    LAN address too. If the panel shows `localhost`, edit the URL to the LAN address.
 2. **iOS:** motion sensors need a secure (HTTPS) page. Tap through Safari's certificate warning
@@ -493,7 +588,7 @@ edit](docs/images/reprompt-phone-parity.png), [the snow caveat](docs/images/repr
    access when asked and hold the phone in landscape. Without sensors (or if access is denied)
    the phone falls back to drag-to-look.
 4. The laptop now shows a pink phone frustum and a PHONE picture-in-picture. The phone is attached
-   to the active dropped camera (or the scene's start camera); **Re-center** maps the phone's
+   to the shot selected in the Shots mode (or the scene's start view); **Re-center** maps the phone's
    current heading onto that camera's heading.
 
 ## ARKit camera (prototype)
@@ -547,20 +642,26 @@ may fall outside a small room (drag them, or "move Leo closer").
 | --- | --- |
 | W A S D, Q / E, Shift | fly, down / up, faster |
 | drag empty space, right-drag, or double-click for mouselook | look |
-| click / drag an actor, prop, light or camera | select / move it (Shift+drag: up / down; yellow ring: turn; orange knob: scale / radius; green point: focus) |
-| ← ↑ → ↓ (Shift), ⌫ / Delete, Esc | nudge 5 cm (50 cm); delete a prop / light / camera; deselect |
-| click the world | select a region of splats: **Recolour**, **Hide**, **Move**, **Edit ›**, **Delete region** |
-| ⌘Z / ⇧⌘Z, or the top bar's ⋯ menu | undo / redo a move, delete or region edit (or a look change when the Look tab changed last) |
-| `?`, `[` | keyboard and mouse cheatsheet; projects drawer |
-| wheel | zoom (field of view) |
+| click / drag an actor, prop, light or shot | select / move it (Shift+drag: up / down; yellow ring: turn; orange knob: scale / radius; green point: focus) |
+| ← ↑ → ↓ (Shift), ⌫ / Delete, Esc | nudge 5 cm (50 cm); delete a prop / light / shot; deselect (and close Tools) |
+| click the set | select a region of it: **Recolour**, **Hide**, **Move**, **Edit ›**, **Delete region** |
+| ⌘Z / ⇧⌘Z, or the top bar's ⋯ menu | undo / redo a move, delete or region edit (or a look change when Tools › Grade changed last) |
+| Tab / Shift+Tab | next / previous mode (Scene, Shots, Camera) |
+| 1–9 | go to shot 1A … 1I (flies there; the phone attaches) |
+| C, or **Add shot** | add the current view as a shot and grab its frame |
+| F, or **Re-grab frame** | grab the selected shot's frame again |
+| T, or **Tools** | the Tools drawer (Grade, Re-prompt, Objects, Developer) |
+| `?`, `[` | keyboard and mouse cheatsheet; script drawer |
+| wheel | zoom (changes the lens; leaves the selected shot) |
 | Space | play / pause the scene clock (moving props, dialogue sync) |
-| C, or **Drop** | drop a camera at the current view; 1–9 jump to a camera |
 | V, or **View** | view through the phone (the PiP then shows the director view) |
-| R, or **Record take** | record the canvas plus dialogue audio as WebM |
-| G, **Grid**, **Collider** | ground grid at y = 0, collider wireframe |
+| R, or **Record take** | record the canvas plus dialogue audio as a take (WebM) |
+| G, Tools › Developer › **Grid** / **Collider** | ground grid at y = 0, collider wireframe |
 | click a dialogue line / **Play scene** | speak one line / the whole scene in order (caption + positional audio) |
-| **Re-center phone**, **Still**, **New room** | phone heading reset, PNG from the phone camera, new pairing code |
-| **Look** tab, Alt+click, hold **Compare** | grade / lens / lights; focus on the clicked splat; ungraded frame |
+| **Re-center**, **Save frame**, new room | phone heading reset, PNG from the phone camera, new pairing code |
+| Mood swatch, Tools › Grade, Alt+click, hold **Compare** | try a look; grade / lens / lights; focus on what is under the cursor; ungraded frame |
+| **16:9** / **2.39** (viewport) | the frame guide's aspect (and of the frames grabbed from now on) |
+| **Export** | storyboard PNG, storyboard print page (PDF), shot list CSV |
 
 **Phone**
 
@@ -574,10 +675,10 @@ may fall outside a small room (drag them, or "move Leo closer").
 | **ACTION** / **CUT** | start the scene on the laptop (dialogue in order + clock) / stop it |
 | **Line ›** | the laptop plays the next dialogue line |
 | **Recenter** | the phone's heading → the attached camera's heading (keeps where you walked) |
-| **Shutter**, **Record**, **Cam ›** | laptop still, laptop take, next dropped camera |
+| **Shutter**, **Record**, **Cam ›** | laptop frame (PNG), laptop take, next shot in the shot list |
 | `?sim=1`: drag, W A S D / arrows, Q / E | look, walk, height |
 
-The phone shows the camera name, lens and scene clock (▶ / ⏸), the line being spoken, how far
+The phone shows the shot's number and name (`1B · Two-shot`), lens and scene clock (▶ / ⏸), the line being spoken, how far
 you have walked, and its render rate (`48 fps · full`, `3D paused`). The actors speak on the
 phone as well (positional, from the phone camera); "Tap to start" unlocks audio on iOS, and
 `?voice=0` mutes the phone if the laptop's speakers are in the room. Details and debug hooks:
@@ -722,7 +823,7 @@ about 0.1). The MOCK planner gives each character id a stable 1.62–1.85 m (the
 when the intro says "tall": THEO 1.80, MAYA 1.69 in the fixture). Every actor asset carries its
 character's height (LHM avatars, library copies, rebuilds and the mannequin fallback; an older
 `actor.json` is brought in line), and the viewer scales each body kind so the top of the head is
-at that height; the head, label, caption, voice and seated drop follow. The Scene tab's cast row
+at that height; the head, label, caption, voice and seated drop follow. The Scene mode's cast row
 shows it.
 
 ![MAYA 1.69 m and THEO 1.80 m on the calibrated rooftop](docs/images/actor-heights-rooftop.png)
@@ -851,7 +952,10 @@ laptop's frustum gizmo and feeds the PiP, the phone captions the line the laptop
 shutter / next-camera cross the relay both ways, the phone renders WebGL on its own, the
 certificate / health / room endpoints work, and the fantasy fixture comes out as a fantasy: its
 style, a look per scene, the forest and hall sets, a seeded edits.json, a dragon, and a laptop
-frame that opens graded (about 10 % mean difference from the same frame with a neutral look). Headless Chromium has no GPU: SwiftShader draws the
+frame that opens graded (about 10 % mean difference from the same frame with a neutral look), and
+a scene's shot list is seeded with coverage the first time it opens, C adds the view as a shot whose
+frame is stored as a JPEG, the list comes back after a reload and the CSV export lists every shot
+(`shots.spec.ts`). Headless Chromium has no GPU: SwiftShader draws the
 33k-splat mock world at about 1 fps at 1280x720 once it is fully loaded (the e2e specs are written
 for that). A real Marble world (500k splats) needs a GPU; full Chromium with
 `--use-angle=metal --enable-gpu` renders it at 60 fps.
@@ -903,15 +1007,16 @@ Debug hooks: `window.__previz.state()` on the laptop and `window.__phone` on the
   never saw. Only four lights reach the splats. Fog and sky tint are applied per splat, so the
   sky mask is a rule (far, and above the horizon as seen from the camera) rather than a
   segmentation: tall buildings far away can pick up some of the sky tint.
-- A camera's own lens is stored in the laptop's browser storage, next to the dropped cameras. It
-  is not in `edits.json`, so another laptop opening the project does not see it. The viewport's
-  focus point edits whichever lens the camera renders with (its own, else the scene's).
+- A shot's own depth of field is stored in the laptop's browser storage (the shot itself, with its
+  lens in mm, is in `shots.json`). It is not in `edits.json`, so another laptop opening the
+  project does not see it. The viewport's focus point edits whichever lens the shot renders with
+  (its own, else the scene's).
 - Direct manipulation: only actors are kept out of walls (props, lights and cameras move freely);
   actor and prop moves apply once the collider has settled the blocking (a second or two after a
   real world loads; the toolbar says so if you grab earlier); a prop driving along its path is
-  moved by shifting its whole path and cannot be turned. Dropped cameras and lights are not scene
-  edits (cameras live on the laptop, lights in the look), so the Edit tab's history does not list
-  their moves; the undo stack does.
+  moved by shifting its whole path and cannot be turned. Shots and lights are not scene edits
+  (shots live in `shots.json`, lights in the look), so Re-prompt's history does not list their
+  moves; the undo stack does.
 - Re-prompting: a **season or weather regen that touches the ground does not keep the layout**:
   when the whole panorama is editable, the image model draws a new street rather than editing the
   360° image in place, so a real Marble regen from it would be a different-looking place. Sky-only

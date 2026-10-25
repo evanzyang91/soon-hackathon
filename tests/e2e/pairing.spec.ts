@@ -22,6 +22,8 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   browser,
   request,
 }) => {
+  // two pages share SwiftShader; switching between the laptop's modes adds clicks at ~1 fps
+  test.setTimeout(120_000);
   const project = await createReadyProject(request);
 
   // laptop: a smaller viewport keeps SwiftShader fast enough for two live pages
@@ -108,7 +110,8 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   await expect.poll(async () => (await laptopState(laptop)).pip.frames).toBeGreaterThan(pip0 + 3);
   await expect(laptop.locator('#pip-frame')).toBeVisible();
 
-  // -- laptop plays a line → phone caption ----------------------------------------------------
+  // -- laptop plays a line (Scene mode) → phone caption ----------------------------------------
+  await laptop.getByTestId('tab-scene').click();
   await laptop.getByTestId('line').nth(1).click();
   await expect
     .poll(() => shown('caption'))
@@ -116,7 +119,8 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
   // the caption goes away with the line
   await expect(phone.locator('#caption')).toBeHidden({ timeout: 10_000 });
 
-  // -- laptop recenter → phone: its current heading becomes the anchor heading ----------------
+  // -- laptop recenter (Camera mode) → phone: its current heading becomes the anchor heading ----
+  await laptop.getByTestId('tab-camera').click();
   await laptop.getByTestId('recenter').click();
   await expect.poll(() => shown('toast')).toContain('Director recentered you');
   await expect
@@ -129,20 +133,25 @@ test('phone pairs, steers the laptop gizmo + PiP, and both sides talk through th
     .poll(async () => angleDiff(yawDeg((await laptopState(laptop)).gizmo.quaternion), 0) < 1)
     .toBe(true);
 
-  // -- phone next-camera → laptop switches the active camera -----------------------------------
-  await laptop.getByTestId('drop-camera').click();
-  await laptop.getByTestId('drop-camera').click();
-  await expect(laptop.getByTestId('camera-row')).toHaveCount(2);
+  // -- phone next-camera → laptop switches the active shot -------------------------------------
+  // (the scene's shot list is seeded with 5 coverage shots; two added shots follow them, and the
+  // last one added is the phone's)
+  await laptop.getByTestId('tab-shots').click();
+  await expect(laptop.getByTestId('shot-row')).toHaveCount(5);
+  await laptop.getByTestId('add-shot').click();
+  await laptop.getByTestId('add-shot').click();
+  await expect(laptop.getByTestId('shot-row')).toHaveCount(7);
   s = await laptopState(laptop);
-  const ids = await laptop.getByTestId('camera-row').evaluateAll((rows) =>
+  const ids = await laptop.getByTestId('shot-row').evaluateAll((rows) =>
     rows.map((r) => (r as HTMLElement).dataset.id),
   );
-  expect(s.activeCameraId).toBe(ids[0]);
-  await expect.poll(async () => (await phoneState(phone))?.scene?.activeCameraId).toBe(ids[0]);
+  expect(s.cameras).toBe(7);
+  expect(s.activeCameraId).toBe(ids[6]);
+  await expect.poll(async () => (await phoneState(phone))?.scene?.activeCameraId).toBe(ids[6]);
   await phone.locator('#next-cam').click();
-  await expect.poll(async () => (await laptopState(laptop)).activeCameraId).toBe(ids[1]);
-  // ...and the phone follows: it re-anchors to the new camera
-  await expect.poll(async () => (await phoneState(phone))?.anchor.key).toContain(ids[1]!);
+  await expect.poll(async () => (await laptopState(laptop)).activeCameraId).toBe(ids[0]);
+  // ...and the phone follows: it re-anchors to the new shot
+  await expect.poll(async () => (await phoneState(phone))?.anchor.key).toContain(ids[0]!);
 
   // -- phone shutter → laptop takes a still (last: in SwiftShader the PNG encode hogs the page) -
   // (the PNG download itself is only timed by idle-time encoding, which a SwiftShader render

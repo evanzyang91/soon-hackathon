@@ -168,7 +168,7 @@ export function targetInfo(ctx: TargetContext, ref: TargetRef): TargetInfo | nul
       return info({
         ref,
         label: c.name,
-        kind: 'camera',
+        kind: 'shot',
         anchor: v3(c.position),
         box: new THREE.Box3().setFromPoints(pts).expandByScalar(0.03),
         footprint: 0.3,

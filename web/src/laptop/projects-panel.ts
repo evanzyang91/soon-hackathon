@@ -1,7 +1,7 @@
 // Left drawer: the project list with each scene's pipeline as a five-segment progress bar (new
 // projects start in the project chat, chat-panel.ts). The open project's cast (one row per
 // character: build detail, kind, fallback, the "High detail" rebuild button) is rendered by the
-// Scene tab through `actorRow`.
+// Scene mode through `actorRow`.
 import { api } from '@shared/api';
 import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
 import {
@@ -200,7 +200,7 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
         : null;
     const error = rebuildErrors.get(`${p.id}:${a.characterId}`);
     const failed = a.rebuild?.status === 'failed';
-    const kind = a.kind === 'splat-sequence' ? 'splat' : a.kind === 'glb-humanoid' ? 'mannequin' : 'not built';
+    const kind = a.kind === 'splat-sequence' ? 'avatar' : a.kind === 'glb-humanoid' ? 'mannequin' : 'not built';
     return h(
       'div',
       { class: 'actor-row', 'data-testid': 'actor-row', 'data-character': a.characterId },
@@ -359,7 +359,7 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
           p.actors?.length
             ? h(
                 'div',
-                { class: 'muted small project-cast', title: 'Builds and High detail: the Scene tab of an open scene' },
+                { class: 'muted small project-cast', title: 'Builds and High detail: the Scene mode of an open scene' },
                 `Cast: ${p.actors.map((a) => displayName(a.name)).join(', ')}`,
               )
             : null,
