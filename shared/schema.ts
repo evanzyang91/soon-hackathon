@@ -72,8 +72,11 @@ export type Blocking = z.infer<typeof Blocking>;
  * the label). Modern traffic: car, bus, truck, motorcycle, bicycle, pedestrian. Any era: bird, dog,
  * horse (ridden when the label says so), wagon (a horse-drawn cart or stagecoach), boat (on water).
  * Fantasy / sci-fi: dragon (a large winged creature, flies), drone (a small hovering machine),
- * spacecraft (a flying ship). generic = a plain marker for anything else. model = a glTF binary
- * the director imported or had generated (`DynamicElement.model`), drawn as is.
+ * spacecraft (a flying ship), airplane (any fixed-wing aircraft: airliner, jet, biplane), helicopter.
+ * creature = any animal or monster that is not a bird, dog or horse (a dinosaur, bear, elephant,
+ * wolf pack…): the label decides biped / quadruped, size and tail, legs cycle with distance.
+ * generic = a plain marker for anything else. model = a glTF binary the director imported or had
+ * generated (`DynamicElement.model`), drawn as is.
  */
 export const DynamicElementKind = z.enum([
   'car',
@@ -90,6 +93,9 @@ export const DynamicElementKind = z.enum([
   'dragon',
   'drone',
   'spacecraft',
+  'airplane',
+  'helicopter',
+  'creature',
   'generic',
   'model',
 ]);
