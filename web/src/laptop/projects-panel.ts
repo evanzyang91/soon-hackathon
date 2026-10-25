@@ -1,6 +1,7 @@
-// Left drawer: the project list with per-scene stage chips (new projects start in the project
-// chat, chat-panel.ts). The open project's cast (one row per character: build detail, kind,
-// fallback, the "High detail" rebuild button) is rendered by the Scene tab through `actorRow`.
+// Left drawer: the project list with each scene's pipeline as a five-segment progress bar (new
+// projects start in the project chat, chat-panel.ts). The open project's cast (one row per
+// character: build detail, kind, fallback, the "High detail" rebuild button) is rendered by the
+// Scene tab through `actorRow`.
 import { api } from '@shared/api';
 import type { ActorBuildStatus, ActorDetail, ProjectStatus } from '@shared/schema';
 import { getHealth, listProjects, rebuildActor, retryStage } from './api';
@@ -10,6 +11,13 @@ import { projectPlan, sceneThumbs } from './references';
 
 type SceneJob = ProjectStatus['scenes'][number];
 const STAGES = ['parse', 'world', 'actors', 'tts', 'manifest'] as const;
+const STAGE_NAME: Record<(typeof STAGES)[number], string> = {
+  parse: 'Parse',
+  world: 'World',
+  actors: 'Actors',
+  tts: 'Voices',
+  manifest: 'Manifest',
+};
 
 export const HIGH_DETAIL_LABEL = 'High detail (~5 min per actor)';
 export const HIGH_DETAIL_TIP =
@@ -65,7 +73,10 @@ export interface ProjectsPanel {
   onChange(fn: () => void): () => void;
   /** One cast row: name, detail chip, kind, fallback, rebuild status, High detail / use standard. */
   actorRow(p: ProjectStatus, a: ActorBuildStatus): HTMLElement;
-  /** A scene's stage chips (failed / fallback ones retry on click), as in the scene rows. */
+  /**
+   * A scene's pipeline: one thin segment per stage (failed / fallback ones retry on click), and
+   * the stage's name while one runs or after one failed; as in the scene rows.
+   */
   chips(p: ProjectStatus, job: SceneJob): HTMLElement;
   /** Opens the project's first ready scene as soon as there is one (after Generate). */
   openWhenReady(projectId: string): void;
@@ -112,31 +123,49 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
     void director.openScene(p.id, job.sceneIndex, url);
   };
 
-  const chip = (p: ProjectStatus, job: SceneJob, stage: (typeof STAGES)[number]) => {
+  const retry = (p: ProjectStatus, job: SceneJob, stage: (typeof STAGES)[number]) => (e: Event) => {
+    e.stopPropagation();
+    void retryStage(p.id, job.sceneIndex, stage).then(refresh, () => {});
+  };
+
+  const segment = (p: ProjectStatus, job: SceneJob, stage: (typeof STAGES)[number]) => {
     const st = (job.stages as Partial<SceneJob['stages']>)[stage];
     if (!st) return null;
     // done-but-fallback (mannequin / beeps while keys are set) can be retried to upgrade it
     const fallback = st.status === 'done' && /fallback/.test(st.note ?? '');
     const retryable = st.status === 'failed' || fallback;
-    return h(
-      'span',
-      {
-        class: `chip ${st.status}${fallback ? ' fallback' : ''}`,
-        title: `${stage}: ${st.status}${st.note ? ` — ${st.note}` : ''}${retryable ? ' (click to retry)' : ''}`,
-        'data-stage': stage,
-        onclick: retryable
-          ? (e: Event) => {
-              e.stopPropagation();
-              void retryStage(p.id, job.sceneIndex, stage).then(refresh, () => {});
-            }
-          : undefined,
-      },
-      stage,
-    );
+    return h('span', {
+      class: `stage-seg ${st.status}${fallback ? ' fallback' : ''}`,
+      title: `${stage}: ${st.status}${st.note ? ` — ${st.note}` : ''}${retryable ? ' (click to retry)' : ''}`,
+      'data-stage': stage,
+      onclick: retryable ? retry(p, job, stage) : undefined,
+    });
   };
 
-  const chips = (p: ProjectStatus, job: SceneJob) =>
-    h('span', { class: 'chips' }, ...STAGES.map((s) => chip(p, job, s)));
+  const chips = (p: ProjectStatus, job: SceneJob) => {
+    const stages = job.stages as Partial<SceneJob['stages']>;
+    const failed = STAGES.find((s) => stages[s]?.status === 'failed');
+    const running = STAGES.find((s) => stages[s]?.status === 'running');
+    const label = failed
+      ? h(
+          'span',
+          {
+            class: 'stage-label failed',
+            title: `${stages[failed]?.note ?? 'failed'} (click to retry)`,
+            onclick: retry(p, job, failed),
+          },
+          `${STAGE_NAME[failed]} failed · retry`,
+        )
+      : running
+        ? h('span', { class: 'stage-label running', title: stages[running]?.note ?? '' }, `${STAGE_NAME[running]}…`)
+        : null;
+    return h(
+      'span',
+      { class: 'stages', 'data-testid': 'stages' },
+      h('span', { class: 'stage-bar' }, ...STAGES.map((s) => segment(p, job, s))),
+      label,
+    );
+  };
 
   const rebuild = (p: ProjectStatus, a: ActorBuildStatus, detail: ActorDetail) => {
     const key = `${p.id}:${a.characterId}`;
@@ -218,11 +247,11 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
   const render = () => {
     list.replaceChildren();
     if (apiDown) {
-      list.append(h('div', { class: 'muted' }, 'Pipeline API unavailable — retrying…'));
+      list.append(h('div', { class: 'empty error' }, 'Pipeline API unavailable — retrying…'));
       return;
     }
     if (!projects.length) {
-      list.append(h('div', { class: 'muted' }, 'No projects yet. Paste a screenplay in the chat.'));
+      list.append(h('div', { class: 'empty' }, 'No projects yet. Paste a screenplay in the chat.'));
       return;
     }
     for (const p of projects) {
@@ -266,7 +295,9 @@ export function mountProjectsPanel(director: Director, opts: ProjectsPanelOption
             h('strong', {}, p.title || p.id),
             p.draft ? h('span', { class: 'badge warn', title: 'Planned, not generated yet: Generate in the chat' }, 'DRAFT') : null,
             p.mock ? h('span', { class: 'badge' }, 'MOCK') : null,
-            h('span', { class: `chip ${p.parse.status}`, title: p.parse.note ?? '' }, 'parse'),
+            p.parse.status === 'done'
+              ? null
+              : h('span', { class: `chip ${p.parse.status}`, title: p.parse.note ?? '' }, p.parse.status === 'failed' ? 'parse failed' : 'planning'),
           ),
           p.parse.status === 'failed' && p.parse.note
             ? h('div', { class: 'error small' }, p.parse.note)

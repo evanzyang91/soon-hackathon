@@ -36,6 +36,10 @@ export interface TextSpriteOptions {
   wrap?: number;
   /** Anchor at the bottom edge so extra lines grow upwards (default: centred). */
   anchorBottom?: boolean;
+  /** Font weight (default 600). */
+  weight?: number;
+  /** Letter spacing in em (default 0). */
+  tracking?: number;
 }
 
 /** Billboard text, sized in metres (line height `h`), drawn on a canvas texture. */
@@ -53,7 +57,14 @@ export function textSprite(text: string, opts: TextSpriteOptions): TextSprite {
     const px = 48;
     const lineH = px * 1.6;
     const lines = opts.wrap ? wrapText(t, opts.wrap) : [t];
-    ctx.font = `600 ${px}px system-ui, sans-serif`;
+    const font = `${opts.weight ?? 600} ${px}px -apple-system, system-ui, sans-serif`;
+    const spacing = `${(opts.tracking ?? 0) * px}px`;
+    const setFont = () => {
+      ctx.font = font;
+      // letterSpacing: Chrome 99+ / Safari 17+; older engines draw without it
+      if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = spacing;
+    };
+    setFont();
     const w = Math.ceil(Math.max(...lines.map((l) => ctx.measureText(l).width))) + px;
     const hPx = Math.round(lineH * lines.length);
     // three.js allocates the GL texture once and then only updates it in place, so a canvas of a
@@ -63,7 +74,7 @@ export function textSprite(text: string, opts: TextSpriteOptions): TextSprite {
     canvas.width = w;
     canvas.height = hPx;
     if (resized) texture.dispose();
-    ctx.font = `600 ${px}px system-ui, sans-serif`;
+    setFont();
     ctx.fillStyle = opts.bg;
     const r = lineH / 2;
     ctx.beginPath();

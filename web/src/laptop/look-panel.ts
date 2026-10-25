@@ -30,6 +30,7 @@ import type { SceneRuntime } from '../viewer/world';
 import type { Director } from './director';
 import { h, isTyping } from './dom';
 import { GIZMO_LAYER } from './gizmos';
+import { icon } from './icons';
 import { storageGet, storageSet } from './storage';
 
 type Dof = Look['dof'];
@@ -327,8 +328,8 @@ export function mountLookPanel(director: Director): LookPanel {
   const body = h('div', { class: 'look-body' });
   section.append(header, body);
   const status = h('span', { class: 'look-status small muted', 'data-testid': 'look-status' });
-  const undoBtn = h('button', { type: 'button', class: 'icon', title: 'Undo (⌘Z)', 'data-testid': 'look-undo', onclick: () => session.undo() }, '↶');
-  const redoBtn = h('button', { type: 'button', class: 'icon', title: 'Redo (⇧⌘Z)', 'data-testid': 'look-redo', onclick: () => session.redo() }, '↷');
+  const undoBtn = h('button', { type: 'button', class: 'icon', title: 'Undo (⌘Z)', 'aria-label': 'Undo', 'data-testid': 'look-undo', onclick: () => session.undo() }, icon('undo'));
+  const redoBtn = h('button', { type: 'button', class: 'icon', title: 'Redo (⇧⌘Z)', 'aria-label': 'Redo', 'data-testid': 'look-redo', onclick: () => session.redo() }, icon('redo'));
 
   function slider(spec: SliderSpec): HTMLElement {
     const input = h('input', { type: 'range', min: spec.min, max: spec.max, step: spec.step, 'data-testid': `look-${spec.key}` });
@@ -576,7 +577,7 @@ export function mountLookPanel(director: Director): LookPanel {
     body.replaceChildren();
     lightsKey = '';
     if (!runtime) {
-      body.append(h('div', { class: 'muted' }, 'Open a scene to grade it.'));
+      body.append(h('div', { class: 'empty' }, 'Open a scene to grade it.'));
       render();
       return;
     }
@@ -704,7 +705,7 @@ export function mountLookPanel(director: Director): LookPanel {
         if (look) change({ ...look, lights: look.lights.filter((x) => x.id !== id) }, null);
         session.seal();
       },
-    }, '×');
+    }, icon('close'));
     const rows: HTMLElement[] = [];
     for (const s of LIGHT_SLIDERS) {
       if (s.key === 'coneDeg' && l.kind !== 'spot') continue;

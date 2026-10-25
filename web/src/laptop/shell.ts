@@ -1,9 +1,9 @@
 // Laptop layout (docs/PLAN-v2.md §3): the right panel's four tabs — Scene, Look (look-panel.ts as
 // it mounts itself), Edit (edit-panel.ts, or a placeholder until it exists), Shoot — the
 // collapsible project drawer on the left, the top bar (scene title + scale badge, the look's name,
-// Play / Pause + clock, undo / redo, ?), the keyboard & mouse cheatsheet, a 3-step first-run tour
-// (fly → drop a camera → pair the phone; dismissible, remembered) and hover hints for buttons the
-// panels render without one.
+// clock + Play / Pause, an overflow menu with undo / redo / the cheatsheet), the keyboard & mouse
+// cheatsheet, a 3-step first-run tour (fly → drop a camera → pair the phone; dismissible,
+// remembered) and hover hints for buttons the panels render without one.
 //
 // The Look and Edit panels build their own tab buttons; the shell replaces them with its own
 // (same data-testids: tab-look, tab-edit, tab-shoot, plus tab-scene) and shows a panel by
@@ -11,18 +11,11 @@
 // handling.
 import type { Director } from './director';
 import { fmtTime, h, isTyping } from './dom';
+import { icon } from './icons';
 import { storageGet, storageSet } from './storage';
 
 export type Tab = 'scene' | 'look' | 'edit' | 'shoot';
 
-const ICONS: Record<Tab, string> = {
-  scene:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Zm0 0v18M4 7.5l8 4.5 8-4.5"/></svg>',
-  look: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v6M19.4 7.8l-5.2 3M19.4 16.2l-5.2-3M12 20.5v-6M4.6 16.2l5.2-3M4.6 7.8l5.2 3"/></svg>',
-  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 3.5-1 11-11a1.8 1.8 0 0 0-2.5-2.5l-11 11L4 20ZM14.5 6.5l3 3M19 14l.7 1.6 1.6.7-1.6.7L19 18.6l-.7-1.6-1.6-.7 1.6-.7L19 14Z"/></svg>',
-  shoot:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6.5" width="13" height="11" rx="2"/><path d="m16 10.5 5-3v9l-5-3"/></svg>',
-};
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: 'scene', label: 'Scene', hint: 'Scenes of this project, world quality, cast (High detail) and everything you can grab in the view' },
   { id: 'look', label: 'Look', hint: 'Grade, film, atmosphere, lens and lights; the phone renders the same look' },
@@ -91,9 +84,7 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   const nav = h('nav', { class: 'shell-tabs', role: 'tablist', 'aria-label': 'Panels' });
   const buttons = new Map<Tab, HTMLButtonElement>();
   for (const t of TABS) {
-    const b = h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': t.id, 'data-testid': `tab-${t.id}`, title: t.hint, onclick: () => show(t.id) });
-    b.innerHTML = ICONS[t.id];
-    b.append(h('span', {}, t.label));
+    const b = h('button', { type: 'button', class: 'tab', role: 'tab', 'data-tab': t.id, 'data-testid': `tab-${t.id}`, title: t.hint, onclick: () => show(t.id) }, t.label);
     buttons.set(t.id, b);
     nav.append(b);
   }
@@ -136,6 +127,24 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
   const lookBadge = document.getElementById('top-look') as HTMLButtonElement;
   const undoBtn = document.getElementById('top-undo') as HTMLButtonElement;
   const redoBtn = document.getElementById('top-redo') as HTMLButtonElement;
+  // undo / redo / the cheatsheet sit in an overflow menu (their shortcuts work without it)
+  const moreBtn = document.getElementById('top-more') as HTMLButtonElement;
+  const menu = document.getElementById('top-menu')!;
+  const setMenu = (open: boolean) => {
+    menu.hidden = !open;
+    moreBtn.setAttribute('aria-expanded', String(open));
+    moreBtn.classList.toggle('on', open);
+  };
+  moreBtn.addEventListener('click', () => setMenu(menu.hidden));
+  menu.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('button')) setMenu(false);
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!menu.hidden && !(e.target as HTMLElement | null)?.closest('.top-more')) setMenu(false);
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) setMenu(false);
+  });
   playBtn.addEventListener('click', () => director.togglePlay());
   lookBadge.addEventListener('click', () => show('look'));
   let undoApi: Parameters<Shell['setUndo']>[0] | null = null;
@@ -152,8 +161,11 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
     const rt = director.runtime;
     playBtn.disabled = !rt;
     const playing = !!rt?.playing;
-    const label = playing ? '❚❚ Pause' : '▶ Play';
-    if (playBtn.textContent !== label) playBtn.textContent = label;
+    const label = playing ? 'Pause' : 'Play';
+    if (playBtn.getAttribute('aria-label') !== label) {
+      playBtn.setAttribute('aria-label', label);
+      playBtn.replaceChildren(icon(playing ? 'pause' : 'play'));
+    }
     playBtn.classList.toggle('on', playing);
     clock.textContent = fmtTime(rt?.time ?? 0);
   };
@@ -162,7 +174,10 @@ export function mountShell(director: Director, parts: ShellParts): Shell {
     const look = director.runtime?.getLook();
     const named = !!look && look.name !== 'Default';
     lookBadge.hidden = !named;
-    if (named) lookBadge.textContent = `look: ${look.name}`;
+    if (named && lookBadge.dataset.name !== look.name) {
+      lookBadge.dataset.name = look.name;
+      lookBadge.replaceChildren(h('span', { class: 'look-badge-label' }, 'Look'), h('span', { class: 'look-badge-name' }, look.name));
+    }
     renderUndo();
   };
   director.on((c) => {
@@ -315,7 +330,7 @@ const KEYS: [string, [string, string][]][] = [
 ];
 
 function buildCheatsheet(onTour: () => void): HTMLElement {
-  const close = h('button', { type: 'button', class: 'icon sheet-close', title: 'Close (Esc)', onclick: () => backdrop.remove() }, '×');
+  const close = h('button', { type: 'button', class: 'icon sheet-close', title: 'Close (Esc)', 'aria-label': 'Close', onclick: () => backdrop.remove() }, icon('close'));
   const cols = KEYS.map(([title, rows]) =>
     h(
       'section',
