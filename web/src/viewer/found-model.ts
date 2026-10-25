@@ -393,7 +393,6 @@ export function analyseModel(loaded: LoadedModel, el: Pick<DynamicElement, 'kind
     if (locomotion && !clips.move && !clips.fast) clips.move = info(c, 'walk', cycles);
     else if (!locomotion && !clips.idle) clips.idle = info(c, null);
   }
-  if (!clips.idle && chosen.generic.length === 1 && clips.move?.clip === chosen.generic[0]) clips.idle = { clip: chosen.generic[0]!, speed: 0, cycles: 1, rootMotion: false };
 
   // facing
   const animatedNodes = new Set(
@@ -817,8 +816,15 @@ function buildRig(
   // a rigid model plays its own loop (a propeller, a blinking light) on the scene clock
   const loopClip = rigid ? (a.clips.move ?? a.clips.idle ?? (gltf.animations[0] ? { clip: gltf.animations[0], speed: 0, cycles: 1, rootMotion: false } : undefined)) : undefined;
   const loopAct = action(loopClip);
-  const idle = rigid ? undefined : a.clips.idle;
-  const moving = rigid ? undefined : el.speed > (a.clips.fast && a.clips.move ? Math.sqrt(0.5 * 9.81 * a.hip * s) : Infinity) ? a.clips.fast : (a.clips.move ?? a.clips.fast);
+  const parked = !(el.speed > 0 && pathLen(el.path) >= 0.1);
+  // a parked flyer without an idle keeps flapping (it hovers); a walker never walks on the spot
+  const idle = rigid ? undefined : (a.clips.idle ?? (parked && drive === 'wings' ? a.clips.move : undefined));
+  const moving =
+    rigid || parked
+      ? undefined
+      : el.speed > (a.clips.fast && a.clips.move ? Math.sqrt(0.5 * 9.81 * a.hip * s) : Infinity)
+        ? a.clips.fast
+        : (a.clips.move ?? a.clips.fast);
   const idleAct = action(idle);
   const moveAct = action(moving, !!idle && moving?.clip === idle.clip);
   // the prop's object is what the path moves: its change between frames is the climb and the turn

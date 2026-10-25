@@ -558,8 +558,9 @@ nothing flashes and nothing is missing while it loads.
 **Measured** (2026-10-25, GPU Chromium, 1440×900, MOCK field set, six found models in view:
 velociraptor 8.4 MB, race car, Cessna 4.0 MB, UFO, seagull, plus the clip-less allosaurus): each
 model, loaded alone from the local server, was ready 5–51 ms after its prop was created (fetch,
-decode and analysis). Uncapped, the laptop rendered 649 fps with the found models against 673
-with their primitives (1.54 against 1.49 ms per frame). With vsync both run at 60.
+decode and analysis). Uncapped, the laptop rendered 649 and 699 fps (two runs) with the found
+models against 673 and 730 with their primitives: about 4 %, or 0.06 ms per frame. With vsync
+both run at 60.
 
 ![Found models: walk clip, rolling wheels, banking, hovering](docs/images/found-models-gallery.png)
 

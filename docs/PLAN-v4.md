@@ -111,7 +111,7 @@ move / fast, speed-matched to the path, blended) and falls back to the kind's pr
 model is missing, fails to load, or a creature has no clips. MOCK and `FOUND_MODELS=0` skip the lookup.
 
 **F2 viewer (2026-10-25).** `web/src/viewer/found-model.ts` draws `model` on any kind: primitive first, swapped on load (≤ 15 MB, shared per URL, spec/gloss materials read), scaled to `heightM` or the primitive, facing from part names → root motion → shape (verified on 20 Objaverse models), clips by name speed-matched to the path (distance-driven, 0.3 s idle cross-fade), wheels / rotors turning on rigid kinds, the primitive kept for a creature without a clip for what it does. Background and Objects show licence + attribution, Use primitive and Turn around (localStorage until a scene-edit field exists). Evidence `docs/images/found-models-gallery.png`, `found-models-fallback.png`; `tests/e2e/found-models.spec.ts`.
-Measured: 5–51 ms per model load on the laptop, 649 vs 673 fps uncapped with six found models vs their primitives.
+Measured: 5–51 ms per model load on the laptop; uncapped 649 / 699 fps with six found models vs 673 / 730 with their primitives (two runs, ~4 %).
 
 ## Contracts (lead-owned, `shared/`)
 
