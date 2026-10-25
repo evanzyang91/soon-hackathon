@@ -96,6 +96,20 @@ after a short delay. Either way the prop lands as a `prop-add` scene edit of kin
 scaled to `heightM`; it is then an object like any other: drag, scale, delete, Re-prompt, phone sync.
 Also: a **Reset** button beside Play (clock to 0:00, everyone back on their marks, start view; key 0).
 
+## Found models (2026-10-25, branch `feature/found-models`)
+
+During generation, every piece of background action keeps its procedural kind and may gain a real
+model: the server looks the label up in a local index of open-licence models (Objaverse: no API key,
+~800k objects with animation count, face count, licence and names; optionally Sketchfab / Poly Pizza when
+a token is present), downloads the best match within a budget (index lookup is local; download ≤ 15 s
+and ≤ 15 MB, run alongside the world stage so it never extends the critical path), caches it in a shared
+model library (`data/models-library/<id>/`, served at `/models/<id>/…`), and attaches it as
+`DynamicElement.model` with its licence and attribution. Selection rules: creatures and characters need
+an animated model (clips); vehicles, aircraft, UFOs and props accept static meshes and move rigidly with
+named parts spinning (wheel, rotor, propeller). The viewer drives a found model's clips by intent (idle /
+move / fast, speed-matched to the path, blended) and falls back to the kind's procedural body when the
+model is missing, fails to load, or a creature has no clips. MOCK and `FOUND_MODELS=0` skip the lookup.
+
 ## Contracts (lead-owned, `shared/`)
 
 - `shared/shots.ts`: `Shot` { id, name, position, quaternion, fovDeg, heightM?, note?, frame?
