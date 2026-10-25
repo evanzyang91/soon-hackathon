@@ -1429,9 +1429,12 @@ export const DEFAULT_COLOR: Record<DynamicElement['kind'], string> = {
   drone: '#8a8f99',
   spacecraft: '#c8ccd4',
   generic: '#9b59b6',
+  model: '#9b59b6',
 };
 
 const BUILDERS: Record<DynamicElement['kind'], (color: string, label: string) => Prop> = {
+  // kind 'model' draws DynamicElement.model (a glTF binary); until the props package lands it is the marker
+  model: generic,
   car,
   bus,
   truck,
