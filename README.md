@@ -601,17 +601,17 @@ evidence are in `worker/README.md` ("Performance motion").
 
 ```sh
 pnpm typecheck                        # tsc --noEmit
-pnpm test                             # vitest: pipeline, relay, protocol, viewer math, actors
 npx playwright install chromium       # once, for the e2e browser
 pnpm e2e                              # Playwright against a MOCK server on :5390 (temp DATA_DIR)
-pnpm check                            # all three
+pnpm check                            # both
 npx tsx scripts/actor-browser-check.ts [--sequence data/actors-library/maya --gpu]
 npx tsx scripts/compare-shots.ts --base https://localhost:<your port> --col <manifest> --col <manifest> --view x,y,z:tx,ty,tz:fov --out x.png
 npx tsx scripts/look-check.ts all --base https://localhost:<your port> --project <id> [--before https://localhost:<pre-look build>] [--docs]
 cd worker && python3 -m pytest -q tests
 ```
 
-The e2e suite (`tests/e2e/`) creates projects through the API, opens the laptop, and pairs a
+There are no unit-test files by choice: the project is evaluated by this e2e run and by rendered
+evidence (the screenshots and contact sheets in `docs/images/`). The e2e suite (`tests/e2e/`) creates projects through the API, opens the laptop, and pairs a
 second browser context as the phone (`/phone.html?sim=1`, synthetic `deviceorientation`). It
 checks that manifests validate and every asset is served, the splat world renders with real
 colour, props move, a clicked line shows a caption and plays WebAudio, the phone's pose turns the
@@ -686,6 +686,6 @@ web/src/laptop/   director UI;  web/src/phone/  phone camera;  web/src/viewer/  
 worker/           Modal LHM avatar worker (Python)
 ios/              ARKit camera app (prototype): Xcode project, PrevizCore Swift package
 fixtures/         sample screenplay, mock world, real-provider samples
-tests/            unit tests (tests/unit) and Playwright e2e (tests/e2e)
+tests/            Playwright e2e (tests/e2e)
 docs/             PLAN.md and screenshots
 ```
