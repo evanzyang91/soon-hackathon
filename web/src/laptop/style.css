@@ -1933,6 +1933,10 @@ button.line.speaking .line-play {
 .shot-row.selected .shot-num {
   color: var(--accent);
 }
+/* the selected shot keeps its buttons showing: its name stops short of them */
+.shot-row.selected input.shot-name {
+  width: calc(100% - 100px);
+}
 .shot-row.dragging {
   opacity: 0.5;
 }
@@ -2024,6 +2028,7 @@ input.shot-note:focus {
   align-items: center;
   gap: var(--s2);
   min-height: 18px;
+  white-space: nowrap;
 }
 .shot-meta .dot:not(.ok) {
   background: none;

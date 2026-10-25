@@ -174,7 +174,7 @@ export async function storyboardPng(b: Board): Promise<Blob | null> {
   const frameH = Math.round((cellW * 9) / 16);
   const textH = 40 + 34 + 4 * 32 + 12;
   const rowH = frameH + 24 + textH + GAP;
-  const headH = 200;
+  const headH = 280;
   const rows = Math.max(1, Math.ceil(b.cells.length / COLS));
   const H = headH + rows * rowH + M;
   const canvas = document.createElement('canvas');
@@ -197,7 +197,7 @@ export async function storyboardPng(b: Board): Promise<Blob | null> {
   ctx.fillText(`${b.cells.length} shot${b.cells.length === 1 ? '' : 's'} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · Previz Stage`, W - M, M + 104);
   ctx.textAlign = 'left';
   ctx.fillStyle = RULE;
-  ctx.fillRect(M, headH - 30, W - 2 * M, 2);
+  ctx.fillRect(M, M + 136, W - 2 * M, 2);
 
   const images = await Promise.all(b.cells.map((c) => loadImage(c.frame)));
   b.cells.forEach((c, i) => {
