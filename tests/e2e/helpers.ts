@@ -18,9 +18,12 @@ export const sceneDone = (st: ProjectStatus) =>
   st.scenes.length > 0 &&
   st.scenes.every((s) => s.stages.manifest.status === 'done' && !!s.manifestUrl);
 
-/** POSTs the fixture screenplay and waits until every scene has a manifest. */
-export async function createReadyProject(request: APIRequestContext): Promise<ProjectStatus> {
-  const res = await request.post('/api/projects', { data: { screenplay: FIXTURE } });
+/** POSTs a screenplay (default: the fixture) and waits until every scene has a manifest. */
+export async function createReadyProject(
+  request: APIRequestContext,
+  screenplay = FIXTURE,
+): Promise<ProjectStatus> {
+  const res = await request.post('/api/projects', { data: { screenplay } });
   expect(res.status()).toBe(202);
   const { id } = ProjectStatus.parse(await res.json());
   let last: ProjectStatus | undefined;
