@@ -32,6 +32,7 @@ import {
 } from '../viewer/edits/select';
 import type { Director } from './director';
 import { h, isTyping } from './dom';
+import { icon } from './icons';
 import './edit-panel.css';
 
 export interface PlannerTarget {
@@ -148,9 +149,9 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
   const sendBtn = h('button', { type: 'button', class: 'primary', 'data-testid': 'edit-send' }, 'Send');
   const selectBtn = h('button', { type: 'button', class: 'small', title: 'Click the world to select a region (Shift+drag: box)', 'data-testid': 'edit-select' }, 'Select');
   const selInfo = h('span', { class: 'muted small edit-selinfo' });
-  const growBtn = h('button', { type: 'button', class: 'icon', title: 'Grow selection' }, '+');
-  const shrinkBtn = h('button', { type: 'button', class: 'icon', title: 'Shrink selection' }, '−');
-  const clearBtn = h('button', { type: 'button', class: 'icon', title: 'Clear selection' }, '×');
+  const growBtn = h('button', { type: 'button', class: 'icon', title: 'Grow selection', 'aria-label': 'Grow selection' }, icon('plus'));
+  const shrinkBtn = h('button', { type: 'button', class: 'icon', title: 'Shrink selection', 'aria-label': 'Shrink selection' }, icon('minus'));
+  const clearBtn = h('button', { type: 'button', class: 'icon', title: 'Clear selection', 'aria-label': 'Clear selection' }, icon('close'));
   const result = h('div', { class: 'edit-result', 'data-testid': 'edit-result' });
   const card = h('div', { class: 'edit-card', hidden: true, 'data-testid': 'edit-card' });
   const historyBox = h('div', { class: 'edit-history', 'data-testid': 'edit-history' });
@@ -638,7 +639,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
     const d = doc();
     const entries = [...(d?.history ?? [])].reverse();
     undoBtn.disabled = !d || !entries.some((e) => e.appliedOpIds.some((id) => d.edits.some((x) => x.id === id)));
-    if (!entries.length) historyBox.append(h('div', { class: 'muted small' }, 'No edits yet.'));
+    if (!entries.length) historyBox.append(h('div', { class: 'empty' }, 'No edits yet: describe a change above.'));
     for (const entry of entries.slice(0, 40)) {
       const ops = entry.appliedOpIds.map((id) => ({ id, op: d!.edits.find((e) => e.id === id) }));
       historyBox.append(
@@ -657,7 +658,7 @@ export function mountEditPanel(target: HTMLElement | Director, maybeDirector?: D
                     h('input', { type: 'checkbox', checked: op.enabled, title: 'On / off', onchange: (ev: Event) => toggle(id, (ev.target as HTMLInputElement).checked) }),
                     h('span', { class: op.enabled ? '' : 'muted' }, describeOp(op)),
                     h('span', { class: 'spacer' }),
-                    h('button', { type: 'button', class: 'icon', title: 'Delete this edit', onclick: () => remove(id) }, '×'),
+                    h('button', { type: 'button', class: 'icon', title: 'Delete this edit', 'aria-label': 'Delete this edit', onclick: () => remove(id) }, icon('close')),
                   )
                 : h('div', { class: 'edit-op muted small' }, 'removed'),
             ),
