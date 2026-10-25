@@ -151,11 +151,12 @@ export function mountSceneTab(director: Director, parts: SceneTabParts) {
         ),
       );
     }
-    // a newly opened scene shows its current mood (the row scrolls sideways, nothing else moves)
-    if (moodScene !== rt) {
+    // a newly opened scene shows its current mood once its look is in (the row scrolls sideways,
+    // nothing else moves)
+    const on = mood.querySelector<HTMLElement>('.mood.on');
+    if (moodScene !== rt && on) {
       moodScene = rt;
-      const on = mood.querySelector<HTMLElement>('.mood.on') ?? mood.querySelector<HTMLElement>('.mood.planned');
-      if (on) mood.scrollLeft = Math.max(0, on.offsetLeft - mood.clientWidth / 2 + on.offsetWidth / 2);
+      mood.scrollLeft = Math.max(0, on.offsetLeft - mood.clientWidth / 2 + on.offsetWidth / 2);
     }
   };
 

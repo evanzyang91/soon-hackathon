@@ -10,25 +10,30 @@ function onLayer(root: THREE.Object3D) {
 }
 
 function labelSprite(text: string, color: string) {
+  const font = '600 28px system-ui, sans-serif';
+  const shown = text.slice(0, 16);
   const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 64;
   const g = c.getContext('2d')!;
+  g.font = font;
+  // the pill fits its text ("1B" is a small tag, a longer name up to the old 256 px)
+  const w = Math.min(256, Math.ceil(g.measureText(shown).width) + 36);
+  c.width = w;
+  c.height = 64;
   g.fillStyle = 'rgba(10,12,16,0.75)';
   g.beginPath();
-  g.roundRect(2, 8, 252, 48, 10);
+  g.roundRect(2, 8, w - 4, 48, 10);
   g.fill();
   g.fillStyle = color;
-  g.font = '600 28px system-ui, sans-serif';
+  g.font = font;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText(text.slice(0, 16), 128, 33);
+  g.fillText(shown, w / 2, 33);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }),
   );
-  sprite.scale.set(0.48, 0.12, 1);
+  sprite.scale.set((0.48 * w) / 256, 0.12, 1);
   sprite.renderOrder = 10;
   return sprite;
 }

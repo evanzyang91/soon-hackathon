@@ -372,15 +372,25 @@ export function mountShotsPanel(director: Director, manip: Manipulation, opts: S
   };
 
   /**
-   * The guide's part of the next main render, ≤ 960 px wide, as JPEG. The gizmos (frustums, rings,
-   * light handles) are off for that one frame, so the frame is what the phone would see.
+   * The guide's part of the next main render, ≤ 960 px wide, as JPEG. For that one frame the
+   * gizmos (frustums, rings, light handles) are off and so are the actors' name pills and speech
+   * bubbles (by layer, so a line that ends meanwhile still hides its own bubble): a storyboard
+   * frame shows the picture only.
    */
   const capture = () =>
     new Promise<Blob | null>((resolve) => {
       const cam = director.camera;
       cam.layers.disable(GIZMO_LAYER);
+      const labels: { o: { layers: { mask: number } }; mask: number }[] = [];
+      for (const a of director.runtime?.actors.values() ?? [])
+        for (const o of a.object.children)
+          if ((o as { isSprite?: boolean }).isSprite) {
+            labels.push({ o, mask: o.layers.mask });
+            o.layers.mask = 0;
+          }
       director.afterNextMainRender(() => {
         cam.layers.enable(GIZMO_LAYER);
+        for (const l of labels) l.o.layers.mask = l.mask;
         const { width } = director.view.size;
         const { rect } = rectNow();
         const src = director.canvas;
