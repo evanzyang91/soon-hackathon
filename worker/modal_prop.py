@@ -12,6 +12,9 @@ minutes per object and need compiled rasterisers. Compared with TripoSR's own ``
 * floaters smaller than 5 % of the largest piece are dropped and the mesh is decimated to
   ``max_faces`` (fast-simplification) *before* the colours are queried, so every kept vertex
   gets its colour from the reconstruction (no colour is interpolated away)
+* TripoSR keeps the picture's camera frame, so an object shot a little from above leans toward
+  the camera by that angle; ``prop_glb.level`` pitches it back using its flat resting face or top
+  (from the convex hull), when it has one
 * the result is written by ``prop_glb.py``: y up, front +z (glTF), outward winding, linear
   vertex colours, a rough non-metallic material
 
@@ -181,11 +184,14 @@ def prop(image_png: bytes, resolution: int = 256, max_faces: int = 50000, foregr
     mesh = keep_main_pieces(mesh)
     vertices, faces = np.asarray(mesh.vertices), np.asarray(mesh.faces)
     if len(faces) > max_faces:
-        import fast_simplification
+        try:
+            import fast_simplification
 
-        vertices, faces = fast_simplification.simplify(
-            vertices.astype(np.float32), faces.astype(np.int64), target_reduction=1.0 - max_faces / len(faces)
-        )
+            vertices, faces = fast_simplification.simplify(
+                vertices.astype(np.float32), faces.astype(np.int32), target_reduction=1.0 - max_faces / len(faces)
+            )
+        except Exception as error:  # noqa: BLE001 - a heavier model is still a model
+            log(f"decimation skipped ({type(error).__name__}: {error})")
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
     vertices, faces = np.asarray(mesh.vertices), prop_glb.outward(np.asarray(mesh.vertices), np.asarray(mesh.faces))
     t = mark("surface", t)
@@ -196,7 +202,15 @@ def prop(image_png: bytes, resolution: int = 256, max_faces: int = 50000, foregr
             model.decoder, torch.tensor(vertices, dtype=torch.float32, device="cuda"), codes[0]
         )["color"]
     colors = prop_glb.srgb_to_linear(color.float().cpu().numpy())
-    glb = prop_glb.write_glb(prop_glb.triposr_to_gltf(vertices), faces, colors, name="generated-prop")
+    upright, leveled = prop_glb.triposr_to_gltf(vertices), 0.0
+    try:
+        # the picture is taken a little from above: stand the object back up on its flat face
+        upright, leveled = prop_glb.level(upright)
+        if leveled:
+            log(f"levelled: pitched back {leveled:.1f} degrees")
+    except Exception as error:  # noqa: BLE001 - a leaning model is still a model
+        log(f"levelling skipped ({type(error).__name__}: {error})")
+    glb = prop_glb.write_glb(upright, faces, colors, name="generated-prop")
     t = mark("package", t)
 
     seconds = time.time() - t0
@@ -210,6 +224,7 @@ def prop(image_png: bytes, resolution: int = 256, max_faces: int = 50000, foregr
         "faces": int(len(faces)),
         "rawFaces": int(raw_faces),
         "vertices": int(len(vertices)),
+        "leveledDeg": round(leveled, 1),
         "seconds": round(seconds, 2),
         "timings": timings,
         "estimatedComputeUSD": round(cost, 5),
